@@ -286,6 +286,7 @@ export const resolveAdaptiveEditorFeatureBudget = (
 };
 
 let adaptiveMonitorStarted = false;
+const adaptiveFrameProbeIntervalMs = 1_000;
 
 export const startAdaptivePerformanceMonitor = (): (() => void) => {
   if (adaptiveMonitorStarted || typeof window === "undefined") {
@@ -294,18 +295,33 @@ export const startAdaptivePerformanceMonitor = (): (() => void) => {
   adaptiveMonitorStarted = true;
 
   let disposed = false;
-  let lastFrameAt = nowPerf();
   let frameHandle = 0;
 
-  const tick = () => {
-    if (disposed) return;
-    const current = nowPerf();
-    const gap = current - lastFrameAt;
-    lastFrameAt = current;
-    if (gap >= 34) {
-      usePerformanceStore.getState().updateBudget({ frameGapMs: gap });
+  const cancelPendingFrameProbe = () => {
+    if (frameHandle !== 0) {
+      window.cancelAnimationFrame(frameHandle);
+      frameHandle = 0;
     }
-    frameHandle = window.requestAnimationFrame(tick);
+  };
+
+  const probeFrameGap = () => {
+    cancelPendingFrameProbe();
+    const scheduledAt = nowPerf();
+    frameHandle = window.requestAnimationFrame((firstFrameAt) => {
+      if (disposed) return;
+      frameHandle = window.requestAnimationFrame((secondFrameAt) => {
+        frameHandle = 0;
+        if (disposed) return;
+        const schedulingDelay = firstFrameAt - scheduledAt;
+        const frameGap = secondFrameAt - firstFrameAt;
+        const observedGap = Math.max(schedulingDelay, frameGap);
+        if (observedGap >= 34) {
+          usePerformanceStore
+            .getState()
+            .updateBudget({ frameGapMs: observedGap });
+        }
+      });
+    });
   };
 
   const onMetric = (event: Event) => {
@@ -315,18 +331,19 @@ export const startAdaptivePerformanceMonitor = (): (() => void) => {
     }
   };
 
-  frameHandle = window.requestAnimationFrame(tick);
-  const decayTimer = window.setInterval(() => {
+  probeFrameGap();
+  const probeTimer = window.setInterval(() => {
+    probeFrameGap();
     usePerformanceStore.getState().decayPressure();
-  }, 1_000);
+  }, adaptiveFrameProbeIntervalMs);
 
   window.addEventListener(PERF_EVENT_NAME, onMetric);
 
   return () => {
     disposed = true;
     adaptiveMonitorStarted = false;
-    window.cancelAnimationFrame(frameHandle);
-    window.clearInterval(decayTimer);
+    cancelPendingFrameProbe();
+    window.clearInterval(probeTimer);
     window.removeEventListener(PERF_EVENT_NAME, onMetric);
   };
 };

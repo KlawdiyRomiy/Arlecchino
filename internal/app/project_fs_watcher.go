@@ -27,6 +27,7 @@ type projectEntryScanResult struct {
 const (
 	projectWatchInitialInterval = 900 * time.Millisecond
 	projectWatchMaxInterval     = 5 * time.Second
+	projectWatchBoundedInterval = 60 * time.Second
 	projectWatchMaxEntries      = 12000
 	projectWatchMaxEvents       = 256
 )
@@ -64,6 +65,7 @@ func (a *App) startProjectFilesystemWatcherForSession(session *ProjectRuntimeSes
 			MaxEvents:           projectWatchMaxEvents,
 			InitialPollInterval: projectWatchInitialInterval,
 			MaxPollInterval:     projectWatchMaxInterval,
+			BoundedPollInterval: projectWatchBoundedInterval,
 			SkipDirs:            projectWatchSkipDirs(),
 		})
 		err := service.Start(ctx, projectPath, func(events []watcher.Event) {

@@ -52,6 +52,7 @@ type Options struct {
 	FSNotifyDirLimit    int
 	InitialPollInterval time.Duration
 	MaxPollInterval     time.Duration
+	BoundedPollInterval time.Duration
 	SkipDirs            map[string]struct{}
 }
 
@@ -200,10 +201,7 @@ func (w *ProjectWatcher) shouldSkipPath(root string, path string) bool {
 
 func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial ScanResult, emit func([]Event)) {
 	known := initial.Entries
-	interval := w.options.InitialPollInterval
-	if initial.Bounded {
-		interval = w.options.MaxPollInterval
-	}
+	interval := w.initialPollingInterval(initial)
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
 
@@ -223,11 +221,14 @@ func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial Sc
 		changed := DiffChangedFiles(known, current.Entries)
 		known = current.Entries
 		events := append(created, changed...)
-		if len(events) > 0 {
+		if current.Bounded {
+			if len(events) > 0 {
+				emit(limitEvents(events, w.options.MaxEvents))
+			}
+			interval = w.options.BoundedPollInterval
+		} else if len(events) > 0 {
 			emit(limitEvents(events, w.options.MaxEvents))
 			interval = w.options.InitialPollInterval
-		} else if current.Bounded {
-			interval = w.options.MaxPollInterval
 		} else if interval < w.options.MaxPollInterval {
 			interval *= 2
 			if interval > w.options.MaxPollInterval {
@@ -236,6 +237,13 @@ func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial Sc
 		}
 		timer.Reset(interval)
 	}
+}
+
+func (w *ProjectWatcher) initialPollingInterval(initial ScanResult) time.Duration {
+	if initial.Bounded {
+		return w.options.BoundedPollInterval
+	}
+	return w.options.InitialPollInterval
 }
 
 func Scan(ctx context.Context, root string, maxEntries int) (ScanResult, error) {
@@ -339,6 +347,9 @@ func normalizeOptions(options Options) Options {
 	}
 	if options.MaxPollInterval <= 0 {
 		options.MaxPollInterval = 5 * time.Second
+	}
+	if options.BoundedPollInterval <= 0 {
+		options.BoundedPollInterval = 60 * time.Second
 	}
 	if len(options.SkipDirs) > 0 {
 		skipDirs := make(map[string]struct{}, len(options.SkipDirs))

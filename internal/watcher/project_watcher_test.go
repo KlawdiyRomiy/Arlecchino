@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -105,5 +106,20 @@ func TestProjectWatcherStillEmitsNormalCreatedFiles(t *testing.T) {
 	}
 	if events[0].Kind != EventCreated || events[0].Path != path || events[0].IsDirectory {
 		t.Fatalf("unexpected event: %#v", events[0])
+	}
+}
+
+func TestProjectWatcherUsesBoundedPollingIntervalForLargeSnapshots(t *testing.T) {
+	w := NewProjectWatcher(Options{
+		InitialPollInterval: 100 * time.Millisecond,
+		MaxPollInterval:     time.Second,
+		BoundedPollInterval: 45 * time.Second,
+	})
+
+	if got := w.initialPollingInterval(ScanResult{}); got != 100*time.Millisecond {
+		t.Fatalf("normal initial interval = %s, want 100ms", got)
+	}
+	if got := w.initialPollingInterval(ScanResult{Bounded: true}); got != 45*time.Second {
+		t.Fatalf("bounded initial interval = %s, want 45s", got)
 	}
 }
