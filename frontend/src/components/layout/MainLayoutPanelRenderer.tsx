@@ -87,6 +87,7 @@ interface MainLayoutPanelRendererProps {
   terminalZIndex?: number;
   snappedOverlayInsets?: { top: number; bottom: number };
   zenTopChromeAvoidanceTop?: number;
+  motionPressureActive?: boolean;
   isLogicalFullscreenPanel: (config: PanelConfig) => boolean;
   onPanelResize: (panelId: PanelId, updates: PanelResizeUpdates) => void;
   onPanelResizeStart: (panelId: PanelId) => void;
@@ -163,6 +164,7 @@ export const MainLayoutPanelRenderer: React.FC<
   terminalZIndex,
   snappedOverlayInsets,
   zenTopChromeAvoidanceTop,
+  motionPressureActive = false,
   isLogicalFullscreenPanel,
   onPanelResize,
   onPanelResizeStart,
@@ -322,6 +324,7 @@ export const MainLayoutPanelRenderer: React.FC<
       ? () => onPanelFullscreen(panelId)
       : undefined,
     isRelocating: relocatingPanelIds.includes(panelId),
+    motionPressureActive,
     snappedOverlayInsets,
     zenTopChromeAvoidanceTop,
     zenModeEnabled,

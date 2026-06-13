@@ -32,6 +32,7 @@ interface PreviewWindowPanelRendererProps {
   appearancePreview: AppearancePreviewState | null;
   currentTheme: Theme;
   currentUiScale: number;
+  motionPressureActive?: boolean;
   onClose: (windowId: string) => void;
   onResize: (windowId: string, updates: PreviewPanelResizeUpdates) => void;
   onResizeStart: (windowId: string) => void;
@@ -64,6 +65,7 @@ export const PreviewWindowPanelRenderer: React.FC<
   appearancePreview,
   currentTheme,
   currentUiScale,
+  motionPressureActive = false,
   onClose,
   onResize,
   onResizeStart,
@@ -96,6 +98,7 @@ export const PreviewWindowPanelRenderer: React.FC<
     zIndex={windowState.zIndex}
     adjacentPanels={adjacentPanels}
     uiScale={uiScale}
+    motionPressureActive={motionPressureActive}
     onClose={() => onClose(windowState.id)}
     onResize={(updates) => onResize(windowState.id, updates)}
     onResizeStart={() => onResizeStart(windowState.id)}

@@ -81,6 +81,12 @@ interface PanelResizeSession {
 
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
+const FLOATING_PANEL_MOTION_SHADOW =
+  "0 0 0 1px var(--shell-border), 0 10px 24px -22px rgba(0, 0, 0, 0.68)";
+const FLOATING_PANEL_MOTION_ACTIVE_SHADOW =
+  "0 0 0 1px var(--shell-border-strong), 0 12px 28px -24px rgba(0, 0, 0, 0.72)";
+const FLOATING_PANEL_MOTION_DROP_SHADOW =
+  "inset 0 0 0 1px var(--accent-brand), 0 0 0 1px color-mix(in srgb, var(--accent-brand) 18%, transparent)";
 const FLOATING_PANEL_DROP_PREVIEW_WIDTH = 150;
 const FLOATING_PANEL_DROP_PREVIEW_HEIGHT = 100;
 const FLOATING_PANEL_DROP_HIT_EXPANSION = 72;
@@ -259,6 +265,7 @@ export interface FloatingPanelProps {
   isSlotExiting?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
   isRelocating?: boolean;
+  motionPressureActive?: boolean;
   zenModeEnabled?: boolean;
   isZenPinned?: boolean;
   onZenPinToggle?: (id: string) => void;
@@ -311,6 +318,7 @@ export const FloatingPanel = React.forwardRef<
       isSlotExiting = false,
       activeDropTargetPosition = null,
       isRelocating = false,
+      motionPressureActive = false,
       zenModeEnabled = false,
       isZenPinned = false,
       onZenPinToggle,
@@ -1296,6 +1304,8 @@ export const FloatingPanel = React.forwardRef<
       isSlotExiting &&
       !isDragging &&
       !isResizing;
+    const motionPaintConstrained =
+      motionPressureActive || isDragging || isResizing || isRelocating;
 
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
@@ -1312,6 +1322,21 @@ export const FloatingPanel = React.forwardRef<
         !reduceMotion &&
         (!hasEntered || !isPresent || flowSlotExitActive);
       const panelFrameRadius = immersiveFrameActive ? 0 : "var(--radius-lg)";
+      const panelFrameShadow = immersiveFrameActive
+        ? "none"
+        : motionPaintConstrained
+          ? isActivePanel
+            ? FLOATING_PANEL_MOTION_ACTIVE_SHADOW
+            : FLOATING_PANEL_MOTION_SHADOW
+          : isSnapped
+            ? isActivePanel
+              ? "var(--shell-shadow-active)"
+              : "var(--shell-shadow)"
+            : isDragging
+              ? "var(--shadow-drag)"
+              : isResizing || isActivePanel
+                ? "var(--shell-shadow-active)"
+                : "var(--shell-shadow)";
       const base: React.CSSProperties = {
         ...WAILS_NO_DRAG_STYLE,
         position: isFlowHosted
@@ -1328,17 +1353,7 @@ export const FloatingPanel = React.forwardRef<
           : "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
         border: "1px solid var(--shell-border)",
         borderRadius: panelFrameRadius,
-        boxShadow: immersiveFrameActive
-          ? "none"
-          : isSnapped
-            ? isActivePanel
-              ? "var(--shell-shadow-active)"
-              : "var(--shell-shadow)"
-            : isDragging
-              ? "var(--shadow-drag)"
-              : isResizing || isActivePanel
-                ? "var(--shell-shadow-active)"
-                : "var(--shell-shadow)",
+        boxShadow: panelFrameShadow,
         zIndex: isDragging
           ? 140
           : isRelocating
@@ -1351,7 +1366,7 @@ export const FloatingPanel = React.forwardRef<
         willChange: isDragging
           ? "transform"
           : isResizing
-            ? "width, height"
+            ? "auto"
             : isRelocating
               ? "transform, opacity"
               : shouldPromoteForMotion
@@ -1359,9 +1374,10 @@ export const FloatingPanel = React.forwardRef<
                 : zenTopChromeAvoidanceOffset > 0
                   ? "transform"
                   : "auto",
+        contain: motionPaintConstrained ? "paint style" : undefined,
         backfaceVisibility: "hidden" as const,
         transition:
-          reduceMotion || isResizing || isDragging
+          reduceMotion || motionPaintConstrained
             ? "none"
             : "box-shadow 0.18s ease, border-color 0.18s ease",
       };
@@ -1370,8 +1386,9 @@ export const FloatingPanel = React.forwardRef<
         base.border = "0";
       } else if (isDropTarget) {
         base.border = "1px solid var(--accent-brand)";
-        base.boxShadow =
-          "inset 0 0 0 1px var(--accent-brand), inset 0 0 0 999px color-mix(in srgb, var(--accent-brand) 6%, transparent), var(--shadow-overlay)";
+        base.boxShadow = motionPaintConstrained
+          ? FLOATING_PANEL_MOTION_DROP_SHADOW
+          : "inset 0 0 0 1px var(--accent-brand), inset 0 0 0 999px color-mix(in srgb, var(--accent-brand) 6%, transparent), var(--shadow-overlay)";
       } else if (!isActivePanel) {
         base.border = "1px solid var(--shell-border)";
       } else {
@@ -1553,9 +1570,15 @@ export const FloatingPanel = React.forwardRef<
       };
 
       const isFloating = mode === "floating";
-      const edgeSize = "14px";
-      const cornerSize = "20px";
-      const offset = isFloating ? "-7px" : "0";
+      const edgeSize = `${screenToLogicalPixels(
+        isFloating ? 18 : 24,
+        effectiveUiScale,
+      )}px`;
+      const cornerSize = `${screenToLogicalPixels(
+        isFloating ? 22 : 28,
+        effectiveUiScale,
+      )}px`;
+      const offset = "0";
 
       switch (edge) {
         case "n":
@@ -1780,7 +1803,9 @@ export const FloatingPanel = React.forwardRef<
       flexShrink: 0,
       position: "relative",
       cursor: isDragging ? "grabbing" : "grab",
-      boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
+      boxShadow: motionPaintConstrained
+        ? "none"
+        : "inset 0 1px 0 var(--shell-inner-highlight)",
       touchAction: "none",
       ...WAILS_NO_DRAG_STYLE,
       ...(immersiveFrameActive
@@ -1819,9 +1844,9 @@ export const FloatingPanel = React.forwardRef<
         "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
       border:
         "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
-      boxShadow: "var(--shell-shadow)",
-      backdropFilter: "blur(12px)",
-      WebkitBackdropFilter: "blur(12px)",
+      boxShadow: motionPaintConstrained ? "none" : "var(--shell-shadow)",
+      backdropFilter: motionPaintConstrained ? "none" : "blur(12px)",
+      WebkitBackdropFilter: motionPaintConstrained ? "none" : "blur(12px)",
     };
 
     const controlsStyle: React.CSSProperties = {
@@ -1847,8 +1872,9 @@ export const FloatingPanel = React.forwardRef<
       backgroundColor: "transparent",
       color: "var(--text-secondary)",
       cursor: "pointer",
-      transition:
-        "background-color 150ms ease, color 150ms ease, transform 120ms ease, border-color 150ms ease",
+      transition: motionPaintConstrained
+        ? "none"
+        : "background-color 150ms ease, color 150ms ease, transform 120ms ease, border-color 150ms ease",
     };
 
     const contentStyle: React.CSSProperties = {
@@ -2109,6 +2135,7 @@ export const FloatingPanel = React.forwardRef<
         }
         data-panel-immersive={immersiveFrameActive ? "true" : "false"}
         data-panel-relocating={isRelocating ? "true" : "false"}
+        data-panel-motion-pressure={motionPaintConstrained ? "true" : "false"}
         data-panel-zen-pinned={isZenPinned ? "true" : "false"}
         data-panel-top-chrome-avoidance={Math.round(
           zenTopChromeAvoidanceOffset,

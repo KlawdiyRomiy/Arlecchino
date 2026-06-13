@@ -561,6 +561,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const { isDark, theme: currentTheme, setTheme, resolvedThemeId } = useTheme();
   const prefersReducedMotion = useReducedMotion();
   const reducePanelMotion = prefersReducedMotion;
+  const panelMotionActive = usePerformanceStore(
+    (state) => state.panelMotionActive,
+  );
+  const adaptivePerformanceMode = usePerformanceStore((state) => state.mode);
   const panelLayoutTransition = reducePanelMotion
     ? { duration: 0 }
     : FLOATING_PANEL_LAYOUT_TRANSITION;
@@ -1313,6 +1317,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const fullscreenPanelTransitionTimerIdsRef = useRef<
     Partial<Record<PanelId, ReturnType<typeof setTimeout>>>
   >({});
+  const panelInteractionPressureActive =
+    draggingPanel !== null ||
+    draggingPreviewWindowId !== null ||
+    draggingFilePanel ||
+    resizingPanel !== null ||
+    resizingPreviewWindowId !== null;
+  const panelMotionPressureActive =
+    panelMotionActive ||
+    adaptivePerformanceMode !== "normal" ||
+    panelInteractionPressureActive ||
+    panelDropSettling ||
+    relocatingPanelIds.length > 0 ||
+    relocatingPreviewWindowIds.length > 0 ||
+    fullscreenPanelTransitions.length > 0 ||
+    panelExitPositions.length > 0 ||
+    panelExitCollapsingPositions.length > 0 ||
+    panelEnterPositions.length > 0;
 
   useEffect(() => {
     return () => {
@@ -5742,6 +5763,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           : undefined
       }
       zenTopChromeAvoidanceTop={zenTopChromeAvoidanceTop}
+      motionPressureActive={panelMotionPressureActive}
       isLogicalFullscreenPanel={isLogicalFullscreenPanel}
       onPanelResize={handlePanelResize}
       onPanelResizeStart={setResizingPanel}
@@ -5885,6 +5907,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         appearancePreview={appearancePreview}
         currentTheme={currentTheme}
         currentUiScale={uiScale}
+        motionPressureActive={panelMotionPressureActive}
         onClose={closePreviewWindowWithMotion}
         onResize={(windowId, updates) => {
           updatePreviewWindow(windowId, {
