@@ -108,14 +108,15 @@ func (a *App) attachWailsApplication(app *application.App) {
 }
 
 func (a *App) attachMainWindow(window *application.WebviewWindow) {
-	a.mainWindow = window
-	if a != nil && window != nil {
-		a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
-		a.registerWindowRole(window, WindowRoleMain)
-		a.registerWindowFileDropIntents(window)
-		registerNativeFullscreenEvents(window)
-		a.registerMainWindowCloseConfirmation(window)
+	if a == nil || window == nil {
+		return
 	}
+	a.mainWindow = window
+	a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
+	a.registerWindowRole(window, WindowRoleMain)
+	a.registerWindowFileDropIntents(window)
+	registerNativeFullscreenEvents(window)
+	a.registerMainWindowCloseConfirmation(window)
 }
 
 func (a *App) setProjectPath(path string) {

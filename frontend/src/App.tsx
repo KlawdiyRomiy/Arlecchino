@@ -230,10 +230,10 @@ const App: React.FC = () => {
     };
   }, [effectiveUiScale]);
 
-  const syncCurrentFramework = async () => {
+  const syncCurrentFramework = useCallback(async () => {
     const framework = await AppFunctions.GetCurrentProjectFramework();
     useWorkspaceStore.getState().setActiveFramework(framework || null);
-  };
+  }, []);
 
   const showWorkspaceError = useCallback((title: string, error: unknown) => {
     useAppNotificationStore.getState().addNotification({
@@ -458,128 +458,154 @@ const App: React.FC = () => {
     };
   }, [isDetachedHost, requestApplicationClose]);
 
-  const handleProjectOpen = async (projectPath: string) => {
-    const state = useWorkspaceStore.getState();
-    const existingProject = state.projects.find(
-      (project) => project.path === projectPath,
-    );
-    if (existingProject) {
-      if (existingProject.id !== state.activeId) {
-        await handleSwitchProject(existingProject.id);
+  const handleSwitchProject = useCallback(
+    async (id: string, direction?: number) => {
+      const state = useWorkspaceStore.getState();
+      if (id === state.activeId || state.pendingId) {
+        return;
       }
-      return;
-    }
 
-    const projectWindowMode =
-      useEditorSettingsStore.getState().projectWindowMode;
-    if (projectWindowMode === "windows" && state.activeId) {
+      const project = state.projects.find((item) => item.id === id);
+      if (!project) {
+        return;
+      }
+
+      const outgoingProjectId = state.activeId;
+      const outgoingProjectPath =
+        state.projects.find((item) => item.id === outgoingProjectId)?.path ??
+        null;
+      usePerformanceStore.getState().resetTransientBudget();
+      state.beginProjectSwitch(id, direction);
+      const operationId = beginProjectBackendOperation();
+      setFileToOpen(null);
+
       try {
-        const opened = await AppFunctions.OpenProjectWindow(projectPath);
-        if (opened === false) {
-          throw new Error("Project window launcher is unavailable.");
+        activateProjectScope(project.path);
+        const openProjectPromise = runLatestProjectOpen(
+          project.path,
+          operationId,
+        );
+        finishProjectSwitchNow(id, project.path);
+        useWorkspaceStore.getState().setActiveFramework(null);
+        const isCurrentOperation = await openProjectPromise;
+        if (!isCurrentOperation) {
+          return;
         }
-        rememberProjectWindowRestorePath(projectPath);
-        setFileToOpen(null);
+        await syncCurrentFramework();
+        if (!isProjectBackendOperationCurrent(operationId)) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          void preloadProjectDiagnostics(project.path);
+        });
       } catch (error) {
-        console.error("Error opening project window:", error);
-        showWorkspaceError("Open project window failed", error);
+        if (!isProjectBackendOperationCurrent(operationId)) {
+          return;
+        }
+        restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
+        console.error("Error switching project:", error);
+        showWorkspaceError("Switch project failed", error);
       }
-      return;
-    }
+    },
+    [
+      beginProjectBackendOperation,
+      finishProjectSwitchNow,
+      isProjectBackendOperationCurrent,
+      restoreProjectSelection,
+      runLatestProjectOpen,
+      showWorkspaceError,
+      syncCurrentFramework,
+    ],
+  );
 
-    const outgoingProjectId = state.activeId;
-    const outgoingProjectPath =
-      state.projects.find((project) => project.id === outgoingProjectId)
-        ?.path ?? null;
-    const hadActiveProject = Boolean(state.activeId);
-    usePerformanceStore.getState().resetTransientBudget();
-    const openedProjectId = useWorkspaceStore
-      .getState()
-      .beginProjectOpen(projectPath, 1);
-    const operationId = beginProjectBackendOperation();
-    setFileToOpen(null);
-
-    try {
-      if (!hadActiveProject) {
-        resetProjectBoundStores();
-      }
-      activateProjectScope(projectPath);
-      const openProjectPromise = runLatestProjectOpen(projectPath, operationId);
-      finishProjectSwitchNow(openedProjectId, projectPath);
-      useWorkspaceStore.getState().setActiveFramework(null);
-      const isCurrentOperation = await openProjectPromise;
-      if (!isCurrentOperation) {
-        return;
-      }
-      await syncCurrentFramework();
-      if (!isProjectBackendOperationCurrent(operationId)) {
-        return;
-      }
-      window.requestAnimationFrame(() => {
-        void preloadProjectDiagnostics(projectPath);
-      });
-    } catch (error) {
-      if (!isProjectBackendOperationCurrent(operationId)) {
-        return;
-      }
-      restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
-      useWorkspaceStore.getState().removeProject(openedProjectId);
-      if (!hadActiveProject) {
-        resetProjectBoundStores();
-      }
-      console.error("Error opening project:", error);
-      showWorkspaceError("Open project failed", error);
-    }
-  };
-
-  const handleSwitchProject = async (id: string, direction?: number) => {
-    const state = useWorkspaceStore.getState();
-    if (id === state.activeId || state.pendingId) {
-      return;
-    }
-
-    const project = state.projects.find((item) => item.id === id);
-    if (!project) {
-      return;
-    }
-
-    const outgoingProjectId = state.activeId;
-    const outgoingProjectPath =
-      state.projects.find((item) => item.id === outgoingProjectId)?.path ??
-      null;
-    usePerformanceStore.getState().resetTransientBudget();
-    state.beginProjectSwitch(id, direction);
-    const operationId = beginProjectBackendOperation();
-    setFileToOpen(null);
-
-    try {
-      activateProjectScope(project.path);
-      const openProjectPromise = runLatestProjectOpen(
-        project.path,
-        operationId,
+  const handleProjectOpen = useCallback(
+    async (projectPath: string) => {
+      const state = useWorkspaceStore.getState();
+      const existingProject = state.projects.find(
+        (project) => project.path === projectPath,
       );
-      finishProjectSwitchNow(id, project.path);
-      useWorkspaceStore.getState().setActiveFramework(null);
-      const isCurrentOperation = await openProjectPromise;
-      if (!isCurrentOperation) {
+      if (existingProject) {
+        if (existingProject.id !== state.activeId) {
+          await handleSwitchProject(existingProject.id);
+        }
         return;
       }
-      await syncCurrentFramework();
-      if (!isProjectBackendOperationCurrent(operationId)) {
+
+      const projectWindowMode =
+        useEditorSettingsStore.getState().projectWindowMode;
+      if (projectWindowMode === "windows" && state.activeId) {
+        try {
+          const opened = await AppFunctions.OpenProjectWindow(projectPath);
+          if (opened === false) {
+            throw new Error("Project window launcher is unavailable.");
+          }
+          rememberProjectWindowRestorePath(projectPath);
+          setFileToOpen(null);
+        } catch (error) {
+          console.error("Error opening project window:", error);
+          showWorkspaceError("Open project window failed", error);
+        }
         return;
       }
-      window.requestAnimationFrame(() => {
-        void preloadProjectDiagnostics(project.path);
-      });
-    } catch (error) {
-      if (!isProjectBackendOperationCurrent(operationId)) {
-        return;
+
+      const outgoingProjectId = state.activeId;
+      const outgoingProjectPath =
+        state.projects.find((project) => project.id === outgoingProjectId)
+          ?.path ?? null;
+      const hadActiveProject = Boolean(state.activeId);
+      usePerformanceStore.getState().resetTransientBudget();
+      const openedProjectId = useWorkspaceStore
+        .getState()
+        .beginProjectOpen(projectPath, 1);
+      const operationId = beginProjectBackendOperation();
+      setFileToOpen(null);
+
+      try {
+        if (!hadActiveProject) {
+          resetProjectBoundStores();
+        }
+        activateProjectScope(projectPath);
+        const openProjectPromise = runLatestProjectOpen(
+          projectPath,
+          operationId,
+        );
+        finishProjectSwitchNow(openedProjectId, projectPath);
+        useWorkspaceStore.getState().setActiveFramework(null);
+        const isCurrentOperation = await openProjectPromise;
+        if (!isCurrentOperation) {
+          return;
+        }
+        await syncCurrentFramework();
+        if (!isProjectBackendOperationCurrent(operationId)) {
+          return;
+        }
+        window.requestAnimationFrame(() => {
+          void preloadProjectDiagnostics(projectPath);
+        });
+      } catch (error) {
+        if (!isProjectBackendOperationCurrent(operationId)) {
+          return;
+        }
+        restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
+        useWorkspaceStore.getState().removeProject(openedProjectId);
+        if (!hadActiveProject) {
+          resetProjectBoundStores();
+        }
+        console.error("Error opening project:", error);
+        showWorkspaceError("Open project failed", error);
       }
-      restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
-      console.error("Error switching project:", error);
-      showWorkspaceError("Switch project failed", error);
-    }
-  };
+    },
+    [
+      beginProjectBackendOperation,
+      finishProjectSwitchNow,
+      handleSwitchProject,
+      isProjectBackendOperationCurrent,
+      restoreProjectSelection,
+      runLatestProjectOpen,
+      showWorkspaceError,
+      syncCurrentFramework,
+    ],
+  );
 
   const handleFileOpen = (payload: EditorFileOpenPayload) => {
     setFileToOpen(payload);

@@ -195,6 +195,51 @@ body > [data-radix-portal] > * {
   pointer-events: auto;
 }
 
+.app-boot-error {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  background: var(--bg-blackprint);
+  color: var(--text-primary);
+  font-family: var(--ui-font-family);
+  text-align: center;
+}
+
+.app-boot-error__title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.app-boot-error__message {
+  max-width: 720px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.app-boot-error__stack {
+  max-height: 38vh;
+  max-width: min(860px, calc(100vw - 64px));
+  margin: 4px 0 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-family: "Arlecchino Fira Code", "SF Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
