@@ -1530,7 +1530,7 @@ class DiagnosticsBridge {
       match.fragmentKey,
     );
     this.tooltipArmed = true;
-    if (signature === this.activeTooltipSignature) {
+    if (Object.is(signature, this.activeTooltipSignature)) {
       return;
     }
 
@@ -1722,7 +1722,7 @@ class DiagnosticsBridge {
         return;
       }
 
-      if (this.pendingSignature === this.appliedSignature) {
+      if (Object.is(this.pendingSignature, this.appliedSignature)) {
         return;
       }
 

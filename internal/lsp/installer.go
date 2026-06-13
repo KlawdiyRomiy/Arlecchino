@@ -46,6 +46,14 @@ var serverBinaryAliases = map[string][]string{
 	"svelte-language-server":     {"svelte-language-server"},
 }
 
+const lspInstallStatusCacheTTL = 30 * time.Second
+
+type installStatusCacheEntry struct {
+	installed bool
+	version   string
+	checkedAt time.Time
+}
+
 type InstallProgress struct {
 	LSPID      string  `json:"lspId"`
 	Stage      string  `json:"stage"`
@@ -71,10 +79,12 @@ type InstallState struct {
 
 type Installer struct {
 	mu             sync.RWMutex
+	statusMu       sync.Mutex
 	lspDir         string
 	servers        map[string]*LSPInfo
 	installing     map[string]bool
 	installStates  map[string]InstallState
+	statusCache    map[string]installStatusCacheEntry
 	installTimeout time.Duration
 	onProgress     func(progress InstallProgress)
 	httpClient     *http.Client
@@ -99,6 +109,7 @@ func NewInstaller(onProgress func(InstallProgress)) (*Installer, error) {
 		servers:        make(map[string]*LSPInfo),
 		installing:     make(map[string]bool),
 		installStates:  make(map[string]InstallState),
+		statusCache:    make(map[string]installStatusCacheEntry),
 		installTimeout: 10 * time.Minute,
 		onProgress:     onProgress,
 		httpClient:     &http.Client{Timeout: 5 * time.Minute},
@@ -398,20 +409,21 @@ func uniqueStrings(values []string) []string {
 
 func (i *Installer) GetAllServers() []*LSPInfo {
 	i.mu.RLock()
-	defer i.mu.RUnlock()
-
 	result := make([]*LSPInfo, 0, len(i.servers))
 	for _, s := range i.servers {
 		info := *s
-		info.Installed, info.Version = i.checkInstalled(s)
 		result = append(result, &info)
+	}
+	i.mu.RUnlock()
+
+	for _, info := range result {
+		info.Installed, info.Version = i.checkInstalled(info)
 	}
 	return result
 }
 
 func (i *Installer) GetServerForExtension(ext string) *LSPInfo {
 	i.mu.RLock()
-	defer i.mu.RUnlock()
 
 	ext = strings.ToLower(ext)
 	if !strings.HasPrefix(ext, ".") {
@@ -422,21 +434,31 @@ func (i *Installer) GetServerForExtension(ext string) *LSPInfo {
 		for _, e := range s.Extensions {
 			if strings.EqualFold(e, ext) {
 				info := *s
-				info.Installed, info.Version = i.checkInstalled(s)
+				i.mu.RUnlock()
+				info.Installed, info.Version = i.checkInstalled(&info)
 				return &info
 			}
 		}
 	}
+	i.mu.RUnlock()
 	return nil
 }
 
 func (i *Installer) GetServerByID(id string) *LSPInfo {
+	info := i.getServerByIDMetadata(id)
+	if info == nil {
+		return nil
+	}
+	info.Installed, info.Version = i.checkInstalled(info)
+	return info
+}
+
+func (i *Installer) getServerByIDMetadata(id string) *LSPInfo {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 
 	if s, ok := i.servers[id]; ok {
 		info := *s
-		info.Installed, info.Version = i.checkInstalled(s)
 		return &info
 	}
 	return nil
@@ -510,6 +532,7 @@ func (i *Installer) beginInstall(id string) (*LSPInfo, bool, error) {
 	}
 	i.mu.Unlock()
 
+	i.invalidateStatus(id)
 	i.emitProgress(id, "queued", 0, "Queued installation...", "")
 	return &serverCopy, false, nil
 }
@@ -564,6 +587,7 @@ func (i *Installer) runInstall(ctx context.Context, server *LSPInfo) error {
 		return err
 	}
 
+	i.invalidateStatus(id)
 	if installed, _ := i.checkInstalled(server); !installed {
 		err := fmt.Errorf("%s finished but %s was not found", server.Name, server.BinaryName)
 		i.emitProgress(id, "error", 0, "", err.Error())
@@ -1212,17 +1236,34 @@ func (i *Installer) checkInstalled(server *LSPInfo) (bool, string) {
 	if path == "" {
 		return false, ""
 	}
+	cacheKey := installStatusCacheKey(server.ID, path)
+	i.statusMu.Lock()
+	if i.statusCache == nil {
+		i.statusCache = make(map[string]installStatusCacheEntry)
+	}
+	if cached, ok := i.statusCache[cacheKey]; ok && time.Since(cached.checkedAt) < lspInstallStatusCacheTTL {
+		i.statusMu.Unlock()
+		return cached.installed, cached.version
+	}
 	version := i.getVersion(path, server.ID)
+	i.statusCache[cacheKey] = installStatusCacheEntry{
+		installed: true,
+		version:   version,
+		checkedAt: time.Now(),
+	}
+	i.statusMu.Unlock()
 	return true, version
 }
 
 func (i *Installer) getVersion(path, id string) string {
 	var cmd *exec.Cmd
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	switch id {
 	case "gopls":
-		cmd = exec.Command(path, "version")
+		cmd = exec.CommandContext(ctx, path, "version")
 	default:
-		cmd = exec.Command(path, "--version")
+		cmd = exec.CommandContext(ctx, path, "--version")
 	}
 
 	output, err := cmd.Output()
@@ -1237,12 +1278,39 @@ func (i *Installer) getVersion(path, id string) string {
 	return version
 }
 
+func installStatusCacheKey(id, binaryPath string) string {
+	return strings.TrimSpace(id) + "\x00" + strings.TrimSpace(binaryPath)
+}
+
+func (i *Installer) invalidateStatus(id string) {
+	i.statusMu.Lock()
+	defer i.statusMu.Unlock()
+	if i.statusCache == nil {
+		return
+	}
+	if strings.TrimSpace(id) == "" {
+		clear(i.statusCache)
+		return
+	}
+	prefix := strings.TrimSpace(id) + "\x00"
+	deleted := false
+	for key := range i.statusCache {
+		if strings.HasPrefix(key, prefix) {
+			delete(i.statusCache, key)
+			deleted = true
+		}
+	}
+	if !deleted {
+		clear(i.statusCache)
+	}
+}
+
 func (i *Installer) GetBinaryPath(id string) string {
 	return i.GetBinaryPathForRoot(id, "")
 }
 
 func (i *Installer) GetBinaryPathForRoot(id, rootPath string) string {
-	server := i.GetServerByID(id)
+	server := i.getServerByIDMetadata(id)
 	if server == nil {
 		return ""
 	}
@@ -1250,7 +1318,7 @@ func (i *Installer) GetBinaryPathForRoot(id, rootPath string) string {
 }
 
 func (i *Installer) GetBinaryPathForRoots(id string, rootPaths []string) string {
-	server := i.GetServerByID(id)
+	server := i.getServerByIDMetadata(id)
 	if server == nil {
 		return ""
 	}

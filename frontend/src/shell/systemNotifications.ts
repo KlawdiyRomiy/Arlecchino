@@ -229,7 +229,7 @@ export const useSystemNotifications = (): void => {
           }
 
           const signature = lspNotificationSignature(runtimeStatus);
-          if (signature === lastLSPRuntimeSignatureRef.current) {
+          if (Object.is(signature, lastLSPRuntimeSignatureRef.current)) {
             return;
           }
 

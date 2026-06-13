@@ -1956,6 +1956,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
     const offProgress = EventsOn<[LSPInstallEvent]>(
       "lsp:install:progress",
       (event) => {
@@ -1969,7 +1973,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           { ...event, stage: event.stage || "done" },
           false,
         );
-        void refreshAutocompleteCapabilities();
+        if (activeTab === "diagnostics") {
+          void refreshAutocompleteCapabilities();
+        }
       },
     );
     const offError = EventsOn<[LSPInstallEvent]>(
@@ -1979,13 +1985,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           { ...event, stage: event.stage || "error" },
           false,
         );
-        void refreshAutocompleteCapabilities();
+        if (activeTab === "diagnostics") {
+          void refreshAutocompleteCapabilities();
+        }
       },
     );
     const offRuntimeRefreshed = EventsOn<[unknown]>(
       "depsync:runtime-refreshed",
       () => {
-        void refreshAutocompleteCapabilities();
+        if (activeTab === "diagnostics") {
+          void refreshAutocompleteCapabilities();
+        }
       },
     );
 
@@ -1995,7 +2005,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       offError();
       offRuntimeRefreshed();
     };
-  }, [recordAutocompleteInstallEvent, refreshAutocompleteCapabilities]);
+  }, [
+    activeTab,
+    isOpen,
+    recordAutocompleteInstallEvent,
+    refreshAutocompleteCapabilities,
+  ]);
 
   useEffect(() => {
     const unsubscribe = EventsOn<[AIPredictionStatus]>(
