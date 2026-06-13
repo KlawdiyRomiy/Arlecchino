@@ -35,6 +35,7 @@ func NewCacheManager(cfg CacheConfig) (*CacheManager, error) {
 		NumCounters: cfg.NumCounters,
 		MaxCost:     cfg.ASTMaxCost,
 		BufferItems: cfg.BufferItems,
+		Metrics:     true,
 	})
 	if err != nil {
 		return nil, err
@@ -44,6 +45,7 @@ func NewCacheManager(cfg CacheConfig) (*CacheManager, error) {
 		NumCounters: cfg.NumCounters / 2,
 		MaxCost:     cfg.SymbolMaxCost,
 		BufferItems: cfg.BufferItems,
+		Metrics:     true,
 	})
 	if err != nil {
 		astCache.Close()
@@ -54,6 +56,7 @@ func NewCacheManager(cfg CacheConfig) (*CacheManager, error) {
 		NumCounters: cfg.NumCounters / 4,
 		MaxCost:     cfg.GeneralMaxCost,
 		BufferItems: cfg.BufferItems,
+		Metrics:     true,
 	})
 	if err != nil {
 		astCache.Close()

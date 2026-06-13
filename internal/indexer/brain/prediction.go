@@ -1708,7 +1708,7 @@ func (b *PredictionBrain) fromLocal(ctx CompletionContext) []Suggestion {
 		}
 
 		// Boost exact prefix match
-		if strings.ToLower(sym.Name) == strings.ToLower(ctx.Prefix) && (sym.Kind == "function" || sym.Kind == "method") {
+		if strings.EqualFold(sym.Name, ctx.Prefix) && (sym.Kind == "function" || sym.Kind == "method") {
 			score += 1.0
 		}
 

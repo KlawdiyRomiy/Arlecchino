@@ -585,12 +585,8 @@ func (ai *AutoImporter) findImportInsertLine(content []byte, language string) in
 
 	case "python":
 		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
 			if ai.pyImportRegex.MatchString(line) {
 				lastImportLine = i + 2
-			}
-			if strings.HasPrefix(trimmed, "\"\"\"") || strings.HasPrefix(trimmed, "'''") {
-				continue
 			}
 		}
 		if lastImportLine == 0 {
