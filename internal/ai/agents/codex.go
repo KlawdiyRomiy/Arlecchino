@@ -29,6 +29,7 @@ const (
 	codexProtocolLineLimit   = 1024 * 1024
 	codexShortProbeTimeout   = 2 * time.Second
 	codexModelCatalogTimeout = 10 * time.Second
+	codexDescriptorCacheTTL  = 2 * time.Minute
 	codexAdapterVersion      = "arlecchino-codex-runtime-v1"
 	codexCompatibilityRange  = "codex-cli 0.130.x"
 )
@@ -39,6 +40,7 @@ var emailLikeTerminalPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+\-]+@[A-Z0-9.\
 type CodexAdapter struct {
 	binary   string
 	mu       sync.Mutex
+	probeMu  sync.Mutex
 	cached   Descriptor
 	cachedAt time.Time
 }
@@ -73,12 +75,24 @@ func (a *CodexAdapter) ID() string {
 
 func (a *CodexAdapter) Descriptor(ctx context.Context) Descriptor {
 	a.mu.Lock()
-	if !a.cachedAt.IsZero() && time.Since(a.cachedAt) < 10*time.Second {
+	if !a.cachedAt.IsZero() && time.Since(a.cachedAt) < codexDescriptorCacheTTL {
 		cached := a.cached
 		a.mu.Unlock()
 		return cached
 	}
 	a.mu.Unlock()
+
+	a.probeMu.Lock()
+	defer a.probeMu.Unlock()
+
+	a.mu.Lock()
+	if !a.cachedAt.IsZero() && time.Since(a.cachedAt) < codexDescriptorCacheTTL {
+		cached := a.cached
+		a.mu.Unlock()
+		return cached
+	}
+	a.mu.Unlock()
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	descriptor := Descriptor{
 		ID:                 codexAdapterID,

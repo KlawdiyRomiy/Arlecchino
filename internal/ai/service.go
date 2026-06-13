@@ -59,7 +59,22 @@ type Service struct {
 	runtimes          *providerRuntimeManager
 	agents            *agents.Registry
 	predictionBudget  *predictionBudgetLedger
+	providerCacheMu   sync.Mutex
+	providerListCache providerDescriptorCacheEntry
+	runtimeListCache  providerRuntimeCacheEntry
 	started           bool
+}
+
+const providerDescriptorCacheTTL = 30 * time.Second
+
+type providerDescriptorCacheEntry struct {
+	descriptors []providers.AIProviderDescriptor
+	expiresAt   time.Time
+}
+
+type providerRuntimeCacheEntry struct {
+	runtimes  []AIProviderRuntimeDescriptor
+	expiresAt time.Time
 }
 
 type ProjectSession struct {
@@ -380,6 +395,18 @@ func (s *Service) SavePredictionSettings(settings AIPredictionSettings) (AIPredi
 }
 
 func (s *Service) ListProviders() []providers.AIProviderDescriptor {
+	if s == nil {
+		return nil
+	}
+	if cached, ok := s.cachedProviderDescriptors(); ok {
+		return cached
+	}
+	descriptors := s.collectProviderDescriptors(true)
+	s.storeProviderDescriptorCache(descriptors)
+	return cloneProviderDescriptors(descriptors)
+}
+
+func (s *Service) collectProviderDescriptors(probeAgents bool) []providers.AIProviderDescriptor {
 	s.mu.RLock()
 	byID := make(map[string]providers.AIProviderDescriptor, len(s.descriptors))
 	for _, descriptor := range s.descriptors {
@@ -388,15 +415,25 @@ func (s *Service) ListProviders() []providers.AIProviderDescriptor {
 		}
 	}
 	s.mu.RUnlock()
-	if s.agents != nil {
+	agentDescriptors := []providers.AIProviderDescriptor{}
+	if probeAgents && s.agents != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
 		defer cancel()
 		for _, descriptor := range s.agents.Descriptors(ctx) {
 			providerDescriptor := agents.DescriptorToProvider(descriptor)
 			if providerDescriptor.ID != "" {
-				byID[providerDescriptor.ID] = providers.EnrichProviderDescriptorModels(providerDescriptor)
+				providerDescriptor = providers.EnrichProviderDescriptorModels(providerDescriptor)
+				byID[providerDescriptor.ID] = providerDescriptor
+				agentDescriptors = append(agentDescriptors, providerDescriptor)
 			}
 		}
+	}
+	if len(agentDescriptors) > 0 {
+		s.mu.Lock()
+		for _, descriptor := range agentDescriptors {
+			s.descriptors[descriptor.ID] = descriptor
+		}
+		s.mu.Unlock()
 	}
 	result := make([]providers.AIProviderDescriptor, 0, len(byID))
 	for _, descriptor := range byID {
@@ -404,6 +441,48 @@ func (s *Service) ListProviders() []providers.AIProviderDescriptor {
 	}
 	sortDescriptors(result)
 	return result
+}
+
+func (s *Service) cachedProviderDescriptors() ([]providers.AIProviderDescriptor, bool) {
+	if s == nil {
+		return nil, false
+	}
+	now := time.Now()
+	s.providerCacheMu.Lock()
+	defer s.providerCacheMu.Unlock()
+	if s.providerListCache.expiresAt.IsZero() || !now.Before(s.providerListCache.expiresAt) {
+		return nil, false
+	}
+	return cloneProviderDescriptors(s.providerListCache.descriptors), true
+}
+
+func (s *Service) storeProviderDescriptorCache(descriptors []providers.AIProviderDescriptor) {
+	if s == nil {
+		return
+	}
+	s.providerCacheMu.Lock()
+	defer s.providerCacheMu.Unlock()
+	s.providerListCache = providerDescriptorCacheEntry{
+		descriptors: cloneProviderDescriptors(descriptors),
+		expiresAt:   time.Now().Add(providerDescriptorCacheTTL),
+	}
+	s.runtimeListCache = providerRuntimeCacheEntry{}
+}
+
+func (s *Service) refreshProviderDescriptorCacheFromState() []providers.AIProviderDescriptor {
+	descriptors := s.collectProviderDescriptors(false)
+	s.storeProviderDescriptorCache(descriptors)
+	return cloneProviderDescriptors(descriptors)
+}
+
+func (s *Service) invalidateProviderCaches() {
+	if s == nil {
+		return
+	}
+	s.providerCacheMu.Lock()
+	s.providerListCache = providerDescriptorCacheEntry{}
+	s.runtimeListCache = providerRuntimeCacheEntry{}
+	s.providerCacheMu.Unlock()
 }
 
 func (s *Service) SaveProviderSettings(ctx context.Context, providerSettings providers.AIProviderSettings) (providers.AIProviderDescriptor, error) {
@@ -479,6 +558,7 @@ func (s *Service) SaveProviderSettings(ctx context.Context, providerSettings pro
 	s.registerConfiguredProvidersLocked()
 	descriptor := s.descriptors[providerSettings.ID]
 	s.mu.Unlock()
+	s.refreshProviderDescriptorCacheFromState()
 	s.emitEvent("ai:provider:status", descriptor)
 	return descriptor, nil
 }
@@ -541,6 +621,7 @@ func (s *Service) refreshLocalProviders(ctx context.Context, candidates []provid
 			delete(s.providers, descriptor.ID)
 			s.descriptors[descriptor.ID] = descriptor
 			s.mu.Unlock()
+			s.invalidateProviderCaches()
 			s.emitEvent("ai:provider:status", descriptor)
 			continue
 		}
@@ -549,6 +630,7 @@ func (s *Service) refreshLocalProviders(ctx context.Context, candidates []provid
 		s.providers[descriptor.ID] = provider
 		s.descriptors[descriptor.ID] = descriptor
 		s.mu.Unlock()
+		s.invalidateProviderCaches()
 		discovered = append(discovered, descriptor)
 		s.emitEvent("ai:provider:status", descriptor)
 	}
@@ -565,6 +647,7 @@ func (s *Service) refreshLocalProviders(ctx context.Context, candidates []provid
 	}
 	s.mu.Unlock()
 	result := AIDiscoveryResult{Providers: discovered, CheckedAt: utcNow()}
+	s.refreshProviderDescriptorCacheFromState()
 	s.emitEvent("ai:discovery:completed", result)
 	return result, nil
 }
@@ -598,6 +681,7 @@ func (s *Service) TestProvider(ctx context.Context, providerID string) (provider
 	s.mu.Lock()
 	s.descriptors[descriptor.ID] = descriptor
 	s.mu.Unlock()
+	s.refreshProviderDescriptorCacheFromState()
 	s.emitEvent("ai:provider:status", descriptor)
 	if descriptor.Status != providers.ProviderStatusReady {
 		return descriptor, errors.New(descriptor.Reason)
@@ -1684,16 +1768,6 @@ func descriptorFromSettings(setting providers.AIProviderSettings) providers.AIPr
 	return descriptorFromSpec(setting, spec, providers.ProviderStatusDisabled)
 }
 
-func isLocalProviderKind(kind string) bool {
-	spec, ok := providerSpecForKind(kind)
-	return ok && spec.Local
-}
-
-func isFrontierProviderKind(kind string) bool {
-	spec, ok := providerSpecForKind(kind)
-	return ok && spec.Frontier
-}
-
 func providerSettingsCanBecomeActive(setting providers.AIProviderSettings) bool {
 	spec, ok := providerSpecForKind(setting.Kind)
 	if !ok || spec.Factory == nil {
@@ -2030,4 +2104,36 @@ func sortDescriptors(descriptors []providers.AIProviderDescriptor) {
 			}
 		}
 	}
+}
+
+func cloneProviderDescriptors(descriptors []providers.AIProviderDescriptor) []providers.AIProviderDescriptor {
+	if len(descriptors) == 0 {
+		return nil
+	}
+	out := make([]providers.AIProviderDescriptor, len(descriptors))
+	for i, descriptor := range descriptors {
+		out[i] = cloneProviderDescriptor(descriptor)
+	}
+	return out
+}
+
+func cloneProviderDescriptor(descriptor providers.AIProviderDescriptor) providers.AIProviderDescriptor {
+	descriptor.Capabilities = append([]providers.AIProviderCapability(nil), descriptor.Capabilities...)
+	descriptor.Models = append([]providers.AIModelDescriptor(nil), descriptor.Models...)
+	descriptor.SourceLinks = append([]string(nil), descriptor.SourceLinks...)
+	descriptor.SupportedActions = append([]string(nil), descriptor.SupportedActions...)
+	return descriptor
+}
+
+func cloneProviderRuntimes(runtimes []AIProviderRuntimeDescriptor) []AIProviderRuntimeDescriptor {
+	if len(runtimes) == 0 {
+		return nil
+	}
+	out := make([]AIProviderRuntimeDescriptor, len(runtimes))
+	for i, runtime := range runtimes {
+		out[i] = runtime
+		out[i].Models = append([]AIProviderRuntimeModel(nil), runtime.Models...)
+		out[i].Logs = append([]string(nil), runtime.Logs...)
+	}
+	return out
 }

@@ -44,11 +44,9 @@ func (s *Service) agentProviderDescriptor(providerID string) (providers.AIProvid
 	if s == nil || s.agents == nil || providerID == "" {
 		return providers.AIProviderDescriptor{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
-	defer cancel()
-	for _, descriptor := range s.agents.Descriptors(ctx) {
-		if descriptor.ID == providerID {
-			return agents.DescriptorToProvider(descriptor), true
+	for _, descriptor := range s.ListProviders() {
+		if descriptor.ID == providerID && isExternalAgentProviderDescriptor(descriptor) {
+			return descriptor, true
 		}
 	}
 	return providers.AIProviderDescriptor{}, false
@@ -83,6 +81,7 @@ func (s *Service) refreshAgentProviderDescriptor(ctx context.Context, adapter ag
 	s.mu.Lock()
 	s.descriptors[descriptor.ID] = descriptor
 	s.mu.Unlock()
+	s.refreshProviderDescriptorCacheFromState()
 	s.emitEvent("ai:provider:status", descriptor)
 	return descriptor, true
 }

@@ -236,9 +236,13 @@ type Registry struct {
 }
 
 func NewRegistry() *Registry {
-	registry := &Registry{adapters: map[string]Adapter{}}
+	registry := NewEmptyRegistry()
 	registry.Register(NewCodexAdapter())
 	return registry
+}
+
+func NewEmptyRegistry() *Registry {
+	return &Registry{adapters: map[string]Adapter{}}
 }
 
 func (r *Registry) Register(adapter Adapter) {

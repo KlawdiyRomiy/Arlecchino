@@ -23,6 +23,7 @@ const (
 	localRuntimeStatusStopped     = "stopped"
 	localRuntimeStatusStarting    = "starting"
 	localRuntimeStatusRunning     = "running"
+	providerRuntimeCacheTTL       = 10 * time.Second
 )
 
 type AIProviderRuntimeModel struct {
@@ -105,6 +106,9 @@ func (s *Service) ListProviderRuntimes() []AIProviderRuntimeDescriptor {
 	if s == nil {
 		return []AIProviderRuntimeDescriptor{}
 	}
+	if cached, ok := s.cachedProviderRuntimes(); ok {
+		return cached
+	}
 	descriptors := s.ListProviders()
 	runtimes := make([]AIProviderRuntimeDescriptor, 0, len(descriptors))
 	for _, descriptor := range descriptors {
@@ -113,7 +117,33 @@ func (s *Service) ListProviderRuntimes() []AIProviderRuntimeDescriptor {
 	sort.SliceStable(runtimes, func(i, j int) bool {
 		return runtimeSortRank(runtimes[i].Kind) < runtimeSortRank(runtimes[j].Kind)
 	})
-	return runtimes
+	s.storeProviderRuntimeCache(runtimes)
+	return cloneProviderRuntimes(runtimes)
+}
+
+func (s *Service) cachedProviderRuntimes() ([]AIProviderRuntimeDescriptor, bool) {
+	if s == nil {
+		return nil, false
+	}
+	now := time.Now()
+	s.providerCacheMu.Lock()
+	defer s.providerCacheMu.Unlock()
+	if s.runtimeListCache.expiresAt.IsZero() || !now.Before(s.runtimeListCache.expiresAt) {
+		return nil, false
+	}
+	return cloneProviderRuntimes(s.runtimeListCache.runtimes), true
+}
+
+func (s *Service) storeProviderRuntimeCache(runtimes []AIProviderRuntimeDescriptor) {
+	if s == nil {
+		return
+	}
+	s.providerCacheMu.Lock()
+	defer s.providerCacheMu.Unlock()
+	s.runtimeListCache = providerRuntimeCacheEntry{
+		runtimes:  cloneProviderRuntimes(runtimes),
+		expiresAt: time.Now().Add(providerRuntimeCacheTTL),
+	}
 }
 
 func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntimeStartRequest) (AIProviderRuntimeDescriptor, error) {
@@ -202,6 +232,7 @@ func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntim
 	}
 	s.runtimes.processes[descriptor.ID] = process
 	s.runtimes.mu.Unlock()
+	s.invalidateProviderCaches()
 	go collectRuntimeLogs(process, stdout)
 	go collectRuntimeLogs(process, stderr)
 	go func() {
@@ -209,6 +240,7 @@ func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntim
 		s.runtimes.mu.Lock()
 		if s.runtimes.processes[descriptor.ID] == process {
 			delete(s.runtimes.processes, descriptor.ID)
+			s.invalidateProviderCaches()
 		}
 		s.runtimes.mu.Unlock()
 	}()
@@ -252,6 +284,7 @@ func (s *Service) StopProviderRuntime(ctx context.Context, providerID string) (A
 	process := s.runtimes.processes[providerID]
 	delete(s.runtimes.processes, providerID)
 	s.runtimes.mu.Unlock()
+	s.invalidateProviderCaches()
 	if process == nil {
 		return s.runtimeDescriptorForProvider(descriptor), nil
 	}
