@@ -1158,7 +1158,7 @@ const createDiagnosticTooltip = (
   return {
     pos: anchor,
     above: true,
-    arrow: true,
+    arrow: false,
     create() {
       const dom = document.createElement("div");
       dom.className = `cm-diagnostic-tooltip cm-diagnostic-tooltip-${primary.severity}`;
