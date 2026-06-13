@@ -1142,6 +1142,62 @@ const readNoDragStyles = async (
   }, selector);
 };
 
+const readPanelResizeHoverState = async (
+  page: Parameters<typeof test>[0]["page"],
+  panelTestId: string,
+  handleTestId: string,
+): Promise<{
+  computedCursor: string;
+  handleWidth: number;
+  hitResizeHandle: string;
+  hitTestId: string;
+}> => {
+  return page.evaluate(
+    ({ panelTestId, handleTestId }) => {
+      const panels = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `[data-testid="${panelTestId}"]`,
+        ),
+      );
+      const panel = panels[panels.length - 1] ?? null;
+      const handles = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `[data-testid="${handleTestId}"]`,
+        ),
+      );
+      const handle = handles[handles.length - 1] ?? null;
+      if (!panel || !handle) {
+        return {
+          computedCursor: "",
+          handleWidth: 0,
+          hitResizeHandle: "",
+          hitTestId: "",
+        };
+      }
+
+      const panelRect = panel.getBoundingClientRect();
+      const handleRect = handle.getBoundingClientRect();
+      const hitTarget = document.elementFromPoint(
+        panelRect.right - 18,
+        panelRect.top + panelRect.height / 2,
+      ) as HTMLElement | null;
+      const hitHandle = hitTarget?.closest<HTMLElement>(
+        '[data-panel-resize-handle="true"]',
+      );
+      const hitTestElement = hitTarget?.closest<HTMLElement>("[data-testid]");
+
+      return {
+        computedCursor: getComputedStyle(handle).cursor,
+        handleWidth: Math.round(handleRect.width),
+        hitResizeHandle:
+          hitHandle?.getAttribute("data-panel-resize-handle") ?? "",
+        hitTestId: hitTestElement?.dataset.testid ?? "",
+      };
+    },
+    { panelTestId, handleTestId },
+  );
+};
+
 const expectRectStable = (
   current: Awaited<ReturnType<typeof readElementRect>>,
   baseline: Awaited<ReturnType<typeof readElementRect>>,
@@ -4541,6 +4597,31 @@ test("browser preview avoids top snapped panels", async ({ page }) => {
   expect(explorerBox).not.toBeNull();
   expect(previewBox).not.toBeNull();
   expectNoBoxOverlap(explorerBox, previewBox);
+});
+
+test("snapped panel resize rail owns hover hit testing before drag", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-explorer"]').last();
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+
+  await expect
+    .poll(() =>
+      readPanelResizeHoverState(
+        page,
+        "panel-explorer",
+        "panel-explorer-resize-e",
+      ),
+    )
+    .toEqual({
+      computedCursor: "ew-resize",
+      handleWidth: 24,
+      hitResizeHandle: "true",
+      hitTestId: "panel-explorer-resize-e",
+    });
 });
 
 test("browser preview resizes from the inner edge across iframe content", async ({
