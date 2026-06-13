@@ -2,6 +2,8 @@ module arlecchino
 
 go 1.26.0
 
+toolchain go1.26.4
+
 require (
 	github.com/RoaringBitmap/roaring/v2 v2.18.0
 	github.com/cespare/xxhash/v2 v2.3.0
