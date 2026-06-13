@@ -637,7 +637,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	if releaseBufferedProviderResponse && len(toolCallRequests) == 0 {
 		s.emitBufferedChatResponseToken(runID, finalResponse)
 	}
-	executedToolCalls := []chatExecutedToolCall{}
+	var executedToolCalls []chatExecutedToolCall
 	if chatRequestUsesToolLoop(req) {
 		executedToolCalls = s.executeChatToolCalls(ctx, project, runID, req, toolCallRequests)
 		if req.Action == AIChatActionBuild {
@@ -872,7 +872,7 @@ func (s *Service) ensureBuildToolCapability(ctx context.Context, project *Projec
 	}
 	model = strings.TrimSpace(firstNonEmpty(model, descriptor.DefaultModel))
 	if model == "" {
-		return fmt.Errorf("Build mode requires a model before live tool capability probing")
+		return fmt.Errorf("build mode requires a model before live tool capability probing")
 	}
 	if probe, ok := cachedProjectModelCapabilityProbe(project, descriptor.ID, model); ok && modelCapabilityProbeFresh(probe) {
 		if probe.Status == "verified" && probe.ToolSupport {
@@ -2844,15 +2844,6 @@ func isKnownSyntheticChatToolProposal(proposal AIToolProposal) bool {
 	}
 }
 
-func containsCyrillic(value string) bool {
-	for _, r := range value {
-		if unicode.In(r, unicode.Cyrillic) {
-			return true
-		}
-	}
-	return false
-}
-
 func summarizeForMnemonic(prompt string, response string) string {
 	prompt = strings.TrimSpace(sanitizedDisplayText(prompt))
 	response = strings.TrimSpace(cleanGeneratedResponse(response))
@@ -3711,9 +3702,7 @@ func splitFirstLine(value string) (string, string, bool) {
 		}
 		if r == '\r' {
 			rest := value[i+1:]
-			if strings.HasPrefix(rest, "\n") {
-				rest = rest[1:]
-			}
+			rest = strings.TrimPrefix(rest, "\n")
 			return value[:i], rest, true
 		}
 	}

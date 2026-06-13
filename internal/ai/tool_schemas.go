@@ -538,18 +538,6 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 	return tools
 }
 
-func toolCallRequestsFromGenerationResponse(response providers.GenerationResponse) []AIToolCallRequest {
-	calls := chatToolCallRequestsFromGenerationResponse(response)
-	if len(calls) == 0 {
-		return nil
-	}
-	requests := make([]AIToolCallRequest, 0, len(calls))
-	for _, call := range calls {
-		requests = append(requests, call.Request)
-	}
-	return requests
-}
-
 func chatToolCallRequestsFromGenerationResponse(response providers.GenerationResponse) []chatToolCallRequest {
 	if len(response.ToolCalls) == 0 {
 		return nil

@@ -1141,38 +1141,6 @@ func (s *Service) recordAgentWorktreeBaselineDiagnostic(project *ProjectSession,
 	})
 }
 
-func (s *Service) recordAgentBuildEvidenceArtifact(project *ProjectSession, runID string, req AIChatRunRequest, result agents.Result, evidenceState string) {
-	evidenceState = strings.TrimSpace(evidenceState)
-	if !buildEvidenceArtifactStateAccepted(evidenceState) {
-		return
-	}
-	payload := RuntimeBuildEvidence{
-		RunID:     runID,
-		Kind:      evidenceState,
-		Status:    "recorded",
-		Summary:   sanitizedDisplayText(result.Message),
-		Details:   sanitizedDisplayText(result.Transcript),
-		Source:    firstNonEmpty(result.Transport, agents.TransportPTYFallback),
-		CreatedAt: utcNow(),
-		Metadata: map[string]string{
-			"action": string(req.Action),
-			"status": result.Status,
-		},
-	}
-	title := "Agent Build evidence"
-	summary := "Build completed with typed runtime evidence instead of file changes."
-	switch evidenceState {
-	case "explicit_no_change":
-		summary = "Runtime reported an explicit no-change Build result."
-	case "diagnostic_evidence":
-		summary = "Runtime produced diagnostic evidence instead of a patch."
-	case "test_evidence":
-		summary = "Runtime produced test evidence instead of a patch."
-	}
-	s.recordChatRunArtifact(project, runID, AIChatRunArtifactRuntimeEvidence, title, summary, payload)
-	s.recordAgentBuildEvidenceCompatArtifact(project, runID, summary, payload)
-}
-
 func (s *Service) recordAgentRuntimeEvidenceFromEvent(project *ProjectSession, runID string, event agents.Event) {
 	if project == nil || strings.TrimSpace(runID) == "" {
 		return
@@ -1237,10 +1205,6 @@ func (s *Service) agentRuntimeHasBuildEvidenceArtifact(project *ProjectSession, 
 		}
 	}
 	return false
-}
-
-func (s *Service) runHasAnyBuildEvidenceArtifact(project *ProjectSession, runID string) bool {
-	return s.firstRunBuildEvidenceArtifactState(project, runID) != ""
 }
 
 func (s *Service) firstRunBuildEvidenceArtifactState(project *ProjectSession, runID string) string {
@@ -1584,6 +1548,9 @@ func (s *Service) emitAgentCapturedDiffAppliedEvents(project *ProjectSession, ar
 }
 
 func (s *Service) recordBlockedCapturedDiff(project *ProjectSession, runID string, req AIChatRunRequest, diff string, baseline agentWorktreeBaseline, reason string) AIChatRunArtifact {
+	if project == nil {
+		return AIChatRunArtifact{}
+	}
 	payload := AIPatchArtifactPayload{
 		UnifiedDiff: ensurePatchTrailingNewline(diff),
 		CheckReady:  false,
@@ -1610,7 +1577,7 @@ func (s *Service) recordBlockedCapturedDiff(project *ProjectSession, runID strin
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
-	if project != nil && project.ChatArtifacts != nil {
+	if project.ChatArtifacts != nil {
 		if err := project.ChatArtifacts.Upsert(artifact); err == nil {
 			s.emitChatArtifactChanged(project, artifact, "ai:agent:captured-diff-blocked")
 		}

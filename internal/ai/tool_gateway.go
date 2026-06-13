@@ -438,10 +438,6 @@ func (s *Service) recordToolLifecycleArtifact(project *ProjectSession, result AI
 	return artifact, true
 }
 
-func toolCallArtifactSummary(result AIToolCallResult, proposal AIToolProposal) string {
-	return toolLifecycleArtifactSummary(firstNonEmpty(result.Status, "recorded"), result, proposal)
-}
-
 func toolLifecycleArtifactSummary(status string, result AIToolCallResult, proposal AIToolProposal) string {
 	parts := []string{firstNonEmpty(result.Status, "recorded")}
 	if status != "" && status != result.Status {
@@ -645,7 +641,7 @@ func (s *Service) executeTerminalTool(ctx context.Context, project *ProjectSessi
 
 func (s *Service) executeGitPreviewTool(ctx context.Context, project *ProjectSession, req AIToolCallRequest, result AIToolCallResult) AIToolCallResult {
 	op := strings.TrimSpace(req.Arguments["op"])
-	args := []string{"status", "--short"}
+	var args []string
 	switch op {
 	case "", "status":
 		args = []string{"status", "--short"}

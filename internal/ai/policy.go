@@ -81,9 +81,8 @@ func (s *Service) SaveApprovalPolicy(projectID string, policy AIApprovalPolicy) 
 	}
 	s.settings = saved
 	s.settingsPath = path
-	stored := s.settings.ApprovalPolicy
 	s.mu.Unlock()
-	stored = s.approvalPolicyForProject(project)
+	stored := s.approvalPolicyForProject(project)
 	s.emitEvent("ai:approval:policy-updated", stored)
 	return stored, nil
 }
@@ -108,9 +107,8 @@ func (s *Service) RevokeApprovalPolicy(projectID string) (AIApprovalPolicy, erro
 	}
 	s.settings = saved
 	s.settingsPath = path
-	stored := s.settings.ApprovalPolicy
 	s.mu.Unlock()
-	stored = s.approvalPolicyForProject(project)
+	stored := s.approvalPolicyForProject(project)
 	s.emitEvent("ai:approval:policy-revoked", stored)
 	return stored, nil
 }

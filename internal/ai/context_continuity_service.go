@@ -86,7 +86,7 @@ func (s *Service) AICompactChatSession(projectID string, req AIContextCompaction
 		return AIContextCompactionResult{}, fmt.Errorf("AI project session is not open")
 	}
 	if project.Mnemonic == nil || !project.Mnemonic.Enabled() {
-		return AIContextCompactionResult{}, fmt.Errorf("Mnemonic is disabled, so shared AI memory context is disabled")
+		return AIContextCompactionResult{}, fmt.Errorf("mnemonic is disabled, so shared AI memory context is disabled")
 	}
 	if req.ModelAssisted {
 		return AIContextCompactionResult{}, fmt.Errorf("model-assisted context compaction is not implemented in the current local compaction path; deterministic local compaction avoids hidden provider egress")
@@ -263,8 +263,6 @@ func turnRetrievalTags(req AIChatRunRequest, summary AIContextSummary) []string 
 	if summary.FilePath != "" {
 		tags = append(tags, filepath.Base(summary.FilePath))
 	}
-	for _, category := range summary.DataCategories {
-		tags = append(tags, category)
-	}
+	tags = append(tags, summary.DataCategories...)
 	return compactStringList(tags)
 }

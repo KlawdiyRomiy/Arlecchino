@@ -517,10 +517,6 @@ func providerEnvelopeFromDescriptor(descriptor AIProviderDescriptor, model strin
 	}
 }
 
-func (s *Service) egressSummaryForRun(project *ProjectSession, run AIChatRun) *AIEgressSummary {
-	return s.egressSummaryForRunRecords(project, run, nil)
-}
-
 func (s *Service) egressSummaryForRunRecords(project *ProjectSession, run AIChatRun, recordsOverride *[]AIEgressRecord) *AIEgressSummary {
 	if project == nil || project.Egress == nil {
 		return nil

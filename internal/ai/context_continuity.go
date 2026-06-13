@@ -988,8 +988,7 @@ func (s *ContextContinuityStore) RecordRetrieval(event contextRetrievalEvent) er
 	}
 	event.ProjectSessionID = normalizeProjectID(event.ProjectSessionID)
 	event.ChatSessionID = normalizeChatSessionID(event.ChatSessionID)
-	redaction := AIRedactionSummary{}
-	event.QueryText, redaction = sanitizeText(event.QueryText, redaction)
+	event.QueryText, _ = sanitizeText(event.QueryText, AIRedactionSummary{})
 	event.QueryText = truncateUTF8(event.QueryText, 500)
 	event.QueryTags = sanitizeStringValues(event.QueryTags)
 	event.SelectedCapsuleIDs = compactStringList(event.SelectedCapsuleIDs)

@@ -6,18 +6,6 @@ import (
 	"arlecchino/internal/ai/agents"
 )
 
-const (
-	runtimePermissionContextRead           = "context_read"
-	runtimePermissionFileWriteProject      = "file_write_project"
-	runtimePermissionTerminalReadOnly      = "terminal_readonly"
-	runtimePermissionTerminalCommand       = "terminal_command"
-	runtimePermissionNetworkLoopback       = "network_loopback"
-	runtimePermissionMCPTool               = "mcp_tool"
-	runtimePermissionSubagent              = "subagent"
-	runtimePermissionExternalNetworkDenied = "external_network_denied"
-	runtimePermissionOutsideProjectDenied  = "outside_project_denied"
-)
-
 type RuntimeStepState string
 
 const (

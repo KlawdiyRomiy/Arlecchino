@@ -174,7 +174,7 @@ func keychainStatusError(operation string, status C.OSStatus) error {
 	if status == C.errSecItemNotFound {
 		return ErrSecretNotFound
 	}
-	return fmt.Errorf("Keychain secret %s failed: OSStatus %d", operation, int(status))
+	return fmt.Errorf("keychain secret %s failed: OSStatus %d", operation, int(status))
 }
 
 func ctxErr(ctx context.Context) error {
