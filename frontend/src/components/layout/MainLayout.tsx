@@ -3248,457 +3248,502 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     ],
   );
 
-  const findVisibleSnappedPanelAtPosition = (
-    position: PanelPosition,
-    options: { exclude?: PanelId[] } = {},
-  ): PanelId | null => {
-    const excludedPanels = new Set(options.exclude ?? []);
-    return (
-      (Object.keys(panelConfigsRef.current) as PanelId[]).find((id) => {
-        if (excludedPanels.has(id) || !panelsRef.current[id]) {
-          return false;
+  const findVisibleSnappedPanelAtPosition = useCallback(
+    (
+      position: PanelPosition,
+      options: { exclude?: PanelId[] } = {},
+    ): PanelId | null => {
+      const excludedPanels = new Set(options.exclude ?? []);
+      return (
+        (Object.keys(panelConfigsRef.current) as PanelId[]).find((id) => {
+          if (excludedPanels.has(id) || !panelsRef.current[id]) {
+            return false;
+          }
+
+          const config = panelConfigsRef.current[id];
+          return config.mode === "snapped" && config.position === position;
+        }) ?? null
+      );
+    },
+    [],
+  );
+
+  const findSnappedPreviewWindowAtPosition = useCallback(
+    (
+      position: PanelPosition,
+      options: { excludeWindowIds?: string[] } = {},
+    ): PreviewWindow | null => {
+      const excludedWindowIds = new Set(options.excludeWindowIds ?? []);
+      return (
+        usePreviewWindowStore
+          .getState()
+          .windows.find(
+            (windowState) =>
+              !excludedWindowIds.has(windowState.id) &&
+              windowState.mode === "snapped" &&
+              windowState.position === position,
+          ) ?? null
+      );
+    },
+    [],
+  );
+
+  const isSnappedPositionOccupied = useCallback(
+    (
+      position: PanelPosition,
+      options: {
+        exclude?: PanelId[];
+        excludeWindowIds?: string[];
+      } = {},
+    ): boolean =>
+      Boolean(findVisibleSnappedPanelAtPosition(position, options)) ||
+      Boolean(findSnappedPreviewWindowAtPosition(position, options)),
+    [findSnappedPreviewWindowAtPosition, findVisibleSnappedPanelAtPosition],
+  );
+
+  const findAvailablePanelPosition = useCallback(
+    (
+      options: {
+        preferred?: PanelPosition;
+        exclude?: PanelId[];
+        excludePositions?: PanelPosition[];
+        excludeWindowIds?: string[];
+      } = {},
+    ): PanelPosition | null => {
+      const excludedPositions = new Set(options.excludePositions ?? []);
+      const orderedPositions = [
+        options.preferred,
+        ...PANEL_SHORTCUT_MOVE_POSITIONS,
+      ].filter(
+        (position, index, all): position is PanelPosition =>
+          isPanelPosition(position) && all.indexOf(position) === index,
+      );
+
+      for (const position of orderedPositions) {
+        if (excludedPositions.has(position)) {
+          continue;
+        }
+        if (!isSnappedPositionOccupied(position, options)) {
+          return position;
+        }
+      }
+
+      return null;
+    },
+    [isSnappedPositionOccupied],
+  );
+
+  const getFloatingDisplacementFrame = useCallback(
+    (
+      position: PanelPosition,
+      size: PanelSize,
+    ): { x: number; y: number; width: number; height: number } => {
+      const width =
+        position === "left" || position === "right"
+          ? Math.max(size.width || 380, 380)
+          : Math.max(size.width || 560, 560);
+      const height =
+        position === "top" || position === "bottom"
+          ? Math.max(size.height || 300, 300)
+          : Math.max(size.height || 420, 420);
+      const safeWidth = Math.min(
+        width,
+        Math.max(320, logicalViewport.width - 64),
+      );
+      const safeHeight = Math.min(
+        height,
+        Math.max(220, logicalViewport.height - 96),
+      );
+      const x =
+        position === "right"
+          ? Math.max(16, logicalViewport.width - safeWidth - 32)
+          : position === "left"
+            ? 32
+            : Math.max(16, Math.round((logicalViewport.width - safeWidth) / 2));
+      const y =
+        position === "bottom"
+          ? Math.max(64, logicalViewport.height - safeHeight - 48)
+          : position === "top"
+            ? 72
+            : Math.max(
+                64,
+                Math.round((logicalViewport.height - safeHeight) / 2),
+              );
+
+      return { x, y, width: safeWidth, height: safeHeight };
+    },
+    [logicalViewport.height, logicalViewport.width],
+  );
+
+  const snapPreviewWindowToPosition = useCallback(
+    (windowState: PreviewWindow, position: PanelPosition): boolean => {
+      const normalizedSize = normalizePreviewWindowSizeForPosition(
+        position,
+        windowState,
+      );
+      return updatePreviewWindow(windowState.id, {
+        mode: "snapped",
+        position,
+        width: normalizedSize.width,
+        height: normalizedSize.height,
+      });
+    },
+    [updatePreviewWindow],
+  );
+
+  const movePreviewWindowToPosition = useCallback(
+    (windowId: string, targetPosition: PanelPosition): boolean => {
+      if (useTerminalStore.getState().tuiModeActive) {
+        return false;
+      }
+
+      const previewWindow = usePreviewWindowStore
+        .getState()
+        .windows.find((windowState) => windowState.id === windowId);
+      if (!previewWindow) {
+        return false;
+      }
+
+      const sourcePosition = previewWindow.position;
+      const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition);
+      const targetPreviewWindow = targetPanel
+        ? null
+        : findSnappedPreviewWindowAtPosition(targetPosition, {
+            excludeWindowIds: [windowId],
+          });
+      const relocatingPanels: PanelId[] = [];
+      const relocatingPreviewWindows = [windowId];
+      const settlingPositions: Array<PanelPosition | null | undefined> = [
+        targetPosition,
+        previewWindow.mode === "snapped" ? sourcePosition : null,
+      ];
+
+      if (
+        previewWindow.mode === "snapped" &&
+        sourcePosition === targetPosition &&
+        !targetPanel &&
+        !targetPreviewWindow
+      ) {
+        return true;
+      }
+
+      if (targetPanel) {
+        relocatingPanels.push(targetPanel);
+        const fallbackPosition =
+          sourcePosition !== targetPosition &&
+          !isSnappedPositionOccupied(sourcePosition, {
+            exclude: [targetPanel],
+            excludeWindowIds: [windowId],
+          })
+            ? sourcePosition
+            : findAvailablePanelPosition({
+                preferred: rememberedSnappedPositionsRef.current[targetPanel],
+                exclude: [targetPanel],
+                excludeWindowIds: [windowId],
+                excludePositions: [targetPosition],
+              });
+
+        const targetConfig = panelConfigsRef.current[targetPanel];
+        const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
+        const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
+          rememberedSnappedPositionsRef.current,
+        );
+        if (fallbackPosition) {
+          settlingPositions.push(fallbackPosition);
+          nextPanelConfigs[targetPanel] = {
+            ...nextPanelConfigs[targetPanel],
+            mode: "snapped",
+            position: fallbackPosition,
+            x: 0,
+            y: 0,
+            size: normalizePanelSizeForPosition(
+              fallbackPosition,
+              targetConfig.size,
+            ),
+          };
+          nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+        } else {
+          const fallbackFrame = getFloatingDisplacementFrame(
+            targetPosition,
+            targetConfig.size,
+          );
+          nextPanelConfigs[targetPanel] = {
+            ...nextPanelConfigs[targetPanel],
+            mode: "floating",
+            x: fallbackFrame.x,
+            y: fallbackFrame.y,
+            size: {
+              width: fallbackFrame.width,
+              height: fallbackFrame.height,
+            },
+          };
         }
 
-        const config = panelConfigsRef.current[id];
-        return config.mode === "snapped" && config.position === position;
-      }) ?? null
-    );
-  };
+        applyPanelConfigsState(nextPanelConfigs);
+        applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      } else if (targetPreviewWindow) {
+        relocatingPreviewWindows.push(targetPreviewWindow.id);
+        const fallbackPosition =
+          sourcePosition !== targetPosition &&
+          !isSnappedPositionOccupied(sourcePosition, {
+            excludeWindowIds: [windowId, targetPreviewWindow.id],
+          })
+            ? sourcePosition
+            : findAvailablePanelPosition({
+                preferred: targetPreviewWindow.position,
+                excludeWindowIds: [windowId, targetPreviewWindow.id],
+                excludePositions: [targetPosition],
+              });
 
-  const findSnappedPreviewWindowAtPosition = (
-    position: PanelPosition,
-    options: { excludeWindowIds?: string[] } = {},
-  ): PreviewWindow | null => {
-    const excludedWindowIds = new Set(options.excludeWindowIds ?? []);
-    return (
-      usePreviewWindowStore
-        .getState()
-        .windows.find(
-          (windowState) =>
-            !excludedWindowIds.has(windowState.id) &&
-            windowState.mode === "snapped" &&
-            windowState.position === position,
-        ) ?? null
-    );
-  };
+        if (fallbackPosition) {
+          settlingPositions.push(fallbackPosition);
 
-  const isSnappedPositionOccupied = (
-    position: PanelPosition,
-    options: {
-      exclude?: PanelId[];
-      excludeWindowIds?: string[];
-    } = {},
-  ): boolean =>
-    Boolean(findVisibleSnappedPanelAtPosition(position, options)) ||
-    Boolean(findSnappedPreviewWindowAtPosition(position, options));
-
-  const findAvailablePanelPosition = (
-    options: {
-      preferred?: PanelPosition;
-      exclude?: PanelId[];
-      excludePositions?: PanelPosition[];
-      excludeWindowIds?: string[];
-    } = {},
-  ): PanelPosition | null => {
-    const excludedPositions = new Set(options.excludePositions ?? []);
-    const orderedPositions = [
-      options.preferred,
-      ...PANEL_SHORTCUT_MOVE_POSITIONS,
-    ].filter(
-      (position, index, all): position is PanelPosition =>
-        isPanelPosition(position) && all.indexOf(position) === index,
-    );
-
-    for (const position of orderedPositions) {
-      if (excludedPositions.has(position)) {
-        continue;
+          if (
+            !snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)
+          ) {
+            return false;
+          }
+        } else {
+          const fallbackFrame = getFloatingDisplacementFrame(targetPosition, {
+            width: targetPreviewWindow.width,
+            height: targetPreviewWindow.height,
+          });
+          if (
+            !updatePreviewWindow(targetPreviewWindow.id, {
+              mode: "floating",
+              x: fallbackFrame.x,
+              y: fallbackFrame.y,
+              width: fallbackFrame.width,
+              height: fallbackFrame.height,
+            })
+          ) {
+            return false;
+          }
+        }
       }
-      if (!isSnappedPositionOccupied(position, options)) {
-        return position;
+
+      startPanelDropSettling({
+        panels: relocatingPanels,
+        previewWindows: relocatingPreviewWindows,
+        positions: uniquePanelPositions(settlingPositions),
+      });
+      return snapPreviewWindowToPosition(previewWindow, targetPosition);
+    },
+    [
+      applyPanelConfigsState,
+      applyRememberedSnappedPositionsState,
+      findAvailablePanelPosition,
+      findSnappedPreviewWindowAtPosition,
+      findVisibleSnappedPanelAtPosition,
+      getFloatingDisplacementFrame,
+      isSnappedPositionOccupied,
+      snapPreviewWindowToPosition,
+      startPanelDropSettling,
+      updatePreviewWindow,
+    ],
+  );
+
+  const movePanelToPositionWithReflow = useCallback(
+    (
+      panelId: PanelId,
+      targetPosition: PanelPosition,
+      size?: Partial<PanelSize>,
+    ): boolean => {
+      if (useTerminalStore.getState().tuiModeActive) {
+        return false;
       }
-    }
 
-    return null;
-  };
+      const currentPanels = panelsRef.current;
+      const currentConfigs = panelConfigsRef.current;
+      const currentConfig = currentConfigs[panelId];
+      const sourcePosition =
+        currentPanels[panelId] && currentConfig.mode === "snapped"
+          ? currentConfig.position
+          : null;
 
-  const getFloatingDisplacementFrame = (
-    position: PanelPosition,
-    size: PanelSize,
-  ): { x: number; y: number; width: number; height: number } => {
-    const width =
-      position === "left" || position === "right"
-        ? Math.max(size.width || 380, 380)
-        : Math.max(size.width || 560, 560);
-    const height =
-      position === "top" || position === "bottom"
-        ? Math.max(size.height || 300, 300)
-        : Math.max(size.height || 420, 420);
-    const safeWidth = Math.min(
-      width,
-      Math.max(320, logicalViewport.width - 64),
-    );
-    const safeHeight = Math.min(
-      height,
-      Math.max(220, logicalViewport.height - 96),
-    );
-    const x =
-      position === "right"
-        ? Math.max(16, logicalViewport.width - safeWidth - 32)
-        : position === "left"
-          ? 32
-          : Math.max(16, Math.round((logicalViewport.width - safeWidth) / 2));
-    const y =
-      position === "bottom"
-        ? Math.max(64, logicalViewport.height - safeHeight - 48)
-        : position === "top"
-          ? 72
-          : Math.max(64, Math.round((logicalViewport.height - safeHeight) / 2));
-
-    return { x, y, width: safeWidth, height: safeHeight };
-  };
-
-  const snapPreviewWindowToPosition = (
-    windowState: PreviewWindow,
-    position: PanelPosition,
-  ): boolean => {
-    const normalizedSize = normalizePreviewWindowSizeForPosition(
-      position,
-      windowState,
-    );
-    return updatePreviewWindow(windowState.id, {
-      mode: "snapped",
-      position,
-      width: normalizedSize.width,
-      height: normalizedSize.height,
-    });
-  };
-
-  const movePreviewWindowToPosition = (
-    windowId: string,
-    targetPosition: PanelPosition,
-  ): boolean => {
-    if (useTerminalStore.getState().tuiModeActive) {
-      return false;
-    }
-
-    const previewWindow = usePreviewWindowStore
-      .getState()
-      .windows.find((windowState) => windowState.id === windowId);
-    if (!previewWindow) {
-      return false;
-    }
-
-    const sourcePosition = previewWindow.position;
-    const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition);
-    const targetPreviewWindow = targetPanel
-      ? null
-      : findSnappedPreviewWindowAtPosition(targetPosition, {
-          excludeWindowIds: [windowId],
+      if (
+        currentPanels[panelId] &&
+        currentConfig.mode === "snapped" &&
+        currentConfig.position === targetPosition
+      ) {
+        const normalizedSize = normalizePanelSizeForPosition(targetPosition, {
+          width: size?.width ?? currentConfig.size.width,
+          height: size?.height ?? currentConfig.size.height,
         });
-    const relocatingPanels: PanelId[] = [];
-    const relocatingPreviewWindows = [windowId];
-    const settlingPositions: Array<PanelPosition | null | undefined> = [
-      targetPosition,
-      previewWindow.mode === "snapped" ? sourcePosition : null,
-    ];
+        const nextSize = {
+          width: size?.width ?? normalizedSize.width,
+          height: size?.height ?? normalizedSize.height,
+        };
+        if (
+          nextSize.width !== currentConfig.size.width ||
+          nextSize.height !== currentConfig.size.height
+        ) {
+          applyPanelConfigsState({
+            ...panelConfigsRef.current,
+            [panelId]: {
+              ...panelConfigsRef.current[panelId],
+              size: nextSize,
+            },
+          });
+        }
+        return true;
+      }
 
-    if (
-      previewWindow.mode === "snapped" &&
-      sourcePosition === targetPosition &&
-      !targetPanel &&
-      !targetPreviewWindow
-    ) {
-      return true;
-    }
-
-    if (targetPanel) {
-      relocatingPanels.push(targetPanel);
-      const fallbackPosition =
-        sourcePosition !== targetPosition &&
-        !isSnappedPositionOccupied(sourcePosition, {
-          exclude: [targetPanel],
-          excludeWindowIds: [windowId],
-        })
-          ? sourcePosition
-          : findAvailablePanelPosition({
-              preferred: rememberedSnappedPositionsRef.current[targetPanel],
-              exclude: [targetPanel],
-              excludeWindowIds: [windowId],
-              excludePositions: [targetPosition],
-            });
-
-      const targetConfig = panelConfigsRef.current[targetPanel];
+      const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition, {
+        exclude: [panelId],
+      });
+      const targetPreviewWindow = targetPanel
+        ? null
+        : findSnappedPreviewWindowAtPosition(targetPosition);
+      const relocatingPanels: PanelId[] = [panelId];
+      const relocatingPreviewWindows: string[] = [];
+      const settlingPositions: Array<PanelPosition | null | undefined> = [
+        targetPosition,
+        sourcePosition,
+      ];
+      const nextPanels = { ...currentPanels, [panelId]: true };
       const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
       const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
         rememberedSnappedPositionsRef.current,
       );
-      if (fallbackPosition) {
-        settlingPositions.push(fallbackPosition);
-        nextPanelConfigs[targetPanel] = {
-          ...nextPanelConfigs[targetPanel],
-          mode: "snapped",
-          position: fallbackPosition,
-          x: 0,
-          y: 0,
-          size: normalizePanelSizeForPosition(
-            fallbackPosition,
+
+      if (targetPanel) {
+        relocatingPanels.push(targetPanel);
+        const fallbackPosition =
+          sourcePosition &&
+          sourcePosition !== targetPosition &&
+          !isSnappedPositionOccupied(sourcePosition, {
+            exclude: [panelId, targetPanel],
+          })
+            ? sourcePosition
+            : findAvailablePanelPosition({
+                preferred: rememberedSnappedPositionsRef.current[targetPanel],
+                exclude: [panelId, targetPanel],
+                excludePositions: [targetPosition],
+              });
+
+        const targetConfig = panelConfigsRef.current[targetPanel];
+        if (fallbackPosition) {
+          settlingPositions.push(fallbackPosition);
+          nextPanelConfigs[targetPanel] = {
+            ...nextPanelConfigs[targetPanel],
+            mode: "snapped",
+            position: fallbackPosition,
+            x: 0,
+            y: 0,
+            size: normalizePanelSizeForPosition(
+              fallbackPosition,
+              targetConfig.size,
+            ),
+          };
+          nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+        } else {
+          const fallbackFrame = getFloatingDisplacementFrame(
+            targetPosition,
             targetConfig.size,
-          ),
-        };
-        nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
-      } else {
-        const fallbackFrame = getFloatingDisplacementFrame(
-          targetPosition,
-          targetConfig.size,
-        );
-        nextPanelConfigs[targetPanel] = {
-          ...nextPanelConfigs[targetPanel],
-          mode: "floating",
-          x: fallbackFrame.x,
-          y: fallbackFrame.y,
-          size: {
-            width: fallbackFrame.width,
-            height: fallbackFrame.height,
-          },
-        };
-      }
-
-      applyPanelConfigsState(nextPanelConfigs);
-      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
-    } else if (targetPreviewWindow) {
-      relocatingPreviewWindows.push(targetPreviewWindow.id);
-      const fallbackPosition =
-        sourcePosition !== targetPosition &&
-        !isSnappedPositionOccupied(sourcePosition, {
-          excludeWindowIds: [windowId, targetPreviewWindow.id],
-        })
-          ? sourcePosition
-          : findAvailablePanelPosition({
-              preferred: targetPreviewWindow.position,
-              excludeWindowIds: [windowId, targetPreviewWindow.id],
-              excludePositions: [targetPosition],
-            });
-
-      if (fallbackPosition) {
-        settlingPositions.push(fallbackPosition);
-
-        if (
-          !snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)
-        ) {
-          return false;
-        }
-      } else {
-        const fallbackFrame = getFloatingDisplacementFrame(targetPosition, {
-          width: targetPreviewWindow.width,
-          height: targetPreviewWindow.height,
-        });
-        if (
-          !updatePreviewWindow(targetPreviewWindow.id, {
+          );
+          nextPanelConfigs[targetPanel] = {
+            ...nextPanelConfigs[targetPanel],
             mode: "floating",
             x: fallbackFrame.x,
             y: fallbackFrame.y,
-            width: fallbackFrame.width,
-            height: fallbackFrame.height,
+            size: {
+              width: fallbackFrame.width,
+              height: fallbackFrame.height,
+            },
+          };
+        }
+        nextPanels[targetPanel] = true;
+      } else if (targetPreviewWindow) {
+        relocatingPreviewWindows.push(targetPreviewWindow.id);
+        const fallbackPosition =
+          sourcePosition &&
+          sourcePosition !== targetPosition &&
+          !isSnappedPositionOccupied(sourcePosition, {
+            exclude: [panelId],
+            excludeWindowIds: [targetPreviewWindow.id],
           })
-        ) {
-          return false;
+            ? sourcePosition
+            : findAvailablePanelPosition({
+                preferred: targetPreviewWindow.position,
+                exclude: [panelId],
+                excludeWindowIds: [targetPreviewWindow.id],
+                excludePositions: [targetPosition],
+              });
+
+        if (fallbackPosition) {
+          settlingPositions.push(fallbackPosition);
+          if (
+            !snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)
+          ) {
+            return false;
+          }
+        } else {
+          const fallbackFrame = getFloatingDisplacementFrame(targetPosition, {
+            width: targetPreviewWindow.width,
+            height: targetPreviewWindow.height,
+          });
+          if (
+            !updatePreviewWindow(targetPreviewWindow.id, {
+              mode: "floating",
+              x: fallbackFrame.x,
+              y: fallbackFrame.y,
+              width: fallbackFrame.width,
+              height: fallbackFrame.height,
+            })
+          ) {
+            return false;
+          }
         }
       }
-    }
 
-    startPanelDropSettling({
-      panels: relocatingPanels,
-      previewWindows: relocatingPreviewWindows,
-      positions: uniquePanelPositions(settlingPositions),
-    });
-    return snapPreviewWindowToPosition(previewWindow, targetPosition);
-  };
-
-  const movePanelToPositionWithReflow = (
-    panelId: PanelId,
-    targetPosition: PanelPosition,
-    size?: Partial<PanelSize>,
-  ): boolean => {
-    if (useTerminalStore.getState().tuiModeActive) {
-      return false;
-    }
-
-    const currentPanels = panelsRef.current;
-    const currentConfigs = panelConfigsRef.current;
-    const currentConfig = currentConfigs[panelId];
-    const sourcePosition =
-      currentPanels[panelId] && currentConfig.mode === "snapped"
-        ? currentConfig.position
-        : null;
-
-    if (
-      currentPanels[panelId] &&
-      currentConfig.mode === "snapped" &&
-      currentConfig.position === targetPosition
-    ) {
       const normalizedSize = normalizePanelSizeForPosition(targetPosition, {
         width: size?.width ?? currentConfig.size.width,
         height: size?.height ?? currentConfig.size.height,
       });
-      const nextSize = {
-        width: size?.width ?? normalizedSize.width,
-        height: size?.height ?? normalizedSize.height,
+      nextPanelConfigs[panelId] = {
+        ...nextPanelConfigs[panelId],
+        mode: "snapped",
+        position: targetPosition,
+        x: 0,
+        y: 0,
+        size: {
+          width: size?.width ?? normalizedSize.width,
+          height: size?.height ?? normalizedSize.height,
+        },
       };
-      if (
-        nextSize.width !== currentConfig.size.width ||
-        nextSize.height !== currentConfig.size.height
-      ) {
-        applyPanelConfigsState({
-          ...panelConfigsRef.current,
-          [panelId]: {
-            ...panelConfigsRef.current[panelId],
-            size: nextSize,
-          },
-        });
+      nextRememberedSnappedPositions[panelId] = targetPosition;
+
+      if (currentPanels[panelId] && currentConfig.mode === "floating") {
+        setFloatingPresenceVersion((version) => version + 1);
       }
+
+      startPanelDropSettling({
+        panels: relocatingPanels,
+        previewWindows: relocatingPreviewWindows,
+        positions: uniquePanelPositions(settlingPositions),
+      });
+      applyPanelsState(nextPanels);
+      applyPanelConfigsState(nextPanelConfigs);
+      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      markActivePanel(panelId);
       return true;
-    }
-
-    const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition, {
-      exclude: [panelId],
-    });
-    const targetPreviewWindow = targetPanel
-      ? null
-      : findSnappedPreviewWindowAtPosition(targetPosition);
-    const relocatingPanels: PanelId[] = [panelId];
-    const relocatingPreviewWindows: string[] = [];
-    const settlingPositions: Array<PanelPosition | null | undefined> = [
-      targetPosition,
-      sourcePosition,
-    ];
-    const nextPanels = { ...currentPanels, [panelId]: true };
-    const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
-    const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
-      rememberedSnappedPositionsRef.current,
-    );
-
-    if (targetPanel) {
-      relocatingPanels.push(targetPanel);
-      const fallbackPosition =
-        sourcePosition &&
-        sourcePosition !== targetPosition &&
-        !isSnappedPositionOccupied(sourcePosition, {
-          exclude: [panelId, targetPanel],
-        })
-          ? sourcePosition
-          : findAvailablePanelPosition({
-              preferred: rememberedSnappedPositionsRef.current[targetPanel],
-              exclude: [panelId, targetPanel],
-              excludePositions: [targetPosition],
-            });
-
-      const targetConfig = panelConfigsRef.current[targetPanel];
-      if (fallbackPosition) {
-        settlingPositions.push(fallbackPosition);
-        nextPanelConfigs[targetPanel] = {
-          ...nextPanelConfigs[targetPanel],
-          mode: "snapped",
-          position: fallbackPosition,
-          x: 0,
-          y: 0,
-          size: normalizePanelSizeForPosition(
-            fallbackPosition,
-            targetConfig.size,
-          ),
-        };
-        nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
-      } else {
-        const fallbackFrame = getFloatingDisplacementFrame(
-          targetPosition,
-          targetConfig.size,
-        );
-        nextPanelConfigs[targetPanel] = {
-          ...nextPanelConfigs[targetPanel],
-          mode: "floating",
-          x: fallbackFrame.x,
-          y: fallbackFrame.y,
-          size: {
-            width: fallbackFrame.width,
-            height: fallbackFrame.height,
-          },
-        };
-      }
-      nextPanels[targetPanel] = true;
-    } else if (targetPreviewWindow) {
-      relocatingPreviewWindows.push(targetPreviewWindow.id);
-      const fallbackPosition =
-        sourcePosition &&
-        sourcePosition !== targetPosition &&
-        !isSnappedPositionOccupied(sourcePosition, {
-          exclude: [panelId],
-          excludeWindowIds: [targetPreviewWindow.id],
-        })
-          ? sourcePosition
-          : findAvailablePanelPosition({
-              preferred: targetPreviewWindow.position,
-              exclude: [panelId],
-              excludeWindowIds: [targetPreviewWindow.id],
-              excludePositions: [targetPosition],
-            });
-
-      if (fallbackPosition) {
-        settlingPositions.push(fallbackPosition);
-        if (
-          !snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)
-        ) {
-          return false;
-        }
-      } else {
-        const fallbackFrame = getFloatingDisplacementFrame(targetPosition, {
-          width: targetPreviewWindow.width,
-          height: targetPreviewWindow.height,
-        });
-        if (
-          !updatePreviewWindow(targetPreviewWindow.id, {
-            mode: "floating",
-            x: fallbackFrame.x,
-            y: fallbackFrame.y,
-            width: fallbackFrame.width,
-            height: fallbackFrame.height,
-          })
-        ) {
-          return false;
-        }
-      }
-    }
-
-    const normalizedSize = normalizePanelSizeForPosition(targetPosition, {
-      width: size?.width ?? currentConfig.size.width,
-      height: size?.height ?? currentConfig.size.height,
-    });
-    nextPanelConfigs[panelId] = {
-      ...nextPanelConfigs[panelId],
-      mode: "snapped",
-      position: targetPosition,
-      x: 0,
-      y: 0,
-      size: {
-        width: size?.width ?? normalizedSize.width,
-        height: size?.height ?? normalizedSize.height,
-      },
-    };
-    nextRememberedSnappedPositions[panelId] = targetPosition;
-
-    if (currentPanels[panelId] && currentConfig.mode === "floating") {
-      setFloatingPresenceVersion((version) => version + 1);
-    }
-
-    startPanelDropSettling({
-      panels: relocatingPanels,
-      previewWindows: relocatingPreviewWindows,
-      positions: uniquePanelPositions(settlingPositions),
-    });
-    applyPanelsState(nextPanels);
-    applyPanelConfigsState(nextPanelConfigs);
-    applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
-    markActivePanel(panelId);
-    return true;
-  };
+    },
+    [
+      applyPanelConfigsState,
+      applyPanelsState,
+      applyRememberedSnappedPositionsState,
+      findAvailablePanelPosition,
+      findSnappedPreviewWindowAtPosition,
+      findVisibleSnappedPanelAtPosition,
+      getFloatingDisplacementFrame,
+      isSnappedPositionOccupied,
+      markActivePanel,
+      snapPreviewWindowToPosition,
+      startPanelDropSettling,
+      updatePreviewWindow,
+    ],
+  );
 
   const resolvePromotionSnapPosition = useCallback(
     (

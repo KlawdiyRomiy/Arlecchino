@@ -92,9 +92,9 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
     () => (typeof items === "function" ? items() : items),
     [items],
   );
-  const [resolvedItems, setResolvedItems] = React.useState<
+  const [dynamicResolvedItems, setDynamicResolvedItems] = React.useState<
     ContextActionMenuItem[]
-  >(() => resolveItems());
+  >(() => (typeof items === "function" ? resolveItems() : []));
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const menuInstanceIdRef = React.useRef(
     `context-menu-${Math.random().toString(36).slice(2, 10)}`,
@@ -124,12 +124,6 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
 
     setOpen(nextOpen);
   }, []);
-
-  React.useEffect(() => {
-    if (typeof items !== "function") {
-      setResolvedItems(items);
-    }
-  }, [items]);
 
   React.useEffect(() => {
     if (!open) {
@@ -185,8 +179,11 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   }, [open]);
 
   const visibleItems = React.useMemo(
-    () => filterVisibleContextItems(resolvedItems),
-    [resolvedItems],
+    () =>
+      filterVisibleContextItems(
+        typeof items === "function" ? dynamicResolvedItems : items,
+      ),
+    [dynamicResolvedItems, items],
   );
 
   React.useEffect(() => {
@@ -225,12 +222,16 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
     }
 
     if (!preferNative || !canUseShellCapability("contextMenu")) {
-      setResolvedItems(resolveItems());
+      if (typeof items === "function") {
+        setDynamicResolvedItems(resolveItems());
+      }
       return;
     }
 
     const nextItems = resolveItems();
-    setResolvedItems(nextItems);
+    if (typeof items === "function") {
+      setDynamicResolvedItems(nextItems);
+    }
     const nextVisibleItems = filterVisibleContextItems(nextItems);
     const nativeItems = buildNativeContextMenuItems(nextVisibleItems);
     const actionRegistry = new Map<string, () => void>();

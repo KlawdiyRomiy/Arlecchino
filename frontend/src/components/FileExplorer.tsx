@@ -299,7 +299,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   );
 
   // Синхронизируем isExpanded из store в файлы
-  const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
+  const getIsExpanded = useCallback(
+    (path: string): boolean => expandedPaths.has(path),
+    [expandedPaths],
+  );
 
   const closePerspective = useCallback(() => {
     document.body.removeAttribute("data-perspective-open");
@@ -2147,25 +2150,54 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
   };
 
-  const toggleDirectory = async (node: FileNode) => {
-    if (!node.isDirectory) return;
+  const toggleDirectory = useCallback(
+    async (node: FileNode) => {
+      if (!node.isDirectory) return;
 
-    const isCurrentlyExpanded = getIsExpanded(node.path);
+      const isCurrentlyExpanded = getIsExpanded(node.path);
 
-    if (!node.isLoaded && !isCurrentlyExpanded) {
-      try {
-        const entries: FileEntry[] = await App.ReadDirectory(node.path);
-        const childNodes: FileNode[] = buildFileNodes(entries, expandedPaths);
+      if (!node.isLoaded && !isCurrentlyExpanded) {
+        try {
+          const entries: FileEntry[] = await App.ReadDirectory(node.path);
+          const childNodes: FileNode[] = buildFileNodes(entries, expandedPaths);
+
+          const updateNode = (nodes: FileNode[]): FileNode[] => {
+            return nodes.map((n) => {
+              if (n.path === node.path) {
+                return {
+                  ...n,
+                  isExpanded: true,
+                  isLoaded: true,
+                  children: childNodes,
+                };
+              }
+              if (n.children) {
+                return { ...n, children: updateNode(n.children) };
+              }
+              return n;
+            });
+          };
+
+          setFiles((currentFiles) => {
+            const updatedFiles = updateNode(currentFiles);
+            filesRef.current = updatedFiles;
+            return updatedFiles;
+          });
+          setExpanded(node.path, true);
+        } catch (error) {
+          console.error("Error loading directory:", error);
+        }
+      } else {
+        // Toggle expanded state in store
+        toggleExpanded(node.path);
+        if (isCurrentlyExpanded) {
+          pruneCollapsedDescendantSelection(node.path);
+        }
 
         const updateNode = (nodes: FileNode[]): FileNode[] => {
           return nodes.map((n) => {
             if (n.path === node.path) {
-              return {
-                ...n,
-                isExpanded: true,
-                isLoaded: true,
-                children: childNodes,
-              };
+              return { ...n, isExpanded: !isCurrentlyExpanded };
             }
             if (n.children) {
               return { ...n, children: updateNode(n.children) };
@@ -2179,36 +2211,16 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           filesRef.current = updatedFiles;
           return updatedFiles;
         });
-        setExpanded(node.path, true);
-      } catch (error) {
-        console.error("Error loading directory:", error);
       }
-    } else {
-      // Toggle expanded state in store
-      toggleExpanded(node.path);
-      if (isCurrentlyExpanded) {
-        pruneCollapsedDescendantSelection(node.path);
-      }
-
-      const updateNode = (nodes: FileNode[]): FileNode[] => {
-        return nodes.map((n) => {
-          if (n.path === node.path) {
-            return { ...n, isExpanded: !isCurrentlyExpanded };
-          }
-          if (n.children) {
-            return { ...n, children: updateNode(n.children) };
-          }
-          return n;
-        });
-      };
-
-      setFiles((currentFiles) => {
-        const updatedFiles = updateNode(currentFiles);
-        filesRef.current = updatedFiles;
-        return updatedFiles;
-      });
-    }
-  };
+    },
+    [
+      expandedPaths,
+      getIsExpanded,
+      pruneCollapsedDescendantSelection,
+      setExpanded,
+      toggleExpanded,
+    ],
+  );
 
   const getContextSelectionForNode = useCallback(
     (node: FileNode): FileNode[] => {
