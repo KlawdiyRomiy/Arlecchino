@@ -452,7 +452,6 @@ class DiagnosticPointWidget extends WidgetType {
     marker.setAttribute("data-diagnostic-from", String(this.snapshot.from));
     marker.setAttribute("data-diagnostic-to", String(this.snapshot.to));
     marker.setAttribute("aria-hidden", "true");
-    marker.textContent = " ";
     return marker;
   }
 }
@@ -1208,10 +1207,22 @@ export const diagnosticsTheme = EditorView.theme({
   },
   ".cm-diagnostic-point": {
     display: "inline-block",
+    position: "relative",
     width: "0.7em",
     minWidth: "0.7em",
     height: "1em",
-    marginLeft: "1px",
+    marginRight: "-0.7em",
+    verticalAlign: "baseline",
+  },
+  ".cm-diagnostic-point::after": {
+    content: '" "',
+    position: "absolute",
+    left: "0",
+    bottom: "0",
+    width: "100%",
+    height: "1em",
+    pointerEvents: "none",
+    color: "transparent",
     whiteSpace: "pre",
     textDecorationLine: "underline",
     textDecorationStyle: "wavy",
