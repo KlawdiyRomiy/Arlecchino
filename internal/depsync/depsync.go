@@ -2,10 +2,7 @@ package depsync
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 
 	"arlecchino/internal/toolchain"
@@ -199,10 +196,6 @@ func splitArgs(args string) []string {
 	return parts
 }
 
-func commandAvailable(projectPath, workDir, executable string) bool {
-	return commandAvailability(projectPath, workDir, executable) == ""
-}
-
 func commandAvailability(projectPath, workDir, executable string) string {
 	return commandResolution(projectPath, workDir, executable).Reason
 }
@@ -225,39 +218,6 @@ func isUpdatePrerequisiteAction(ecosystem, label string) bool {
 
 func shouldSkipAfterFailedUpdate(ecosystem, label string, previousFailed bool) bool {
 	return previousFailed && strings.TrimSpace(ecosystem) == "go" && strings.TrimSpace(label) == "tidy-after-update"
-}
-
-func relativeCommandAvailable(projectPath, workDir, executable string) bool {
-	return relativeCommandAvailability(projectPath, workDir, executable) == ""
-}
-
-func relativeCommandAvailability(projectPath, workDir, executable string) string {
-	rootAbs, err := filepath.Abs(filepath.Clean(strings.TrimSpace(projectPath)))
-	if err != nil || rootAbs == "" {
-		return "project path is required"
-	}
-	workAbs, err := filepath.Abs(filepath.Clean(strings.TrimSpace(workDir)))
-	if err != nil || workAbs == "" || !pathWithinRoot(rootAbs, workAbs) {
-		return "work directory is outside project"
-	}
-	candidate := filepath.Clean(filepath.Join(workAbs, filepath.FromSlash(executable)))
-	if !pathWithinRoot(rootAbs, candidate) {
-		return fmt.Sprintf("executable escapes project: %s", executable)
-	}
-	info, err := os.Stat(candidate)
-	if err != nil {
-		return fmt.Sprintf("missing executable %s", executable)
-	}
-	if !resolvedPathWithinRoot(rootAbs, candidate) {
-		return fmt.Sprintf("executable escapes project: %s", executable)
-	}
-	if info.IsDir() {
-		return fmt.Sprintf("executable is a directory: %s", executable)
-	}
-	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
-		return fmt.Sprintf("executable is not runnable: %s", executable)
-	}
-	return ""
 }
 
 func detectManagers(projectPath string, mode Mode) ([]Manager, error) {

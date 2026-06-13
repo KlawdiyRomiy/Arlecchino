@@ -26,15 +26,6 @@ type manifestDiscoveryReport struct {
 	Incomplete bool
 }
 
-func discoverManifestDirs(root string, r registry) ([]manifestDir, error) {
-	return discoverManifestDirsWithLimit(root, r, depsyncDiscoveryMaxEntries)
-}
-
-func discoverManifestDirsWithLimit(root string, r registry, maxEntries int) ([]manifestDir, error) {
-	report, err := discoverManifestDirsWithReport(root, r, maxEntries)
-	return report.Dirs, err
-}
-
 func discoverManifestDirsReport(root string, r registry) (manifestDiscoveryReport, error) {
 	return discoverManifestDirsWithReport(root, r, depsyncDiscoveryMaxEntries)
 }
