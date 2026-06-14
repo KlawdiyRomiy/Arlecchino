@@ -61,6 +61,13 @@ type BackgroundShellJob struct {
 	Title           string                     `json:"title"`
 	Detail          string                     `json:"detail,omitempty"`
 	ProjectPath     string                     `json:"projectPath,omitempty"`
+	SessionID       string                     `json:"sessionId,omitempty"`
+	Generation      uint64                     `json:"generation,omitempty"`
+	Reason          string                     `json:"reason,omitempty"`
+	ProcessID       int                        `json:"processId,omitempty"`
+	Command         string                     `json:"command,omitempty"`
+	QueueDepth      int                        `json:"queueDepth,omitempty"`
+	WorkerCount     int                        `json:"workerCount,omitempty"`
 	OwnerSurfaceID  string                     `json:"ownerSurfaceId,omitempty"`
 	Status          BackgroundShellJobStatus   `json:"status"`
 	Severity        BackgroundShellSeverity    `json:"severity"`
@@ -362,6 +369,9 @@ func normalizeBackgroundShellJob(job, previous BackgroundShellJob, existed bool,
 
 	job.Detail = strings.TrimSpace(job.Detail)
 	job.ProjectPath = strings.TrimSpace(job.ProjectPath)
+	job.SessionID = strings.TrimSpace(job.SessionID)
+	job.Reason = strings.TrimSpace(job.Reason)
+	job.Command = strings.TrimSpace(job.Command)
 	job.OwnerSurfaceID = strings.TrimSpace(job.OwnerSurfaceID)
 	return job
 }
@@ -664,6 +674,13 @@ func backgroundShellJobsEquivalent(left, right BackgroundShellJob) bool {
 		left.Title != right.Title ||
 		left.Detail != right.Detail ||
 		left.ProjectPath != right.ProjectPath ||
+		left.SessionID != right.SessionID ||
+		left.Generation != right.Generation ||
+		left.Reason != right.Reason ||
+		left.ProcessID != right.ProcessID ||
+		left.Command != right.Command ||
+		left.QueueDepth != right.QueueDepth ||
+		left.WorkerCount != right.WorkerCount ||
 		left.OwnerSurfaceID != right.OwnerSurfaceID ||
 		left.Status != right.Status ||
 		left.Severity != right.Severity ||

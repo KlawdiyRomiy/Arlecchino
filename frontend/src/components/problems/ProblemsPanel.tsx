@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle,
@@ -12,6 +18,8 @@ import {
   Layers3,
   LoaderCircle,
   LocateFixed,
+  Play,
+  XCircle,
 } from "lucide-react";
 
 import { useProjectEntryActions } from "../../contexts/ProjectEntryActionsContext";
@@ -31,7 +39,15 @@ import {
   ContextActionMenu,
   type ContextActionMenuItem,
 } from "../ui/ContextActionMenu";
-import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
+import {
+  runProjectDiagnosticsScan,
+  useProjectDiagnosticsPreload,
+} from "../../utils/projectBoundState";
+import {
+  runBackgroundShellAction,
+  useBackgroundShellStatus,
+} from "../../shell/backgroundShellStatus";
+import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 import {
   resolveDiagnosticsProjectPath,
   useWorkspaceStore,
@@ -176,6 +192,8 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   presentationMode = "compact",
 }) => {
   const diagnosticsPreload = useProjectDiagnosticsPreload();
+  const backgroundShell = useBackgroundShellStatus();
+  const projectSessionId = getCurrentProjectSessionId();
   const { isDark } = useTheme();
   const { copyAbsolutePath, copyRelativePath, copyText, revealEntry } =
     useProjectEntryActions();
@@ -215,6 +233,50 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   );
   const activeCandidatePath =
     activeFilePath ?? statusFilePath ?? activeEditorFilePath ?? null;
+  const activeDiagnosticsScanJob = useMemo(
+    () =>
+      backgroundShell.jobs.find(
+        (job) =>
+          job.kind === "diagnostics-scan" &&
+          job.projectPath === activeProjectPath &&
+          (!job.sessionId || job.sessionId === projectSessionId) &&
+          (job.status === "running" || job.status === "queued"),
+      ),
+    [activeProjectPath, backgroundShell.jobs, projectSessionId],
+  );
+  const activeDiagnosticsScanCancelAction = useMemo(() => {
+    if (!activeDiagnosticsScanJob) {
+      return null;
+    }
+    return (
+      backgroundShell.actions.find(
+        (action) =>
+          action.intent === "cancel-job" &&
+          action.jobId === activeDiagnosticsScanJob.id &&
+          action.enabled,
+      ) ?? null
+    );
+  }, [activeDiagnosticsScanJob, backgroundShell.actions]);
+  const isBackgroundDiagnosticsScanActive = Boolean(activeDiagnosticsScanJob);
+  const handleRunProjectDiagnosticsScan = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!event.nativeEvent.isTrusted || event.detail < 1) {
+        return;
+      }
+
+      if (!activeProjectPath || isBackgroundDiagnosticsScanActive) {
+        return;
+      }
+      void runProjectDiagnosticsScan(activeProjectPath);
+    },
+    [activeProjectPath, isBackgroundDiagnosticsScanActive],
+  );
+  const handleCancelProjectDiagnosticsScan = useCallback(() => {
+    if (!activeDiagnosticsScanCancelAction) {
+      return;
+    }
+    void runBackgroundShellAction(activeDiagnosticsScanCancelAction.id);
+  }, [activeDiagnosticsScanCancelAction]);
 
   if (activeCandidatePath) {
     lastActiveFilePathRef.current = activeCandidatePath;
@@ -336,9 +398,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const shouldShowCoverageEmptyState =
     displayedGroups.length === 0 && !hasUnfilteredProjectDiagnostics;
 
-  const isDiagnosticsPreloadActive =
-    diagnosticsPreload.active &&
-    diagnosticsPreload.projectPath === activeProjectPath;
+  const isDiagnosticsPreloadActive = isBackgroundDiagnosticsScanActive;
   const isDiagnosticsPreloadComplete =
     diagnosticsPreload.projectPath === activeProjectPath &&
     diagnosticsPreload.completed;
@@ -378,6 +438,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     hasDiagnosticsPreloadForProject &&
     !diagnosticsPreload.active &&
     (diagnosticsCoverageState === "incomplete" ||
+      diagnosticsCoverageState === "canceled" ||
       (isBoundedDiagnosticsProject &&
         diagnosticsPreload.totalCandidates >
           diagnosticsPreload.selectedCandidates));
@@ -385,17 +446,16 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     hasDiagnosticsPreloadForProject &&
     !diagnosticsPreload.active &&
     (diagnosticsCoverageState === "incomplete" ||
+      diagnosticsCoverageState === "canceled" ||
       (isBoundedDiagnosticsProject &&
         diagnosticsPreload.totalCandidates >
           diagnosticsPreload.selectedCandidates));
   const isPartialWorkspaceDiagnostics = isDiagnosticsCoverageIncomplete;
   const isDiagnosticsPreloadPendingOrRunning =
-    hasDiagnosticsPreloadForProject &&
-    !hasDiagnosticsPreloadCheckedSelectedFiles &&
-    !diagnosticsPreload.completed &&
-    (isDiagnosticsPreloadActive ||
-      diagnosticsCoverageState === "pending" ||
-      diagnosticsCoverageState === "running");
+    isDiagnosticsPreloadActive &&
+    (!hasDiagnosticsPreloadForProject ||
+      !hasDiagnosticsPreloadCheckedSelectedFiles ||
+      !diagnosticsPreload.completed);
   const isProjectDiagnosticsScanRunning =
     !isWorkspaceDiagnosticsUnavailable &&
     !isWorkspaceDiagnosticsIncomplete &&
@@ -404,9 +464,13 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     shouldShowCoverageEmptyState && isProjectDiagnosticsScanRunning;
   const showInlineScanningProgress =
     !shouldShowCoverageEmptyState && isProjectDiagnosticsScanRunning;
-  const diagnosticsScanProgressLabel =
-    diagnosticsPreload.projectPath === activeProjectPath &&
-    diagnosticsPreload.selectedCandidates > 0
+  const diagnosticsScanProgressLabel = activeDiagnosticsScanJob?.progress?.total
+    ? `${Math.min(
+        activeDiagnosticsScanJob.progress.current ?? 0,
+        activeDiagnosticsScanJob.progress.total,
+      )}/${activeDiagnosticsScanJob.progress.total} files checked`
+    : diagnosticsPreload.projectPath === activeProjectPath &&
+        diagnosticsPreload.selectedCandidates > 0
       ? `${Math.min(
           diagnosticsPreload.checkedCandidates,
           diagnosticsPreload.selectedCandidates,
@@ -415,7 +479,8 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const canShowCleanState =
     hasUnfilteredProjectDiagnostics ||
     !activeProjectPath ||
-    diagnosticsCoverageState === "complete";
+    diagnosticsCoverageState === "complete" ||
+    !isBackgroundDiagnosticsScanActive;
 
   const panelVars = useMemo(
     () =>
@@ -570,6 +635,32 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
         </div>
 
         {renderProjectSummaryPills()}
+        <div className="flex flex-wrap items-center gap-2">
+          {isBackgroundDiagnosticsScanActive ? (
+            <button
+              type="button"
+              onClick={handleCancelProjectDiagnosticsScan}
+              className={filterButtonClass(
+                false,
+                !activeDiagnosticsScanCancelAction,
+              )}
+              disabled={!activeDiagnosticsScanCancelAction}
+            >
+              <XCircle size={13} className="mr-1.5" />
+              Cancel scan
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleRunProjectDiagnosticsScan}
+              className={filterButtonClass(false, !activeProjectPath)}
+              disabled={!activeProjectPath}
+            >
+              <Play size={13} className="mr-1.5" />
+              Scan project
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );

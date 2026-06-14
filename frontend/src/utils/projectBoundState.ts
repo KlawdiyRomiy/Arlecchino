@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { EventsOn } from "../wails/runtime";
+import { LSPPreloadProjectDiagnostics } from "../wails/app";
 
 import {
   ensureDiagnosticsEventsBound,
@@ -10,16 +11,13 @@ import { useGitStore } from "../stores/gitStore";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 import { resetIndexingProgressState } from "../hooks/useIndexingProgress";
 
-type ProjectAppBridge = {
-  LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
-};
-
 type DiagnosticsCoverageState =
   | "pending"
   | "running"
   | "complete"
   | "incomplete"
-  | "unavailable";
+  | "unavailable"
+  | "canceled";
 
 interface DiagnosticsPreloadState {
   active: boolean;
@@ -182,6 +180,7 @@ const normalizeCoverageState = (
     case "complete":
     case "incomplete":
     case "unavailable":
+    case "canceled":
       return value;
     default:
       return fallback;
@@ -481,22 +480,6 @@ const waitForDiagnosticsBindingsReady = async () => {
   ]);
 };
 
-const getProjectAppBridge = (): ProjectAppBridge | null => {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const runtimeWindow = window as typeof window & {
-    go?: {
-      main?: {
-        App?: ProjectAppBridge;
-      };
-    };
-  };
-
-  return runtimeWindow.go?.main?.App ?? null;
-};
-
 export const resetProjectBoundStores = () => {
   const sessionId = getCurrentProjectSessionId();
   latestProjectRuntime = { generation: 0, projectPath: null, sessionId };
@@ -580,7 +563,7 @@ export const useProjectDiagnosticsPreload = () =>
 export const getProjectDiagnosticsPreloadSnapshot = () =>
   getDiagnosticsPreloadSnapshot();
 
-export const preloadProjectDiagnostics = async (projectPath: string) => {
+export const runProjectDiagnosticsScan = async (projectPath: string) => {
   if (!projectPath) {
     setDiagnosticsPreloadState(preloadStateIdle);
     return false;
@@ -591,37 +574,30 @@ export const preloadProjectDiagnostics = async (projectPath: string) => {
       ...preloadStateIdleForProject(projectPath),
       completed: true,
       coverageState: "unavailable",
-      message: "Workspace diagnostics preload is disabled.",
-    });
-    return false;
-  }
-
-  const bridge = getProjectAppBridge();
-  if (!bridge || typeof bridge.LSPPreloadProjectDiagnostics !== "function") {
-    setDiagnosticsPreloadState({
-      ...preloadStateIdleForProject(projectPath),
-      completed: true,
-      coverageState: "unavailable",
-      message: "Diagnostics preload bridge is unavailable.",
+      message: "Project diagnostics scan is disabled.",
     });
     return false;
   }
 
   try {
     await waitForDiagnosticsBindingsReady();
-    await bridge.LSPPreloadProjectDiagnostics(projectPath);
+    await LSPPreloadProjectDiagnostics(projectPath);
     return true;
   } catch (error) {
-    console.debug("[diagnostics] project preload failed", error);
+    console.debug("[diagnostics] project diagnostics scan failed", error);
     setDiagnosticsPreloadState({
       ...preloadStateIdleForProject(projectPath),
       completed: true,
       coverageState: "unavailable",
       message:
-        error instanceof Error ? error.message : "Diagnostics preload failed.",
+        error instanceof Error
+          ? error.message
+          : "Project diagnostics scan failed.",
     });
     return false;
   }
 };
+
+export const preloadProjectDiagnostics = runProjectDiagnosticsScan;
 
 bindDiagnosticsPreloadEvents();

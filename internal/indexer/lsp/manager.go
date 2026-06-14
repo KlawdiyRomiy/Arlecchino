@@ -100,6 +100,31 @@ var completionSnippetPlaceholderPattern = regexp.MustCompile(`\$\{[0-9]+(?::[^}]
 
 var ErrNoConfig = errors.New("lsp server config not found")
 
+type startReasonContextKey struct{}
+
+func WithStartReason(ctx context.Context, reason string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, startReasonContextKey{}, reason)
+}
+
+func startReasonFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return "unspecified"
+	}
+	reason, _ := ctx.Value(startReasonContextKey{}).(string)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "unspecified"
+	}
+	return reason
+}
+
 func (t CompletionTrigger) normalized() CompletionTrigger {
 	switch t.TriggerKind {
 	case completionTriggerCharacter:
@@ -771,6 +796,7 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	startReason := startReasonFromContext(ctx)
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
 		return fmt.Errorf("no config for language: %s", language)
@@ -801,7 +827,7 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 		return fmt.Errorf("no config for language: %s", language)
 	}
 
-	server, err := m.startServer(cfg)
+	server, err := m.startServer(cfg, startReason)
 	if err != nil {
 		m.recordStartFailure(language, err)
 		return err
@@ -811,6 +837,7 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 	m.servers[language] = server
 	m.mu.Unlock()
 
+	initStartedAt := time.Now()
 	if err := server.initializeWithContext(ctx); err != nil {
 		server.lastError = err.Error()
 		m.mu.Lock()
@@ -821,10 +848,26 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 		m.mu.Unlock()
 		_ = server.abortStartup()
 		m.recordStartFailure(language, err)
+		log.Printf("[LSP-MGR] initialized language=%s command=%s pid=%d reason=%s initDurationMs=%d status=failed error=%v",
+			language,
+			cfg.Command,
+			lspProcessID(server),
+			startReason,
+			time.Since(initStartedAt).Milliseconds(),
+			err,
+		)
 		return err
 	}
 
 	m.clearStartFailure(language)
+	log.Printf("[LSP-MGR] initialized language=%s command=%s pid=%d root=%s reason=%s initDurationMs=%d status=initialized",
+		language,
+		cfg.Command,
+		lspProcessID(server),
+		cfg.RootURI,
+		startReason,
+		time.Since(initStartedAt).Milliseconds(),
+	)
 	return nil
 }
 
@@ -1005,7 +1048,7 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	}
 
 	// Start new server
-	newServer, err := m.startServer(cfg)
+	newServer, err := m.startServer(cfg, "restart")
 	if err != nil {
 		m.recordStartFailure(language, err)
 		return false, err
@@ -2641,7 +2684,12 @@ func (m *Manager) SignatureHelpWithContext(ctx context.Context, language, filePa
 	return server.SignatureHelpWithContext(ctx, filePath, line, column)
 }
 
-func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
+func (m *Manager) startServer(cfg ServerConfig, reason string) (*Server, error) {
+	startedAt := time.Now()
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "unspecified"
+	}
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = lspProcessEnv(cfg.Command)
 	configureLSPProcessGroup(cmd)
@@ -2658,9 +2706,35 @@ func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	log.Printf("[LSP-MGR] starting language=%s group=%s command=%s args=%v root=%s reason=%s",
+		cfg.Language,
+		cfg.ServerGroup,
+		cfg.Command,
+		cfg.Args,
+		cfg.RootURI,
+		reason,
+	)
 	if err := cmd.Start(); err != nil {
+		log.Printf("[LSP-MGR] start failed language=%s command=%s args=%v root=%s reason=%s durationMs=%d error=%v",
+			cfg.Language,
+			cfg.Command,
+			cfg.Args,
+			cfg.RootURI,
+			reason,
+			time.Since(startedAt).Milliseconds(),
+			err,
+		)
 		return nil, err
 	}
+	log.Printf("[LSP-MGR] started language=%s command=%s args=%v pid=%d root=%s reason=%s durationMs=%d status=started",
+		cfg.Language,
+		cfg.Command,
+		cfg.Args,
+		cmd.Process.Pid,
+		cfg.RootURI,
+		reason,
+		time.Since(startedAt).Milliseconds(),
+	)
 
 	server := &Server{
 		config:   cfg,
@@ -2676,6 +2750,13 @@ func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
 	go server.readStderr(stderr)
 
 	return server, nil
+}
+
+func lspProcessID(server *Server) int {
+	if server == nil || server.cmd == nil || server.cmd.Process == nil {
+		return 0
+	}
+	return server.cmd.Process.Pid
 }
 
 func lspProcessEnv(command string) []string {

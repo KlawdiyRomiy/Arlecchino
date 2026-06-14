@@ -19,7 +19,7 @@ import {
 import { WindowControls } from "../ui";
 import { DragGhost, type DragGhostState } from "../ui/DragGhost";
 import { MotionDropdownContent } from "../ui/MotionDropdownContent";
-import { useIndexingProgress } from "../../hooks/useIndexingProgress";
+import { useBackgroundShellStatus } from "../../shell/backgroundShellStatus";
 import {
   DEFAULT_TOPBAR_ITEM_ORDER,
   normalizeTopbarItemOrder,
@@ -30,6 +30,7 @@ import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { ProjectIndicators } from "./ProjectIndicators";
 import { AddProjectMenu } from "./AddProjectMenu";
 import { NotificationCenterButton } from "./NotificationCenterButton";
+import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 
 type VisibleTopbarItemId = TopbarItemId | "more";
 type TopbarItemGroup = "left" | "right";
@@ -271,20 +272,33 @@ const TopBarContextItem = React.memo(function TopBarContextItem({
   projectPath: string;
   showTopbarProjectPath: boolean;
 }) {
-  const indexing = useIndexingProgress();
+  const backgroundShell = useBackgroundShellStatus();
+  const projectSessionId = getCurrentProjectSessionId();
   const projectName = projectPath
     ? projectPath.split("/").filter(Boolean).at(-1)
     : null;
   const projectParent = projectPath
     ? projectPath.substring(0, projectPath.lastIndexOf("/") + 1)
     : "";
-  const isIndexingActive =
-    Boolean(projectPath) && indexing.phase === "indexing";
+  const indexingJob = React.useMemo(
+    () =>
+      backgroundShell.jobs.find(
+        (job) =>
+          job.kind === "indexing" &&
+          job.projectPath === projectPath &&
+          (!job.sessionId || job.sessionId === projectSessionId) &&
+          (job.status === "running" || job.status === "queued"),
+      ),
+    [backgroundShell.jobs, projectPath, projectSessionId],
+  );
+  const isIndexingActive = Boolean(indexingJob);
   const indexingProgressRatio = Math.max(
     0,
-    Math.min(1, indexing.percentage / 100),
+    Math.min(1, (indexingJob?.progress?.percent ?? 0) / 100),
   );
-  const indexingProgressValue = Number(indexing.percentage.toFixed(1));
+  const indexingProgressValue = Number(
+    (indexingJob?.progress?.percent ?? 0).toFixed(1),
+  );
 
   return (
     <AnimatePresence mode="wait">

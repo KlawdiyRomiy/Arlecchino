@@ -35,6 +35,13 @@ export interface BackgroundShellJob {
   title: string;
   detail?: string;
   projectPath?: string;
+  sessionId?: string;
+  generation?: number;
+  reason?: string;
+  processId?: number;
+  command?: string;
+  queueDepth?: number;
+  workerCount?: number;
   ownerSurfaceId?: string;
   status: BackgroundShellJobStatus;
   severity: BackgroundShellSeverity;
@@ -285,6 +292,19 @@ const normalizeJob = (value: unknown): BackgroundShellJob | undefined => {
     detail: asTrimmedString(getRecordValue(value, "detail", "Detail")),
     projectPath: asTrimmedString(
       getRecordValue(value, "projectPath", "ProjectPath"),
+    ),
+    sessionId: asTrimmedString(getRecordValue(value, "sessionId", "SessionID")),
+    generation: asFiniteNumber(
+      getRecordValue(value, "generation", "Generation"),
+    ),
+    reason: asTrimmedString(getRecordValue(value, "reason", "Reason")),
+    processId: asFiniteNumber(getRecordValue(value, "processId", "ProcessID")),
+    command: asTrimmedString(getRecordValue(value, "command", "Command")),
+    queueDepth: asFiniteNumber(
+      getRecordValue(value, "queueDepth", "QueueDepth"),
+    ),
+    workerCount: asFiniteNumber(
+      getRecordValue(value, "workerCount", "WorkerCount"),
     ),
     ownerSurfaceId: asTrimmedString(
       getRecordValue(value, "ownerSurfaceId", "OwnerSurfaceID"),

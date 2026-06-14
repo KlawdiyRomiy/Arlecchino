@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 const (
-	indexerProgressMinInterval    = 350 * time.Millisecond
+	indexerProgressMinInterval    = 250 * time.Millisecond
 	indexerProgressMaxInterval    = 2 * time.Second
 	indexerProgressMinPercentStep = 1.0
 	indexerProgressSmallBatch     = 64
@@ -71,7 +72,11 @@ func (a *App) RunBackgroundShellAction(actionID string) (BackgroundShellActionRe
 		})
 		result.Message = "Surface focus requested."
 	case "cancel-job":
-		result.Message = "Background job canceled."
+		if a.cancelBackgroundJob(action.JobID) {
+			result.Message = "Background job cancellation requested."
+		} else {
+			result.Message = "Background job canceled."
+		}
 	default:
 		result.Message = "Background shell action applied."
 	}
@@ -80,18 +85,76 @@ func (a *App) RunBackgroundShellAction(actionID string) (BackgroundShellActionRe
 	return result, nil
 }
 
-func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath string, generation uint64) {
+func (a *App) registerBackgroundJobCancel(jobID string, cancel context.CancelFunc) {
+	if a == nil || strings.TrimSpace(jobID) == "" || cancel == nil {
+		return
+	}
+	a.backgroundCancelMu.Lock()
+	if a.backgroundCancelers == nil {
+		a.backgroundCancelers = make(map[string]context.CancelFunc)
+	}
+	a.backgroundCancelers[jobID] = cancel
+	a.backgroundCancelMu.Unlock()
+}
+
+func (a *App) unregisterBackgroundJobCancel(jobID string) {
+	if a == nil || strings.TrimSpace(jobID) == "" {
+		return
+	}
+	a.backgroundCancelMu.Lock()
+	delete(a.backgroundCancelers, jobID)
+	a.backgroundCancelMu.Unlock()
+}
+
+func (a *App) cancelBackgroundJob(jobID string) bool {
+	if a == nil || strings.TrimSpace(jobID) == "" {
+		return false
+	}
+	a.backgroundCancelMu.Lock()
+	cancel := a.backgroundCancelers[jobID]
+	if cancel != nil {
+		delete(a.backgroundCancelers, jobID)
+	}
+	a.backgroundCancelMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	a.logInfof("[BackgroundTask] cancel requested job=%s", jobID)
+	return true
+}
+
+func backgroundIndexerJobID(sessionID string, generation uint64) string {
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = defaultProjectSessionID
+	}
+	return fmt.Sprintf("indexer:%s:%d", sessionID, generation)
+}
+
+func backgroundDiagnosticsJobID(sessionID string, generation uint64) string {
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = defaultProjectSessionID
+	}
+	return fmt.Sprintf("diagnostics-scan:%s:%d", sessionID, generation)
+}
+
+func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath string, sessionID string, generation uint64, queueDepth int, workerCount int) {
 	if a == nil {
 		return
 	}
 
-	jobID := fmt.Sprintf("indexer:%d", generation)
+	jobID := backgroundIndexerJobID(sessionID, generation)
 	job := BackgroundShellJob{
 		ID:              jobID,
 		Kind:            "indexing",
 		Category:        BackgroundShellCategoryJob,
 		Title:           "Project indexing",
 		ProjectPath:     projectPath,
+		SessionID:       sessionID,
+		Generation:      generation,
+		Reason:          activationWorkspaceOpen,
+		QueueDepth:      queueDepth,
+		WorkerCount:     workerCount,
 		NotifyOnFailure: true,
 	}
 
@@ -101,6 +164,7 @@ func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath s
 		job.Status = BackgroundShellJobRunning
 		job.Detail = fmt.Sprintf("Indexing %d project files.", evt.Total)
 		job.Progress = &BackgroundShellProgress{Total: int64(evt.Total)}
+		job.Cancelable = true
 	case core.IndexingProgress:
 		if !a.shouldRecordBackgroundIndexerProgress(jobID, evt) {
 			return
@@ -112,6 +176,7 @@ func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath s
 			Current: int64(evt.Current),
 			Total:   int64(evt.Total),
 		}
+		job.Cancelable = true
 	case core.IndexingCompleted:
 		job.Status = BackgroundShellJobSucceeded
 		job.Detail = "Project indexing completed."
@@ -137,6 +202,7 @@ func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath s
 	a.recordBackgroundShellJob(job)
 	if evt.Type == core.IndexingCompleted || evt.Type == core.IndexingFailed {
 		a.clearBackgroundIndexerProgress(jobID)
+		a.unregisterBackgroundJobCancel(jobID)
 	}
 }
 
@@ -190,6 +256,66 @@ func (a *App) clearBackgroundIndexerProgress(jobID string) {
 	a.indexerProgressMu.Lock()
 	defer a.indexerProgressMu.Unlock()
 	delete(a.indexerProgress, jobID)
+}
+
+func (a *App) recordBackgroundDiagnosticsScan(
+	sessionID string,
+	projectPath string,
+	generation uint64,
+	plan diagnosticsPreloadPlan,
+	checked int,
+	failed int,
+	status BackgroundShellJobStatus,
+	detail string,
+) {
+	if a == nil {
+		return
+	}
+	jobID := backgroundDiagnosticsJobID(sessionID, generation)
+	total := plan.SelectedCandidates
+	if total <= 0 {
+		total = plan.TotalCandidates
+	}
+	if detail == "" {
+		switch status {
+		case BackgroundShellJobRunning:
+			detail = fmt.Sprintf("Checked %d of %d project files.", checked, total)
+		case BackgroundShellJobSucceeded:
+			detail = "Project diagnostics scan completed."
+		case BackgroundShellJobFailed:
+			detail = "Project diagnostics scan failed."
+		case BackgroundShellJobCanceled:
+			detail = "Project diagnostics scan canceled."
+		}
+	}
+	job := BackgroundShellJob{
+		ID:              jobID,
+		Kind:            "diagnostics-scan",
+		Category:        BackgroundShellCategoryJob,
+		Title:           "Project diagnostics scan",
+		Detail:          detail,
+		ProjectPath:     projectPath,
+		SessionID:       sessionID,
+		Generation:      generation,
+		Reason:          activationManualProjectScan,
+		Status:          status,
+		Cancelable:      status == BackgroundShellJobRunning || status == BackgroundShellJobQueued,
+		NotifyOnFailure: true,
+	}
+	if total > 0 || checked > 0 {
+		job.Progress = &BackgroundShellProgress{
+			Percent: percentFromCounts(checked, total),
+			Current: int64(maxInt(0, checked)),
+			Total:   int64(maxInt(0, total)),
+		}
+	}
+	if failed > 0 && status == BackgroundShellJobRunning {
+		job.Detail = fmt.Sprintf("Checked %d of %d project files; %d failed.", checked, total, failed)
+	}
+	a.recordBackgroundShellJob(job)
+	if isTerminalBackgroundShellJob(status) {
+		a.unregisterBackgroundJobCancel(jobID)
+	}
 }
 
 func (a *App) recordBackgroundLSPInstallProgress(progress lspinstaller.InstallProgress) {

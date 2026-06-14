@@ -3,7 +3,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
   activateProjectScope,
-  preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "../utils/projectBoundState";
 import {
@@ -612,7 +611,6 @@ const initializeProjectSessionWorkspace = async (
       .setActiveFramework(
         (await AppFunctions.GetCurrentProjectFramework()) || null,
       );
-    void preloadProjectDiagnostics(projectPath);
   } catch (error) {
     useTerminalStore.getState().setActiveProject(null);
     resetProjectBoundStores();
@@ -704,7 +702,6 @@ export const initializeWorkspace = async () => {
           .setActiveFramework(
             (await AppFunctions.GetCurrentProjectFramework()) || null,
           );
-        void preloadProjectDiagnostics(project.path);
         if (projectWindowMode === "windows") {
           const windowRestorePaths = uniqueProjectPaths([
             ...savedProjectWindowPaths,

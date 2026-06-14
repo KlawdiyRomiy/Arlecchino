@@ -9,6 +9,8 @@ import {
   useWorkspaceStore,
 } from "../../stores/workspaceStore";
 import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
+import { useBackgroundShellStatus } from "../../shell/backgroundShellStatus";
+import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 
 interface StatusBarProps {
   onToggleProblems: () => void;
@@ -33,6 +35,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     ),
   );
   const diagnosticsPreload = useProjectDiagnosticsPreload();
+  const backgroundShell = useBackgroundShellStatus();
+  const projectSessionId = getCurrentProjectSessionId();
   const statusTextClass = "text-[11px] text-[var(--text-secondary)]";
   const chipClass =
     "shell-cluster-soft flex min-h-[32px] items-center gap-1.5 px-3 transition-colors hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)]";
@@ -94,6 +98,17 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const positionLabel = statusFile.path
     ? `Ln ${cursorPosition.line}, Col ${cursorPosition.col}`
     : "Ln -, Col -";
+  const hasActiveDiagnosticsScan = useMemo(
+    () =>
+      backgroundShell.jobs.some(
+        (job) =>
+          job.kind === "diagnostics-scan" &&
+          job.projectPath === activeProjectPath &&
+          (!job.sessionId || job.sessionId === projectSessionId) &&
+          (job.status === "running" || job.status === "queued"),
+      ),
+    [activeProjectPath, backgroundShell.jobs, projectSessionId],
+  );
   const diagnosticsIndicatorState = useMemo(() => {
     const preloadMatchesProject =
       diagnosticsPreload.projectPath === activeProjectPath;
@@ -114,12 +129,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     ) {
       return "unavailable" as const;
     }
-    if (
-      activeProjectPath &&
-      (diagnosticsPreload.active ||
-        coverageState === "pending" ||
-        coverageState === "running")
-    ) {
+    if (activeProjectPath && hasActiveDiagnosticsScan) {
       return "scanning" as const;
     }
     if (
@@ -132,6 +142,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     if (
       activeProjectPath &&
       (coverageState === "incomplete" ||
+        coverageState === "canceled" ||
         diagnosticsPreload.bounded ||
         (diagnosticsPreload.totalCandidates > 0 &&
           diagnosticsPreload.selectedCandidates <
@@ -144,6 +155,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     activeProjectPath,
     diagnosticsPreload,
     diagnosticsRuntimeStatus,
+    hasActiveDiagnosticsScan,
     projectSummary.total,
   ]);
 

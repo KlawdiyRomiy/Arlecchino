@@ -149,7 +149,8 @@ func ensureDocOpen(manager *indexerlsp.Manager, language, filePath, content stri
 	if manager.IsDocOpen(language, filePath) {
 		return false, nil
 	}
-	return manager.DidOpenTransientWithContext(context.Background(), language, filePath, content)
+	ctx := indexerlsp.WithStartReason(context.Background(), activationLanguageOpen)
+	return manager.DidOpenTransientWithContext(ctx, language, filePath, content)
 }
 
 func convertLSPDiagnostics(diagnostics []indexerlsp.Diagnostic) []LSPDiagnostic {
@@ -261,6 +262,9 @@ func shouldSkipPreloadDir(name string) bool {
 
 func (a *App) LSPPreloadProjectDiagnostics(projectPath string) bool {
 	session := a.activeProjectSession()
+	if session != nil {
+		a.logInfof("[Activation] subsystem=diagnostics reason=%s session=%s project=%s generation=%d", activationManualProjectScan, session.ID, filepath.Base(projectPath), session.projectGeneration.Load())
+	}
 	return a.lspPreloadProjectDiagnosticsForSession(session, projectPath, a.activeProjectGeneration())
 }
 

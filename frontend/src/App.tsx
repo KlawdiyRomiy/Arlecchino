@@ -33,7 +33,6 @@ import { useTheme } from "./hooks/useTheme";
 import { clampUiScale } from "./utils/uiScale";
 import {
   activateProjectScope,
-  preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
 import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
@@ -495,9 +494,6 @@ const App: React.FC = () => {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
         }
-        window.requestAnimationFrame(() => {
-          void preloadProjectDiagnostics(project.path);
-        });
       } catch (error) {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
@@ -579,9 +575,6 @@ const App: React.FC = () => {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
         }
-        window.requestAnimationFrame(() => {
-          void preloadProjectDiagnostics(projectPath);
-        });
       } catch (error) {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
@@ -767,9 +760,6 @@ const App: React.FC = () => {
       }
       useWorkspaceStore.getState().removeProject(id);
       setFileToOpen(null);
-      window.requestAnimationFrame(() => {
-        void preloadProjectDiagnostics(nextProject.path);
-      });
     } catch (error) {
       if (!isProjectBackendOperationCurrent(operationId)) {
         return;

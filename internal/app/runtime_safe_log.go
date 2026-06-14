@@ -32,6 +32,17 @@ func (a *App) logDebugf(format string, args ...any) {
 	})
 }
 
+func (a *App) logInfof(format string, args ...any) {
+	message := fmt.Sprintf(format, args...)
+	a.safeRuntimeCall(func() {
+		if a.wailsApp != nil && a.wailsApp.Logger != nil {
+			a.wailsApp.Logger.Info(message)
+			return
+		}
+		slog.Info(message)
+	})
+}
+
 func (a *App) logWarning(message string) {
 	a.safeRuntimeCall(func() {
 		if a.wailsApp != nil && a.wailsApp.Logger != nil {

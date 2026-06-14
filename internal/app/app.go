@@ -63,6 +63,8 @@ type App struct {
 	mcpBridgeServer          *mcp.IDEBridgeServer
 	mcpBridgeMu              sync.Mutex
 	backgroundShell          *BackgroundShellStatusService
+	backgroundCancelMu       sync.Mutex
+	backgroundCancelers      map[string]context.CancelFunc
 	indexerProgressMu        sync.Mutex
 	indexerProgress          map[string]indexerProgressState
 	shellMenuMu              sync.Mutex
@@ -158,6 +160,7 @@ func NewApp() *App {
 		plugins:                  pluginRegistry,
 		executionService:         execution.NewService(pluginRegistry),
 		backgroundShell:          NewBackgroundShellStatusService(),
+		backgroundCancelers:      make(map[string]context.CancelFunc),
 		indexerProgress:          make(map[string]indexerProgressState),
 		windowLeases:             NewWindowLeaseRegistry(),
 		windowRoles:              NewWindowRoleRegistry(),
@@ -445,10 +448,11 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		}
 
 		// Listen for indexing lifecycle events
+		var lastIndexerLog time.Time
 		session.coreEngine.OnIndexing(func(evt core.IndexingEvent) {
-			a.recordBackgroundIndexerEvent(evt, path, projectGeneration)
 			schedulerStats := coreEngine.SchedulerStats()
 			engineStats := coreEngine.Stats()
+			a.recordBackgroundIndexerEvent(evt, path, session.ID, projectGeneration, schedulerStats.Pending, schedulerStats.Workers)
 			payload := map[string]any{
 				"current":               evt.Current,
 				"total":                 evt.Total,
@@ -464,13 +468,58 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 			switch evt.Type {
 			case core.IndexingStarted:
 				a.emitEvent("indexer:started", payload)
+				lastIndexerLog = time.Now()
+				a.logInfof("[Indexer] started session=%s project=%s generation=%d queue=%d files=%d workers=%d mode=%s",
+					session.ID,
+					filepath.Base(path),
+					projectGeneration,
+					schedulerStats.Pending,
+					engineStats.TotalFiles,
+					schedulerStats.Workers,
+					schedulerStats.Mode,
+				)
 			case core.IndexingProgress:
 				a.emitEvent("indexer:progress", payload)
+				if time.Since(lastIndexerLog) >= 3*time.Second {
+					lastIndexerLog = time.Now()
+					a.logInfof("[Indexer] progress session=%s project=%s generation=%d current=%d total=%d queue=%d files=%d mode=%s",
+						session.ID,
+						filepath.Base(path),
+						projectGeneration,
+						evt.Current,
+						evt.Total,
+						schedulerStats.Pending,
+						engineStats.TotalFiles,
+						schedulerStats.Mode,
+					)
+				}
 			case core.IndexingCompleted:
 				a.emitEvent("indexer:completed", payload)
+				lastIndexerLog = time.Now()
+				a.logInfof("[Indexer] completed session=%s project=%s generation=%d current=%d total=%d queue=%d files=%d mode=%s",
+					session.ID,
+					filepath.Base(path),
+					projectGeneration,
+					evt.Current,
+					evt.Total,
+					schedulerStats.Pending,
+					engineStats.TotalFiles,
+					schedulerStats.Mode,
+				)
 			case core.IndexingFailed:
 				payload["error"] = evt.Error
 				a.emitEvent("indexer:error", payload)
+				lastIndexerLog = time.Now()
+				a.logInfof("[Indexer] failed session=%s project=%s generation=%d current=%d total=%d queue=%d files=%d error=%s",
+					session.ID,
+					filepath.Base(path),
+					projectGeneration,
+					evt.Current,
+					evt.Total,
+					schedulerStats.Pending,
+					engineStats.TotalFiles,
+					evt.Error,
+				)
 			}
 		})
 
@@ -488,14 +537,19 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		a.syncDefaultProjectSession(session)
 
 		projectCtx := session.projectCtx
+		indexCtx, indexCancel := context.WithCancel(projectCtx)
+		indexJobID := backgroundIndexerJobID(session.ID, projectGeneration)
+		a.registerBackgroundJobCancel(indexJobID, indexCancel)
 		session.wg.Add(1)
 		go func() {
 			defer session.wg.Done()
+			defer a.unregisterBackgroundJobCancel(indexJobID)
 			select {
-			case <-projectCtx.Done():
+			case <-indexCtx.Done():
 				return
 			default:
-				if err := coreEngine.IndexProjectContext(projectCtx); err != nil {
+				a.logInfof("[Activation] subsystem=indexer reason=%s session=%s project=%s generation=%d", activationWorkspaceOpen, session.ID, filepath.Base(path), projectGeneration)
+				if err := coreEngine.IndexProjectContext(indexCtx); err != nil {
 					if errors.Is(err, context.Canceled) {
 						return
 					}
@@ -540,7 +594,11 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 			"sessionId":   session.ID,
 		})
 		a.emitLSPDiagnosticsStatusForSession(session.ID, path, projectGeneration, "", "", "ready", "LSP diagnostics manager is ready")
-		a.startProjectDiagnosticsPreloadForSession(session, path, projectGeneration)
+		a.logInfof("[DiagnosticsPreload] startup preload disabled session=%s project=%s generation=%d reason=lazy-lsp",
+			session.ID,
+			filepath.Base(path),
+			projectGeneration,
+		)
 	} else {
 		a.emitLSPDiagnosticsStatusForSession(session.ID, path, projectGeneration, "", "", "unavailable", "LSP diagnostics manager is not available")
 	}

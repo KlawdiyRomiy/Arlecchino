@@ -97,28 +97,34 @@ const (
 	diagnosticsPreloadCoverageComplete          diagnosticsPreloadCoverageState = "complete"
 	diagnosticsPreloadCoverageIncomplete        diagnosticsPreloadCoverageState = "incomplete"
 	diagnosticsPreloadCoverageUnavailable       diagnosticsPreloadCoverageState = "unavailable"
+	diagnosticsPreloadCoverageCanceled          diagnosticsPreloadCoverageState = "canceled"
 	diagnosticsPreloadCoverageModeSyntheticOpen                                 = "synthetic-open"
 )
 
 const (
-	diagnosticsPreloadBatchSize            = 16
+	diagnosticsPreloadStartupDelay         = 1500 * time.Millisecond
+	diagnosticsPreloadIndexerPollInterval  = 750 * time.Millisecond
+	diagnosticsPreloadMaxIndexerWait       = 12 * time.Second
+	diagnosticsPreloadBatchSize            = 8
 	diagnosticsPreloadBatchTimeout         = 1500 * time.Millisecond
-	diagnosticsPreloadBackgroundBatchPause = 150 * time.Millisecond
-	diagnosticsPreloadCandidateOpenTimeout = 1200 * time.Millisecond
+	diagnosticsPreloadPreviewBatchPause    = 80 * time.Millisecond
+	diagnosticsPreloadBackgroundBatchPause = 250 * time.Millisecond
+	diagnosticsPreloadCandidateOpenTimeout = 900 * time.Millisecond
 	diagnosticsPreloadCollectionMinTimeout = 10 * time.Second
 	diagnosticsPreloadProgressEmitEvery    = 8
+	diagnosticsPreloadAutoBackgroundScan   = false
 )
 
 func defaultDiagnosticsPreloadBudget() diagnosticsPreloadBudget {
 	return diagnosticsPreloadBudget{
 		LargeProjectFileThreshold: 80,
-		PolyglotLanguageThreshold: 4,
+		PolyglotLanguageThreshold: 2,
 		MaxDominantLanguages:      2,
-		MaxFilesPerLanguage:       8,
-		MaxFiles:                  16,
+		MaxFilesPerLanguage:       6,
+		MaxFiles:                  12,
 		MaxTotalBytes:             2 << 20,
 		MaxFileSizeBytes:          256 << 10,
-		Timeout:                   5 * time.Second,
+		Timeout:                   4 * time.Second,
 	}
 }
 
@@ -1070,6 +1076,7 @@ func (a *App) runDiagnosticsPreloadScanForSessionWithOptions(
 			if candidateOpenTimeout > 0 {
 				openCtx, openCancel = context.WithTimeout(ctx, candidateOpenTimeout)
 			}
+			openCtx = indexerlsp.WithStartReason(openCtx, activationManualProjectScan)
 			opened, openErr := mgr.DidOpenTransientWithContext(openCtx, candidate.Language, candidate.Path, string(content))
 			if openCancel != nil {
 				openCancel()
@@ -1216,16 +1223,91 @@ func (a *App) startProjectDiagnosticsPreloadForSession(
 	session.wg.Add(1)
 	go func() {
 		defer session.wg.Done()
-		select {
-		case <-ctx.Done():
+		a.logInfof("[DiagnosticsPreload] scheduled session=%s project=%s generation=%d delayMs=%d",
+			session.ID,
+			filepath.Base(projectPath),
+			generation,
+			diagnosticsPreloadStartupDelay.Milliseconds(),
+		)
+		if !a.waitForDiagnosticsPreloadWindow(ctx, session, projectPath, generation) {
 			return
-		default:
 		}
-		if session.projectGeneration.Load() != generation {
+		if session.projectGeneration.Load() != generation ||
+			!diagnosticsPreloadProjectMatches(session.currentProjectPath(), projectPath) {
 			return
 		}
+		a.logInfof("[DiagnosticsPreload] starting session=%s project=%s generation=%d",
+			session.ID,
+			filepath.Base(projectPath),
+			generation,
+		)
 		a.lspPreloadProjectDiagnosticsForSession(session, projectPath, generation)
 	}()
+}
+
+func (a *App) waitForDiagnosticsPreloadWindow(
+	ctx context.Context,
+	session *ProjectRuntimeSession,
+	projectPath string,
+	generation uint64,
+) bool {
+	if !sleepWithContext(ctx, diagnosticsPreloadStartupDelay) {
+		return false
+	}
+
+	startedAt := time.Now()
+	for {
+		if session == nil ||
+			session.projectGeneration.Load() != generation ||
+			!diagnosticsPreloadProjectMatches(session.currentProjectPath(), projectPath) {
+			return false
+		}
+
+		engine := session.coreEngine
+		if engine == nil {
+			return true
+		}
+		stats := engine.SchedulerStats()
+		if stats.Pending == 0 {
+			return true
+		}
+		if time.Since(startedAt) >= diagnosticsPreloadMaxIndexerWait {
+			a.logInfof("[DiagnosticsPreload] starting before indexer idle session=%s project=%s generation=%d pending=%d waitedMs=%d",
+				session.ID,
+				filepath.Base(projectPath),
+				generation,
+				stats.Pending,
+				time.Since(startedAt).Milliseconds(),
+			)
+			return true
+		}
+		if !sleepWithContext(ctx, diagnosticsPreloadIndexerPollInterval) {
+			return false
+		}
+	}
+}
+
+func sleepWithContext(ctx context.Context, duration time.Duration) bool {
+	if duration <= 0 {
+		return true
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func diagnosticsPreloadProjectMatches(currentPath string, expectedPath string) bool {
+	currentPath = strings.TrimSpace(currentPath)
+	expectedPath = strings.TrimSpace(expectedPath)
+	if currentPath == "" || expectedPath == "" {
+		return currentPath == expectedPath
+	}
+	return filepath.Clean(currentPath) == filepath.Clean(expectedPath)
 }
 
 func (a *App) lspPreloadProjectDiagnosticsForSession(
@@ -1250,12 +1332,25 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 	if root == "" {
 		return false
 	}
+	if session.projectGeneration.Load() != generation ||
+		!diagnosticsPreloadProjectMatches(currentProjectPath, root) {
+		a.logInfof("[DiagnosticsPreload] skipped stale request session=%s project=%s current=%s generation=%d currentGeneration=%d",
+			session.ID,
+			filepath.Base(root),
+			filepath.Base(currentProjectPath),
+			generation,
+			session.projectGeneration.Load(),
+		)
+		return false
+	}
 	if mgr == nil {
 		a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, "", "", "unavailable", "LSP diagnostics manager is not available")
-		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, diagnosticsPreloadPlan{
+		unavailablePlan := diagnosticsPreloadPlan{
 			CoverageState: diagnosticsPreloadCoverageUnavailable,
 			Message:       "LSP diagnostics manager is not available",
-		}))
+		}
+		a.recordBackgroundDiagnosticsScan(session.ID, root, generation, unavailablePlan, 0, 0, BackgroundShellJobFailed, unavailablePlan.Message)
+		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, unavailablePlan))
 		return false
 	}
 
@@ -1275,19 +1370,44 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 		}
 	}
 	budget = adaptDiagnosticsPreloadBudget(budget, projectFileCount, queueDepth)
+	a.logInfof("[DiagnosticsPreload] collect session=%s project=%s generation=%d files=%d queue=%d maxFiles=%d maxPerLanguage=%d timeoutMs=%d",
+		session.ID,
+		filepath.Base(root),
+		generation,
+		projectFileCount,
+		queueDepth,
+		budget.MaxFiles,
+		budget.MaxFilesPerLanguage,
+		budget.Timeout.Milliseconds(),
+	)
 	preloadCtx, cancel, preloadSeq := a.beginDiagnosticsPreloadForSession(session, ctx, 0)
 	defer cancel()
+	diagnosticsJobID := backgroundDiagnosticsJobID(session.ID, generation)
+	a.registerBackgroundJobCancel(diagnosticsJobID, cancel)
+	defer a.unregisterBackgroundJobCancel(diagnosticsJobID)
+	a.recordBackgroundDiagnosticsScan(session.ID, root, generation, diagnosticsPreloadPlan{}, 0, 0, BackgroundShellJobRunning, "Collecting project diagnostics.")
 
 	collectCtx, collectCancel := context.WithTimeout(preloadCtx, diagnosticsPreloadPlanCollectionTimeout(budget))
 	plan, err := collectDiagnosticsPreloadPlanWithInventoryContext(collectCtx, root, inventory, budget)
 	collectCancel()
 	if err != nil {
 		failedPlan, shouldEmit := diagnosticsPreloadPlanForCollectionError(err)
+		if errors.Is(err, context.Canceled) {
+			canceledPlan := diagnosticsPreloadPlan{
+				CoverageState: diagnosticsPreloadCoverageCanceled,
+				CoverageMode:  diagnosticsPreloadCoverageModeSyntheticOpen,
+				Message:       "Project diagnostics scan was canceled.",
+			}
+			a.recordBackgroundDiagnosticsScan(session.ID, root, generation, canceledPlan, 0, 0, BackgroundShellJobCanceled, canceledPlan.Message)
+			a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, canceledPlan))
+			return false
+		}
 		if shouldEmit {
 			a.logWarning("[DiagnosticsPreload] collect error: " + err.Error())
 			if failedPlan.CoverageState == diagnosticsPreloadCoverageUnavailable {
 				a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, "", "", "error", failedPlan.Message)
 			}
+			a.recordBackgroundDiagnosticsScan(session.ID, root, generation, failedPlan, failedPlan.CheckedCandidates, failedPlan.FailedCandidates, BackgroundShellJobFailed, failedPlan.Message)
 			a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, failedPlan))
 		}
 		return false
@@ -1295,12 +1415,53 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 	plan = filterDiagnosticsPreloadPlanForManager(plan, mgr, budget)
 	plan.CoverageState = diagnosticsPreloadCoverageRunning
 	plan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+	a.logInfof("[DiagnosticsPreload] plan session=%s project=%s generation=%d total=%d selected=%d languages=%d selectedLanguages=%d bounded=%t",
+		session.ID,
+		filepath.Base(root),
+		generation,
+		plan.TotalCandidates,
+		plan.SelectedCandidates,
+		plan.TotalLanguages,
+		plan.SelectedLanguages,
+		plan.Bounded,
+	)
+	a.recordBackgroundDiagnosticsScan(session.ID, root, generation, plan, 0, 0, BackgroundShellJobRunning, "Collecting project diagnostics.")
 	a.emitEvent("lsp:diagnostics:preload:start", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, plan))
 
+	emitPreviewProgress := func(result diagnosticsPreloadScanResult) {
+		a.recordBackgroundDiagnosticsScan(session.ID, root, generation, plan, result.CheckedCandidates, result.FailedCandidates, BackgroundShellJobRunning, "")
+	}
 	previewCtx, previewCancel := context.WithTimeout(preloadCtx, budget.Timeout)
-	previewResult := a.runDiagnosticsPreloadScanForSession(previewCtx, session, mgr, root, generation, preloadSeq, plan.Candidates)
+	previewResult := a.runDiagnosticsPreloadScanForSessionWithOptions(
+		previewCtx,
+		session,
+		mgr,
+		root,
+		generation,
+		preloadSeq,
+		plan.Candidates,
+		diagnosticsPreloadScanOptions{
+			BatchPause:      diagnosticsPreloadPreviewBatchPause,
+			OnBatchComplete: emitPreviewProgress,
+		},
+	)
 	previewCancel()
 	if previewResult.Aborted {
+		a.logInfof("[DiagnosticsPreload] preview aborted session=%s project=%s generation=%d checked=%d failed=%d",
+			session.ID,
+			filepath.Base(root),
+			generation,
+			previewResult.CheckedCandidates,
+			previewResult.FailedCandidates,
+		)
+		canceledPlan := plan
+		canceledPlan.CoverageState = diagnosticsPreloadCoverageCanceled
+		canceledPlan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+		canceledPlan.CheckedCandidates = previewResult.CheckedCandidates
+		canceledPlan.FailedCandidates = previewResult.FailedCandidates
+		canceledPlan.Message = "Project diagnostics scan was canceled."
+		a.recordBackgroundDiagnosticsScan(session.ID, root, generation, canceledPlan, previewResult.CheckedCandidates, previewResult.FailedCandidates, BackgroundShellJobCanceled, canceledPlan.Message)
+		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, canceledPlan))
 		return false
 	}
 
@@ -1309,7 +1470,15 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 	timedOut := previewResult.TimedOut
 
 	remainingCandidates := diagnosticsPreloadRemainingCandidates(plan.AllCandidates, plan.Candidates)
-	if plan.Bounded && len(remainingCandidates) > 0 && preloadCtx.Err() == nil {
+	if plan.Bounded && len(remainingCandidates) > 0 && !diagnosticsPreloadAutoBackgroundScan {
+		a.logInfof("[DiagnosticsPreload] deferred full scan session=%s project=%s generation=%d remaining=%d",
+			session.ID,
+			filepath.Base(root),
+			generation,
+			len(remainingCandidates),
+		)
+	}
+	if diagnosticsPreloadAutoBackgroundScan && plan.Bounded && len(remainingCandidates) > 0 && preloadCtx.Err() == nil {
 		fullProgressPlan := diagnosticsPreloadFullScanProgressPlan(
 			plan,
 			checkedCandidates,
@@ -1355,6 +1524,21 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 			},
 		)
 		if backgroundResult.Aborted {
+			a.logInfof("[DiagnosticsPreload] background aborted session=%s project=%s generation=%d checked=%d failed=%d",
+				session.ID,
+				filepath.Base(root),
+				generation,
+				backgroundResult.CheckedCandidates,
+				backgroundResult.FailedCandidates,
+			)
+			canceledPlan := plan
+			canceledPlan.CoverageState = diagnosticsPreloadCoverageCanceled
+			canceledPlan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+			canceledPlan.CheckedCandidates = checkedCandidates + backgroundResult.CheckedCandidates
+			canceledPlan.FailedCandidates = failedCandidates + backgroundResult.FailedCandidates
+			canceledPlan.Message = "Project diagnostics scan was canceled."
+			a.recordBackgroundDiagnosticsScan(session.ID, root, generation, canceledPlan, canceledPlan.CheckedCandidates, canceledPlan.FailedCandidates, BackgroundShellJobCanceled, canceledPlan.Message)
+			a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, canceledPlan))
 			return false
 		}
 		checkedCandidates += backgroundResult.CheckedCandidates
@@ -1365,10 +1549,35 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 
 	completedPlan := completeDiagnosticsPreloadPlan(plan, checkedCandidates, failedCandidates, timedOut)
 	if preloadCtx.Err() == nil || errors.Is(preloadCtx.Err(), context.DeadlineExceeded) {
+		a.logInfof("[DiagnosticsPreload] complete session=%s project=%s generation=%d coverage=%s checked=%d failed=%d timedOut=%t",
+			session.ID,
+			filepath.Base(root),
+			generation,
+			completedPlan.CoverageState,
+			checkedCandidates,
+			failedCandidates,
+			timedOut,
+		)
 		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, completedPlan))
+		a.recordBackgroundDiagnosticsScan(session.ID, root, generation, completedPlan, checkedCandidates, failedCandidates, BackgroundShellJobSucceeded, completedPlan.Message)
 		return completedPlan.CoverageState == diagnosticsPreloadCoverageComplete
 	}
 
+	a.logInfof("[DiagnosticsPreload] canceled session=%s project=%s generation=%d err=%v",
+		session.ID,
+		filepath.Base(root),
+		generation,
+		preloadCtx.Err(),
+	)
+	canceledPlan := plan
+	canceledPlan.CoverageState = diagnosticsPreloadCoverageCanceled
+	canceledPlan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+	canceledPlan.CheckedCandidates = checkedCandidates
+	canceledPlan.FailedCandidates = failedCandidates
+	canceledPlan.TimedOut = timedOut
+	canceledPlan.Message = "Project diagnostics scan was canceled."
+	a.recordBackgroundDiagnosticsScan(session.ID, root, generation, canceledPlan, checkedCandidates, failedCandidates, BackgroundShellJobCanceled, canceledPlan.Message)
+	a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, canceledPlan))
 	return false
 }
 
