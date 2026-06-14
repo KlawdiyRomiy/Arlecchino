@@ -624,12 +624,16 @@ interface CodeMirrorEditorProps {
   onHistoryAvailabilityChange?: (
     availability: EditorHistoryAvailability,
   ) => void;
+  performanceProfile?: CodeMirrorPerformanceProfile;
+  reportsPerformanceBudget?: boolean;
 }
 
 export interface EditorHistoryAvailability {
   canUndo: boolean;
   canRedo: boolean;
 }
+
+export type CodeMirrorPerformanceProfile = "default" | "dense-split";
 
 export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   filePath,
@@ -656,6 +660,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   onEditorViewReady,
   onNavigationTargetApplied,
   onHistoryAvailabilityChange,
+  performanceProfile = "default",
+  reportsPerformanceBudget = true,
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const onChangeRef = useRef(onChange);
@@ -735,6 +741,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
+  const layoutConstrainedBySurface = performanceProfile === "dense-split";
+  const featureBudgetLargeDocument =
+    largeDocumentMode || layoutConstrainedBySurface;
   const contentLineCount = useMemo(
     () => getCodeMirrorLineCount(content),
     [content],
@@ -754,7 +763,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         eventPressure: 0,
         activeEditorCharCount: content.length,
         activeEditorLineCount: contentLineCount,
-        activeEditorLargeDocument: largeDocumentMode,
+        activeEditorLargeDocument: featureBudgetLargeDocument,
         indexerQueueDepth: 0,
         projectFileCount: 0,
         updatedAtMs: 0,
@@ -763,7 +772,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       adaptivePerformanceMode,
       content.length,
       contentLineCount,
-      largeDocumentMode,
+      featureBudgetLargeDocument,
     ],
   );
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
@@ -821,6 +830,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const lastUserChangeContentRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!reportsPerformanceBudget) {
+      return;
+    }
+
     updatePerformanceBudget({
       activeEditorCharCount: content.length,
       activeEditorLineCount: contentLineCount,
@@ -830,6 +843,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     content.length,
     contentLineCount,
     largeDocumentMode,
+    reportsPerformanceBudget,
     updatePerformanceBudget,
   ]);
 
@@ -839,9 +853,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   useEffect(
     () => () => {
-      resetActiveEditorBudget();
+      if (reportsPerformanceBudget) {
+        resetActiveEditorBudget();
+      }
     },
-    [resetActiveEditorBudget],
+    [reportsPerformanceBudget, resetActiveEditorBudget],
   );
 
   useEffect(() => {
@@ -1015,7 +1031,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   const completionProvider = useCodeMirrorCompletionProvider({
-    enabled: true,
+    enabled:
+      editorFeatureBudget.runtimeCompletions ||
+      editorFeatureBudget.runtimeGhostText,
     filePath,
     language,
     content,
@@ -1723,8 +1741,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   const operatorLigaturesExtension = useMemo(
-    () => createOperatorLigaturesExtension(showOperatorLigatures),
-    [showOperatorLigatures],
+    () =>
+      createOperatorLigaturesExtension(
+        showOperatorLigatures && editorFeatureBudget.runtimeRichEditorFeatures,
+      ),
+    [editorFeatureBudget.runtimeRichEditorFeatures, showOperatorLigatures],
   );
 
   const definitionLinkExtension = useMemo<Extension[]>(() => {
@@ -1921,8 +1942,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     isCodeMirrorColorToolTarget(language, filePath);
 
   const rainbowBracketsExtension = useMemo<Extension>(
-    () => (showRainbowBrackets && !largeDocumentMode ? rainbowBrackets() : []),
-    [largeDocumentMode, showRainbowBrackets],
+    () =>
+      showRainbowBrackets && !featureBudgetLargeDocument
+        ? rainbowBrackets()
+        : [],
+    [featureBudgetLargeDocument, showRainbowBrackets],
   );
 
   const adaptiveExtensions = useMemo<Extension[]>(() => {

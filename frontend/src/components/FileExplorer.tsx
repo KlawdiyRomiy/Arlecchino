@@ -1532,7 +1532,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       const side =
         editorTabsTarget?.closest<HTMLElement>("[data-editor-split-side]")
           ?.dataset.editorSplitSide ?? null;
-      return side === "left" || side === "right" ? side : null;
+      return side === "left" || side === "right" || side === "bottom"
+        ? side
+        : null;
     },
     [],
   );
@@ -1551,6 +1553,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         clientY > rect.bottom
       ) {
         return null;
+      }
+
+      if (clientY >= rect.top + rect.height * 0.666) {
+        return "bottom";
       }
 
       return clientX < rect.left + rect.width / 2 ? "left" : "right";

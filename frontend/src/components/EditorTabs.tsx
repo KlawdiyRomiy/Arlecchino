@@ -19,7 +19,8 @@ export interface Tab {
   isDirty?: boolean;
 }
 
-export type EditorSplitDropSide = "left" | "right";
+export type EditorSplitPaneSide = "left" | "right" | "bottom";
+export type EditorSplitDropSide = EditorSplitPaneSide;
 
 export interface EditorSplitDropTarget {
   side: EditorSplitDropSide;
