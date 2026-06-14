@@ -112,7 +112,6 @@ import {
 import { normalizePathForGit, type GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
-import { useIndexingPhase } from "../hooks/useIndexingProgress";
 import type { EditorNavigationTarget } from "../utils/editorFileLoader";
 
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
@@ -626,6 +625,7 @@ interface CodeMirrorEditorProps {
   ) => void;
   performanceProfile?: CodeMirrorPerformanceProfile;
   reportsPerformanceBudget?: boolean;
+  active?: boolean;
 }
 
 export interface EditorHistoryAvailability {
@@ -662,6 +662,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   onHistoryAvailabilityChange,
   performanceProfile = "default",
   reportsPerformanceBudget = true,
+  active = true,
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const onChangeRef = useRef(onChange);
@@ -783,14 +784,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [filePath, gitProjectPath],
   );
   const gitMarkers = useGitStore((state) =>
-    editorFeatureBudget.layoutStableGitGutter
+    active && editorFeatureBudget.layoutStableGitGutter
       ? (state.fileMarkers[filePath] ??
         state.fileMarkers[gitMarkerKey] ??
         EMPTY_GIT_MARKERS)
       : EMPTY_GIT_MARKERS,
   );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
-  const indexingPhase = useIndexingPhase();
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
@@ -1074,17 +1074,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   useEffect(() => {
     if (!filePath) return;
     if (!gitProjectPath) return;
+    if (!active) return;
     if (!editorFeatureBudget.layoutStableGitGutter) return;
 
-    void refreshFileMarkers(
-      filePath,
-      indexingPhase === "complete" || indexingPhase === "revealed",
-    );
+    void refreshFileMarkers(filePath);
   }, [
+    active,
     editorFeatureBudget.layoutStableGitGutter,
     filePath,
     gitProjectPath,
-    indexingPhase,
     refreshFileMarkers,
   ]);
 
@@ -1952,7 +1950,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const adaptiveExtensions = useMemo<Extension[]>(() => {
     const nextExtensions: Extension[] = [];
 
-    if (editorFeatureBudget.layoutStableGitGutter) {
+    if (active && editorFeatureBudget.layoutStableGitGutter) {
       nextExtensions.push(gitGutterExtension);
     }
 
@@ -1987,6 +1985,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
     return nextExtensions;
   }, [
+    active,
     completionProviderExtensions,
     definitionLinkExtension,
     diagnosticsExtension,
@@ -2009,6 +2008,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
     editorFeatureBudget.runtimeDiagnostics,
+    active,
     colorToolsEnabled,
     foldControlsEnabled,
     filePath,

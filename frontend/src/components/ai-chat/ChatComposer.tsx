@@ -431,13 +431,19 @@ export function ChatComposer({
   const contextPercent = contextBudgetPercent(contextBudget);
   const previewContinuity = contextPreview?.continuity ?? [];
   const includedContinuity =
-    previewContinuity.length > 0 ? previewContinuity : (continuityPlan?.included ?? []);
+    previewContinuity.length > 0
+      ? previewContinuity
+      : (continuityPlan?.included ?? []);
   const staleContinuity = continuityPlan?.stale ?? [];
   const visibleContinuityCapsules = includedContinuity;
   const continuityCountLabel = `${includedContinuity.length} included · ${staleContinuity.length} stale`;
   const compactDisabledReason =
     continuityPlan?.disabledReason ||
-    (running ? "A run is active." : continuityBusy ? "Continuity action is running." : "");
+    (running
+      ? "A run is active."
+      : continuityBusy
+        ? "Continuity action is running."
+        : "");
   const compactDisabled =
     continuityBusy || running || continuityPlan?.canCompact !== true;
   const canRevokeContinuity = continuityPlan?.canRevoke === true;
@@ -867,7 +873,6 @@ export function ChatComposer({
           onChange={(event) => {
             const nextInput = event.target.value;
             onInputChange(nextInput);
-            window.requestAnimationFrame(() => syncMentionTrigger(nextInput));
           }}
           onClick={() => syncMentionTrigger()}
           onKeyDown={handleComposerKeyDown}
@@ -1050,7 +1055,9 @@ export function ChatComposer({
                             {capsule.status !== "revoked" ? (
                               <button
                                 type="button"
-                                disabled={continuityBusy || !canRevokeContinuity}
+                                disabled={
+                                  continuityBusy || !canRevokeContinuity
+                                }
                                 title={
                                   canRevokeContinuity
                                     ? "Revoke capsule"

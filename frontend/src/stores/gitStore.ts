@@ -28,8 +28,10 @@ import { usePerformanceStore } from "./performanceStore";
 import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
 const fileRefreshDebounceMs = 320;
+const fileMarkerRefreshDebounceMs = 1200;
 const fallbackPollIntervalMs = 15000;
 const gitMetadataCacheTtlMs = 30000;
+const gitMarkerCacheTtlMs = 3000;
 
 export interface GitStashEntry {
   ref: string;
@@ -253,7 +255,10 @@ const scheduleFileMarkerRefresh = (
   }
 
   const mode = usePerformanceStore.getState().mode;
-  const delay = mode === "normal" ? 500 : 700;
+  const delay =
+    mode === "normal"
+      ? fileMarkerRefreshDebounceMs
+      : fileMarkerRefreshDebounceMs * 2;
   const existingTimer = markerRefreshTimers.get(filePath);
   if (existingTimer !== undefined) {
     window.clearTimeout(existingTimer);
@@ -261,7 +266,7 @@ const scheduleFileMarkerRefresh = (
 
   const timer = window.setTimeout(() => {
     markerRefreshTimers.delete(filePath);
-    void get().refreshFileMarkers(filePath, true);
+    void get().refreshFileMarkers(filePath);
   }, delay);
   markerRefreshTimers.set(filePath, timer);
 };
@@ -941,7 +946,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     const markerKey = relativePath || filePath;
     const now = Date.now();
     const updatedAt = markerUpdatedAt[markerKey] ?? 0;
-    if (!force && now - updatedAt < 800) {
+    if (!force && now - updatedAt < gitMarkerCacheTtlMs) {
       return;
     }
     if (markerLoading[markerKey]) {

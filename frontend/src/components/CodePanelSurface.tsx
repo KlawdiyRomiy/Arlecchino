@@ -55,7 +55,6 @@ import {
   isEditorFilePolicyReadOnly,
   type EditorFileLoadState,
 } from "../utils/editorFileLoader";
-import { useIndexingPhase } from "../hooks/useIndexingProgress";
 import { useCodeMirrorCompletionProvider } from "../hooks/useCodeMirrorCompletionProvider";
 import { useStableReferenceKey } from "../hooks/useStableReferenceKey";
 import { BinaryEditorPreview } from "./BinaryEditorPreview";
@@ -162,7 +161,6 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       : EMPTY_GIT_MARKERS,
   );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
-  const indexingPhase = useIndexingPhase();
   const saveTimeoutRef = useRef<number | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const latestContentRef = useRef(content);
@@ -452,14 +450,10 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     if (!gitProjectPath) return;
     if (!editorFeatureBudget.layoutStableGitGutter) return;
 
-    void refreshFileMarkers(
-      path,
-      indexingPhase === "complete" || indexingPhase === "revealed",
-    );
+    void refreshFileMarkers(path);
   }, [
     editorFeatureBudget.layoutStableGitGutter,
     gitProjectPath,
-    indexingPhase,
     path,
     refreshFileMarkers,
   ]);

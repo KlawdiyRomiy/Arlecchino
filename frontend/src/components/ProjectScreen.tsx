@@ -3689,6 +3689,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         readOnly={isTabReadOnlyByPolicy(tabData.id)}
         performanceProfile={performanceProfile}
         reportsPerformanceBudget={tabData.id === focusedEditorTabId}
+        active={tabData.id === focusedEditorTabId}
       />
     );
   };

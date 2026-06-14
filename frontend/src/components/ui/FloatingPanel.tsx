@@ -1310,13 +1310,9 @@ export const FloatingPanel = React.forwardRef<
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
       const isFlowHosted = isSnapped && hostMode === "flow" && !isDragging;
-      const isActivePanel =
-        isDragging ||
-        isResizing ||
-        isDropTarget ||
-        isRelocating ||
-        mode === "floating" ||
-        isPinned;
+      const isInteractivePanel =
+        isDragging || isResizing || isDropTarget || isRelocating || isPinned;
+      const isActivePanel = isInteractivePanel;
       const shouldPromoteForMotion =
         mode === "snapped" &&
         !reduceMotion &&
@@ -1350,7 +1346,9 @@ export const FloatingPanel = React.forwardRef<
         flexDirection: "column",
         background: immersiveFrameActive
           ? "var(--terminal-bg)"
-          : "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
+          : motionPaintConstrained
+            ? "var(--surface-shell-panel)"
+            : "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
         border: "1px solid var(--shell-border)",
         borderRadius: panelFrameRadius,
         boxShadow: panelFrameShadow,
@@ -1374,7 +1372,7 @@ export const FloatingPanel = React.forwardRef<
                 : zenTopChromeAvoidanceOffset > 0
                   ? "transform"
                   : "auto",
-        contain: motionPaintConstrained ? "paint style" : undefined,
+        contain: motionPaintConstrained ? "layout paint style" : "paint",
         backfaceVisibility: "hidden" as const,
         transition:
           reduceMotion || motionPaintConstrained

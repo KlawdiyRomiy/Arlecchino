@@ -2341,7 +2341,12 @@ export function AIChatPanelContent({
 
   useLayoutEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
-    transcriptEndRef.current?.scrollIntoView({ block: "end" });
+    const frameId = window.requestAnimationFrame(() => {
+      transcriptEndRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
   }, [
     activeSessionId,
     runs,
