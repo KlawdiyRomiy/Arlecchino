@@ -1,5 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useCallback, useLayoutEffect, useRef } from "react";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import {
   PositionNativeWindowControls,
@@ -29,17 +28,11 @@ interface WindowControlsProps {
   nativeEnabled?: boolean;
 }
 
-interface NativeBackdropRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
 const MAC_CONTROLS_WIDTH = 84;
 const MAC_CONTROLS_HEIGHT = 48;
 const MAC_CONTROLS_Y_OFFSET = -2;
 const MAC_BUBBLE_HEIGHT = 28;
+const MAC_TOPBAR_HORIZONTAL_PADDING = 12;
 const MAC_BUTTON_LEFT = 12;
 const MAC_BUTTON_GAP = 10;
 const MAC_BUTTON_SIZE = 13;
@@ -47,11 +40,10 @@ const MAC_CONTROLS_BORDER_WIDTH = 1;
 const MAC_BUTTON_ROW_WIDTH = MAC_BUTTON_SIZE * 3 + MAC_BUTTON_GAP * 2;
 const MAC_BUBBLE_WIDTH =
   MAC_BUTTON_ROW_WIDTH + MAC_BUTTON_LEFT * 2 + MAC_CONTROLS_BORDER_WIDTH * 2;
-const MAC_BUBBLE_X_OFFSET = 1;
+const MAC_BUBBLE_X_OFFSET = -1;
 const MAC_BUBBLE_Y_OFFSET = 1;
 
 const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
-const PROJECT_SWITCH_FRAME_SELECTOR = '[data-project-switch-frame="true"]';
 
 const macControlsOuterStyle = {
   "--wails-draggable": "no-drag",
@@ -74,33 +66,10 @@ const macControlsBubbleStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-const macControlsMeasurementBubbleStyle: React.CSSProperties = {
+const nativeBackdropBubbleStyle: React.CSSProperties = {
   ...macControlsBubbleStyle,
-  visibility: "hidden",
-};
-
-const nativeBackdropPortalBubbleStyle: React.CSSProperties = {
-  width: "100%",
-  height: "100%",
   boxSizing: "border-box",
   transform: `translate(calc(${MAC_BUBBLE_X_OFFSET}px * var(--ui-inverse-scale)), calc(${MAC_BUBBLE_Y_OFFSET}px * var(--ui-inverse-scale)))`,
-};
-
-const nativeButtonTargetsStyle: React.CSSProperties = {
-  position: "absolute",
-  left: `calc(${MAC_BUTTON_LEFT}px * var(--ui-inverse-scale))`,
-  top: "50%",
-  display: "flex",
-  alignItems: "center",
-  gap: `calc(${MAC_BUTTON_GAP}px * var(--ui-inverse-scale))`,
-  transform: "translateY(-50%)",
-};
-
-const nativeButtonTargetStyle: React.CSSProperties = {
-  width: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
-  height: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
-  borderRadius: "9999px",
-  opacity: 0,
 };
 
 const fallbackBubbleStyle: React.CSSProperties = {
@@ -117,34 +86,6 @@ const fallbackButtonStyle: React.CSSProperties = {
   width: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
   height: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
 };
-
-const areNativeBackdropRectsEqual = (
-  a: NativeBackdropRect | null,
-  b: NativeBackdropRect,
-) => {
-  if (!a) {
-    return false;
-  }
-
-  return (
-    Math.abs(a.left - b.left) < 0.5 &&
-    Math.abs(a.top - b.top) < 0.5 &&
-    Math.abs(a.width - b.width) < 0.5 &&
-    Math.abs(a.height - b.height) < 0.5
-  );
-};
-
-const buildNativeBackdropPortalStyle = (
-  rect: NativeBackdropRect,
-): React.CSSProperties => ({
-  position: "fixed",
-  left: `${rect.left}px`,
-  top: `${rect.top}px`,
-  width: `${rect.width}px`,
-  height: `${rect.height}px`,
-  zIndex: 120,
-  pointerEvents: "none",
-});
 
 const isMacPlatform = (): boolean => {
   if (typeof navigator === "undefined") {
@@ -176,29 +117,49 @@ const shouldRenderMacControls = (): boolean => {
   return isMacPlatform();
 };
 
-const hasMovingTransform = (element: Element | null): boolean => {
-  if (!element) {
-    return false;
+const readRootNumber = (name: string, fallback: number): number => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return fallback;
   }
 
-  const transform = window.getComputedStyle(element).transform;
-  if (!transform || transform === "none") {
-    return false;
-  }
-
-  try {
-    const matrix = new DOMMatrixReadOnly(transform);
-    return Math.abs(matrix.m41) > 0.5 || Math.abs(matrix.m42) > 0.5;
-  } catch {
-    return true;
-  }
+  const raw = window
+    .getComputedStyle(document.documentElement)
+    .getPropertyValue(name);
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const isInsideMovingProjectSwitchFrame = (
-  element: HTMLElement | null,
-): boolean => {
-  const frame = element?.closest(PROJECT_SWITCH_FRAME_SELECTOR) ?? null;
-  return hasMovingTransform(frame);
+const getNativeWindowControlsInset = (
+  placeholder: HTMLElement | null,
+): [
+  closeX: number,
+  closeY: number,
+  minimiseX: number,
+  minimiseY: number,
+  maximiseX: number,
+  maximiseY: number,
+] => {
+  const rect = placeholder?.getBoundingClientRect();
+  const controlScale =
+    rect && rect.width > 0 ? rect.width / MAC_CONTROLS_WIDTH : 1;
+  const closeCenterX =
+    rect?.left ??
+    MAC_TOPBAR_HORIZONTAL_PADDING * readRootNumber("--ui-scale", 1);
+  const closeX =
+    closeCenterX + (MAC_BUTTON_LEFT + MAC_BUTTON_SIZE / 2) * controlScale;
+  const centerY =
+    (rect?.top ?? MAC_CONTROLS_Y_OFFSET) +
+    (MAC_CONTROLS_HEIGHT / 2) * controlScale;
+  const buttonCenterGap = MAC_BUTTON_SIZE + MAC_BUTTON_GAP;
+
+  return [
+    closeX,
+    centerY,
+    closeX + buttonCenterGap * controlScale,
+    centerY,
+    closeX + buttonCenterGap * 2 * controlScale,
+    centerY,
+  ];
 };
 
 let nativeWindowControlsOwner: symbol | null = null;
@@ -216,12 +177,6 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   );
   const ownerRef = useRef<symbol>(Symbol("window-controls-native-owner"));
   const placeholderRef = useRef<HTMLDivElement>(null);
-  const backdropRef = useRef<HTMLDivElement>(null);
-  const closeRef = useRef<HTMLSpanElement>(null);
-  const minimizeRef = useRef<HTMLSpanElement>(null);
-  const fullscreenRef = useRef<HTMLSpanElement>(null);
-  const [nativeBackdropRect, setNativeBackdropRect] =
-    useState<NativeBackdropRect | null>(null);
   const controlsVisible = visible && backdropVisible;
   const nativeControlsEnabled = nativeEnabled ?? controlsVisible;
 
@@ -234,44 +189,12 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   }, []);
 
   const positionNativeControls = useCallback(() => {
-    if (
-      !controlsVisible ||
-      projectSwitchPending ||
-      isInsideMovingProjectSwitchFrame(placeholderRef.current)
-    ) {
+    if (!controlsVisible || projectSwitchPending) {
       return;
-    }
-
-    const closeRect = closeRef.current?.getBoundingClientRect();
-    const minimizeRect = minimizeRef.current?.getBoundingClientRect();
-    const fullscreenRect = fullscreenRef.current?.getBoundingClientRect();
-    const backdropRect = backdropRef.current?.getBoundingClientRect();
-
-    if (!closeRect || !minimizeRect || !fullscreenRect) {
-      return;
-    }
-
-    if (backdropRect) {
-      const nextBackdropRect = {
-        left: backdropRect.left,
-        top: backdropRect.top,
-        width: backdropRect.width,
-        height: backdropRect.height,
-      };
-      setNativeBackdropRect((current) =>
-        areNativeBackdropRectsEqual(current, nextBackdropRect)
-          ? current
-          : nextBackdropRect,
-      );
     }
 
     void PositionNativeWindowControls(
-      closeRect.left + closeRect.width / 2,
-      closeRect.top + closeRect.height / 2,
-      minimizeRect.left + minimizeRect.width / 2,
-      minimizeRect.top + minimizeRect.height / 2,
-      fullscreenRect.left + fullscreenRect.width / 2,
-      fullscreenRect.top + fullscreenRect.height / 2,
+      ...getNativeWindowControlsInset(placeholderRef.current),
     )
       .then((positioned) => {
         if (!positioned || nativeWindowControlsOwner !== ownerRef.current) {
@@ -296,13 +219,11 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
     }
 
     if (!nativeControlsEnabled) {
-      setNativeBackdropRect(null);
       void SetNativeWindowControlsVisible(false).catch(() => undefined);
       return;
     }
 
     if (!controlsVisible) {
-      setNativeBackdropRect(null);
       void SetNativeWindowControlsVisible(true)
         .then((enabled) => {
           if (!enabled || nativeWindowControlsOwner !== owner) {
@@ -393,52 +314,21 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   }
 
   if (useNativeMacControls) {
-    const measuredNativeBackdropRect = nativeBackdropRect;
-    const portalRoot =
-      typeof document === "undefined" || !measuredNativeBackdropRect
-        ? null
-        : document.body;
-
     return (
-      <>
+      <div
+        ref={placeholderRef}
+        className="pointer-events-none shrink-0"
+        style={macControlsOuterStyle}
+        aria-hidden="true"
+        data-testid="window-controls-native-macos"
+      >
         <div
-          ref={placeholderRef}
-          className="pointer-events-none shrink-0"
-          style={macControlsOuterStyle}
+          className="shell-cluster"
           aria-hidden="true"
-          data-testid="window-controls-native-macos"
-        >
-          <div
-            ref={backdropRef}
-            className="shell-cluster"
-            aria-hidden="true"
-            style={macControlsMeasurementBubbleStyle}
-          >
-            <div style={nativeButtonTargetsStyle}>
-              <span ref={closeRef} style={nativeButtonTargetStyle} />
-              <span ref={minimizeRef} style={nativeButtonTargetStyle} />
-              <span ref={fullscreenRef} style={nativeButtonTargetStyle} />
-            </div>
-          </div>
-        </div>
-        {portalRoot && measuredNativeBackdropRect
-          ? createPortal(
-              <div
-                aria-hidden="true"
-                data-testid="window-controls-native-bubble"
-                style={buildNativeBackdropPortalStyle(
-                  measuredNativeBackdropRect,
-                )}
-              >
-                <div
-                  className="shell-cluster"
-                  style={nativeBackdropPortalBubbleStyle}
-                />
-              </div>,
-              portalRoot,
-            )
-          : null}
-      </>
+          style={nativeBackdropBubbleStyle}
+          data-testid="window-controls-native-backdrop"
+        />
+      </div>
     );
   }
 

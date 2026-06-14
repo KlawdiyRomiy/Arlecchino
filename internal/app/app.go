@@ -116,6 +116,7 @@ func (a *App) attachMainWindow(window *application.WebviewWindow) {
 	a.registerWindowRole(window, WindowRoleMain)
 	a.registerWindowFileDropIntents(window)
 	registerNativeFullscreenEvents(window)
+	a.registerNativeWindowControlsLifecycle(window)
 	a.registerMainWindowCloseConfirmation(window)
 }
 

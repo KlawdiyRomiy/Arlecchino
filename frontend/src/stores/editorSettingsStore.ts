@@ -113,6 +113,7 @@ interface EditorSettingsState {
   showRainbowBrackets: boolean;
   showOperatorLigatures: boolean;
   showTopbarProjectPath: boolean;
+  showNativeMacWindowControls: boolean;
   confirmBeforeClose: boolean;
   topbarItemOrder: TopbarItemId[];
   zenModeEnabled: boolean;
@@ -140,6 +141,7 @@ interface EditorSettingsState {
   setShowRainbowBrackets: (value: boolean) => void;
   setShowOperatorLigatures: (value: boolean) => void;
   setShowTopbarProjectPath: (value: boolean) => void;
+  setShowNativeMacWindowControls: (value: boolean) => void;
   setConfirmBeforeClose: (value: boolean) => void;
   setTopbarItemOrder: (order: TopbarItemId[]) => void;
   resetTopbarItemOrder: () => void;
@@ -185,6 +187,7 @@ const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
 const DEFAULT_SHOW_OPERATOR_LIGATURES = true;
 const DEFAULT_SHOW_TOPBAR_PROJECT_PATH = true;
+const DEFAULT_SHOW_NATIVE_MAC_WINDOW_CONTROLS = true;
 const DEFAULT_CONFIRM_BEFORE_CLOSE = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
@@ -230,6 +233,7 @@ type PersistedEditorSettingsState = Partial<
     | "showRainbowBrackets"
     | "showOperatorLigatures"
     | "showTopbarProjectPath"
+    | "showNativeMacWindowControls"
     | "confirmBeforeClose"
     | "topbarItemOrder"
     | "zenModeEnabled"
@@ -431,6 +435,11 @@ const sanitizePersistedEditorSettings = (
     nextState.showTopbarProjectPath = persistedState.showTopbarProjectPath;
   }
 
+  if (typeof persistedState.showNativeMacWindowControls === "boolean") {
+    nextState.showNativeMacWindowControls =
+      persistedState.showNativeMacWindowControls;
+  }
+
   if (typeof persistedState.confirmBeforeClose === "boolean") {
     nextState.confirmBeforeClose = persistedState.confirmBeforeClose;
   }
@@ -504,6 +513,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
       showOperatorLigatures: DEFAULT_SHOW_OPERATOR_LIGATURES,
       showTopbarProjectPath: DEFAULT_SHOW_TOPBAR_PROJECT_PATH,
+      showNativeMacWindowControls: DEFAULT_SHOW_NATIVE_MAC_WINDOW_CONTROLS,
       confirmBeforeClose: DEFAULT_CONFIRM_BEFORE_CLOSE,
       topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER],
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
@@ -607,6 +617,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowTopbarProjectPath: (value: boolean) =>
         set(() => ({ showTopbarProjectPath: value })),
+
+      setShowNativeMacWindowControls: (value: boolean) =>
+        set(() => ({ showNativeMacWindowControls: value })),
 
       setConfirmBeforeClose: (value: boolean) =>
         set(() => ({ confirmBeforeClose: value })),

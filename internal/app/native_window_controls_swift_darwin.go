@@ -53,13 +53,16 @@ func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, 
 		return false
 	}
 
-	controls := [6]float64{closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY}
+	inset := nativeWindowControlsInset{
+		closeCenterX:  closeX,
+		buttonCenterY: (closeY + minimiseY + maximiseY) / 3,
+	}
 	a.updateNativeWindowControlsState(window, func(controlsState *nativeWindowControlsState) {
-		controlsState.controlsSet = true
-		controlsState.controls = controls
+		controlsState.insetSet = true
+		controlsState.inset = inset
 	})
 
-	return a.positionNativeWindowControls(window, controls)
+	return a.positionNativeWindowControls(window, inset)
 }
 
 func (a *App) RefreshNativeWindowControls(ctx context.Context) bool {
@@ -68,24 +71,24 @@ func (a *App) RefreshNativeWindowControls(ctx context.Context) bool {
 
 func (a *App) refreshNativeWindowControlsForWindow(window application.Window) bool {
 	state, ok := a.nativeWindowControlsState(window)
-	if !ok || !state.controlsSet {
+	if !ok || !state.insetSet {
 		return false
 	}
-	return a.positionNativeWindowControls(window, state.controls)
+	return a.positionNativeWindowControls(window, state.inset)
 }
 
-func (a *App) positionNativeWindowControls(window application.Window, controls [6]float64) bool {
+func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset) bool {
 	var nativeWindow unsafe.Pointer
 	if window != nil {
 		nativeWindow = window.NativeWindow()
 	}
 	return bool(C.ArleNativePositionWindowControls(
 		nativeWindow,
-		C.double(controls[0]),
-		C.double(controls[1]),
-		C.double(controls[2]),
-		C.double(controls[3]),
-		C.double(controls[4]),
-		C.double(controls[5]),
+		C.double(inset.closeCenterX),
+		C.double(inset.buttonCenterY),
+		C.double(inset.closeCenterX),
+		C.double(inset.buttonCenterY),
+		C.double(inset.closeCenterX),
+		C.double(inset.buttonCenterY),
 	))
 }

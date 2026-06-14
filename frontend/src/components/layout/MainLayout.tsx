@@ -657,6 +657,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const zenModeEnabled = useEditorSettingsStore(
     (state) => state.zenModeEnabled,
   );
+  const showNativeMacWindowControls = useEditorSettingsStore(
+    (state) => state.showNativeMacWindowControls,
+  );
   const logicalViewport = React.useMemo(
     () => getLogicalViewportSize(uiScale),
     [uiScale],
@@ -5997,6 +6000,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     terminalPanelConfig.x + terminalPanelConfig.size.width > 0 &&
     terminalPanelConfig.y + terminalPanelConfig.size.height > 0;
   const nativeWindowControlsEnabled =
+    showNativeMacWindowControls &&
     !tuiTerminalOccludesNativeWindowControls &&
     (nativeWindowFullscreen || zenTopChromeVisible);
   const nativeWindowControlsVisible =

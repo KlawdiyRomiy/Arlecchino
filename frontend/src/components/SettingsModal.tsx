@@ -832,6 +832,13 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     keywords: ["topbar", "project label", "actions", "compact"],
   },
   {
+    id: "native-macos-window-controls",
+    tab: "appearance",
+    label: "macOS window buttons",
+    description: "Show the native macOS traffic-light buttons in the topbar.",
+    keywords: ["macos", "traffic lights", "window buttons", "topbar"],
+  },
+  {
     id: "close-confirmation",
     tab: "appearance",
     label: "Close confirmation",
@@ -1377,6 +1384,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showRainbowBrackets,
     showOperatorLigatures,
     showTopbarProjectPath,
+    showNativeMacWindowControls,
     confirmBeforeClose,
     zenModeEnabled,
     projectWindowMode,
@@ -1401,6 +1409,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowRainbowBrackets,
     setShowOperatorLigatures,
     setShowTopbarProjectPath,
+    setShowNativeMacWindowControls,
     setConfirmBeforeClose,
     resetTopbarItemOrder,
     setZenModeEnabled,
@@ -4296,6 +4305,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 highlighted={
                                   highlightedSettingId ===
                                   "compact-topbar-actions"
+                                }
+                              />
+                              <SwitchRow
+                                title="macOS window buttons"
+                                description="Show the native traffic-light buttons in the topbar. Turn off to let topbar actions occupy that space."
+                                checked={showNativeMacWindowControls}
+                                onCheckedChange={setShowNativeMacWindowControls}
+                                settingId="native-macos-window-controls"
+                                highlighted={
+                                  highlightedSettingId ===
+                                  "native-macos-window-controls"
                                 }
                               />
                               <SwitchRow

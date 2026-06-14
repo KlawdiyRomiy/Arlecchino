@@ -106,6 +106,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	a.registerWindowFileDropIntents(window)
 	if roleWindow, ok := window.(application.Window); ok {
 		a.registerWindowRole(roleWindow, WindowRoleProject)
+		a.registerNativeWindowControlsLifecycle(roleWindow)
 	}
 	registerNativeFullscreenEvents(window)
 	window.Show()

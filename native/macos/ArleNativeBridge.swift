@@ -632,13 +632,40 @@ private func installWindowButtonEventForwarder(_ window: NSWindow) {
         return
     }
 
-    let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak window] event in
-        guard let window, let button = windowButton(for: event, in: window) else {
+    var pressedButton: NSButton?
+    let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak window] event in
+        guard let window, event.window === window else {
             return event
         }
 
-        button.mouseDown(with: event)
-        return nil
+        switch event.type {
+        case .leftMouseDown:
+            guard let button = windowButton(for: event, in: window) else {
+                return event
+            }
+            pressedButton = button
+            button.highlight(true)
+            return nil
+        case .leftMouseDragged:
+            guard let button = pressedButton else {
+                return event
+            }
+            button.highlight(windowButton(button, contains: event))
+            return nil
+        case .leftMouseUp:
+            guard let button = pressedButton else {
+                return event
+            }
+            pressedButton = nil
+            let shouldClick = windowButton(button, contains: event)
+            button.highlight(false)
+            if shouldClick, windowButtonCanReceiveForwardedEvent(button) {
+                button.performClick(nil)
+            }
+            return nil
+        default:
+            return event
+        }
     }
     objc_setAssociatedObject(window, &windowButtonEventForwarderKey, monitor, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 }

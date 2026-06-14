@@ -6,13 +6,19 @@ import (
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 type nativeWindowControlsState struct {
-	visibleSet  bool
-	visible     bool
-	controlsSet bool
-	controls    [6]float64
+	visibleSet bool
+	visible    bool
+	insetSet   bool
+	inset      nativeWindowControlsInset
+}
+
+type nativeWindowControlsInset struct {
+	closeCenterX  float64
+	buttonCenterY float64
 }
 
 func nativeWindowControlsStateKey(window application.Window) string {
@@ -75,6 +81,21 @@ func (a *App) nativeWindowControlsState(window application.Window) (nativeWindow
 	defer a.nativeControlsMu.Unlock()
 	state, ok := a.nativeControlsByWindow[key]
 	return state, ok
+}
+
+func (a *App) registerNativeWindowControlsLifecycle(window application.Window) {
+	if a == nil || window == nil {
+		return
+	}
+
+	refresh := func(*application.WindowEvent) {
+		a.refreshNativeWindowControlsForWindow(window)
+	}
+	window.OnWindowEvent(events.Common.WindowDidResize, refresh)
+	window.OnWindowEvent(events.Common.WindowFullscreen, refresh)
+	window.OnWindowEvent(events.Common.WindowUnFullscreen, refresh)
+	window.OnWindowEvent(events.Common.WindowShow, refresh)
+	window.OnWindowEvent(events.Common.WindowFocus, refresh)
 }
 
 func (a *App) clearNativeWindowControlsStateForWindowName(windowName string) {
