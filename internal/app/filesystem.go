@@ -1291,6 +1291,7 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 			return "", err
 		}
 	}
+	a.logInfof("[Activation] subsystem=git reason=%s project=%s command=%s", activationGitRefresh, filepath.Base(projectPath), strings.Join(args, " "))
 
 	if isGitStatusCommand(args) {
 		return a.runGitStatusCommand(projectPath, args)

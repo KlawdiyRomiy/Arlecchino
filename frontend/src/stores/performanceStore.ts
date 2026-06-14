@@ -5,6 +5,7 @@ import {
   type PerfScope,
   nowPerf,
 } from "../utils/perf";
+import { EventsEmit } from "../wails/runtime";
 
 export type AdaptivePerformanceMode = "normal" | "constrained" | "critical";
 
@@ -78,7 +79,6 @@ const resolveMode = (
     snapshot.activeEditorCharCount > 1_000_000 ||
     snapshot.activeEditorLineCount > 4_000 ||
     snapshot.eventPressure >= 80 ||
-    snapshot.frameGapMs >= 80 ||
     snapshot.indexerQueueDepth >= 500
   ) {
     return "critical";
@@ -88,9 +88,7 @@ const resolveMode = (
     snapshot.activeEditorCharCount > 250_000 ||
     snapshot.activeEditorLineCount > 1_500 ||
     snapshot.eventPressure >= 24 ||
-    snapshot.frameGapMs >= 34 ||
-    snapshot.indexerQueueDepth >= 160 ||
-    snapshot.projectFileCount >= 5_000
+    snapshot.indexerQueueDepth >= 160
   ) {
     return "constrained";
   }
@@ -115,6 +113,93 @@ const performanceBudgetChanged = (
   current.activeEditorLargeDocument !== next.activeEditorLargeDocument ||
   current.indexerQueueDepth !== next.indexerQueueDepth ||
   current.projectFileCount !== next.projectFileCount;
+
+let lastPerformanceTraceAt = 0;
+let lastPerformanceTraceKey = "";
+
+const shouldTracePerformanceBudget = (
+  previous: PerformanceState,
+  next: PerformanceState,
+): string | null => {
+  const snapshot = next.snapshot;
+  if (previous.mode !== next.mode) {
+    return "mode-change";
+  }
+  if (snapshot.frameGapMs >= 50) {
+    return "frame-gap";
+  }
+  if (snapshot.indexerQueueDepth >= 160) {
+    return "indexer-queue";
+  }
+  if (snapshot.eventPressure >= 80) {
+    return "event-pressure";
+  }
+  return null;
+};
+
+const maybeEmitPerformanceTrace = (
+  previous: PerformanceState,
+  next: PerformanceState,
+) => {
+  const reason = shouldTracePerformanceBudget(previous, next);
+  if (reason === null) {
+    return;
+  }
+
+  const now = nowPerf();
+  const snapshot = next.snapshot;
+  const frameGapBucket =
+    reason === "frame-gap"
+      ? Math.floor(snapshot.frameGapMs / 50)
+      : Math.round(snapshot.frameGapMs / 10);
+  const traceKey = [
+    reason,
+    snapshot.mode,
+    frameGapBucket,
+    Math.floor(snapshot.eventPressure / 10),
+    Math.floor(snapshot.indexerQueueDepth / 40),
+    Math.floor(snapshot.projectFileCount / 500),
+    next.panelMotionActive ? "motion" : "stable",
+  ].join(":");
+  const minTraceIntervalMs = reason === "frame-gap" ? 15000 : 3000;
+  if (
+    reason === "frame-gap" &&
+    now - lastPerformanceTraceAt < minTraceIntervalMs
+  ) {
+    return;
+  }
+  if (
+    traceKey === lastPerformanceTraceKey &&
+    now - lastPerformanceTraceAt < 3000
+  ) {
+    return;
+  }
+
+  lastPerformanceTraceAt = now;
+  lastPerformanceTraceKey = traceKey;
+  const payload = {
+    reason,
+    mode: snapshot.mode,
+    frameGapMs: Math.round(snapshot.frameGapMs),
+    eventPressure: snapshot.eventPressure,
+    activeEditorCharCount: snapshot.activeEditorCharCount,
+    activeEditorLineCount: snapshot.activeEditorLineCount,
+    activeEditorLargeDocument: snapshot.activeEditorLargeDocument,
+    indexerQueueDepth: snapshot.indexerQueueDepth,
+    projectFileCount: snapshot.projectFileCount,
+    panelMotionActive: next.panelMotionActive,
+    updatedAtMs: Math.round(snapshot.updatedAtMs),
+  };
+
+  try {
+    EventsEmit("ide:perf:trace", payload);
+  } catch {
+    // Perf telemetry must never affect the editor runtime.
+  }
+  if (typeof console !== "undefined" && console.debug) {
+    console.debug("[PerfTrace][Frontend]", payload);
+  }
+};
 
 const buildBudgetState = (
   state: PerformanceState,
@@ -191,7 +276,14 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   },
 
   updateBudget: (patch) => {
-    set((state) => buildBudgetState(state, patch));
+    const previous = get();
+    const nextPatch = buildBudgetState(previous, patch);
+    if (nextPatch === previous) {
+      return;
+    }
+    const next = { ...previous, ...nextPatch };
+    set(nextPatch);
+    maybeEmitPerformanceTrace(previous, next);
   },
 
   recordEventPressure: (_scope, units = 1) => {

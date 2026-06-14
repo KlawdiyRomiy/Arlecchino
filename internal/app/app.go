@@ -200,6 +200,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.cleanupStaleProjectEntryUndoStashes()
 	a.startOpenIntentBridge()
+	a.startFrontendPerfTraceBridge()
 	if a.aiService == nil {
 		a.aiService = ai.NewService(ai.ServiceOptions{
 			Emit: func(name string, payload any) {

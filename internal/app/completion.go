@@ -1341,7 +1341,8 @@ func (a *App) RecordFileAccess(filePath string) {
 func (a *App) NotifyFileOpened(filePath, language, content string) {
 	lspManager := a.activeLSPManager()
 	if lspManager != nil {
-		if err := lspManager.DidOpen(language, filePath, content); err != nil {
+		ctx := indexerlsp.WithStartReason(context.Background(), activationLanguageOpen)
+		if err := lspManager.DidOpenWithContext(ctx, language, filePath, content); err != nil {
 			message := fmt.Sprintf("LSP didOpen failed for %s: %v", filePath, err)
 			a.logWarning(message)
 			a.emitLSPDiagnosticsStatus(language, filePath, "error", message)
@@ -1355,7 +1356,8 @@ func (a *App) NotifyFileOpened(filePath, language, content string) {
 func (a *App) NotifyFileChanged(filePath, language string, version int, content string) {
 	lspManager := a.activeLSPManager()
 	if lspManager != nil {
-		if err := lspManager.DidChange(language, filePath, version, content); err != nil {
+		ctx := indexerlsp.WithStartReason(context.Background(), activationLanguageOpen)
+		if err := lspManager.DidChangeWithContext(ctx, language, filePath, version, content); err != nil {
 			message := fmt.Sprintf("LSP didChange failed for %s: %v", filePath, err)
 			a.logWarning(message)
 			a.emitLSPDiagnosticsStatus(language, filePath, "error", message)

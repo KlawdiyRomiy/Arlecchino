@@ -255,6 +255,7 @@ func (a *App) AIStartChatRun(ctx context.Context, req ai.AIChatRunRequest) (ai.A
 	if err != nil {
 		return ai.AIChatRun{}, err
 	}
+	a.logInfof("[Activation] subsystem=ai-chat reason=%s session=%s", activationAIChatOpen, sessionID)
 	return a.ensureAIService().StartChatRun(ctx, sessionID, req)
 }
 

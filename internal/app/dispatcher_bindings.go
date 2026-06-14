@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
+	"path/filepath"
+	"time"
+
 	"arlecchino/internal/dispatcher"
 	"arlecchino/internal/terminal"
-	"context"
-	"time"
 )
 
 var globalDispatcher *dispatcher.Dispatcher
@@ -36,6 +38,7 @@ func (a *App) InitDispatcherForProject() {
 }
 
 func (a *App) SearchFiles(pattern string) []ResultItemJS {
+	a.logInfof("[Activation] subsystem=search reason=%s project=%s mode=files", activationSearchOpen, filepath.Base(a.GetCurrentProjectPath()))
 	initDispatcher()
 	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
@@ -46,6 +49,7 @@ func (a *App) SearchFiles(pattern string) []ResultItemJS {
 }
 
 func (a *App) SearchContent(query string) []ResultItemJS {
+	a.logInfof("[Activation] subsystem=search reason=%s project=%s mode=content", activationSearchOpen, filepath.Base(a.GetCurrentProjectPath()))
 	initDispatcher()
 	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
@@ -56,6 +60,7 @@ func (a *App) SearchContent(query string) []ResultItemJS {
 }
 
 func (a *App) SearchSymbols(query string) []ResultItemJS {
+	a.logInfof("[Activation] subsystem=search reason=%s project=%s mode=symbols", activationSearchOpen, filepath.Base(a.GetCurrentProjectPath()))
 	initDispatcher()
 	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
@@ -75,6 +80,7 @@ func (a *App) GetSearchIndexStatus() dispatcher.SearchBackendStatus {
 }
 
 func (a *App) RebuildSearchIndex() dispatcher.SearchBackendStatus {
+	a.logInfof("[Activation] subsystem=search reason=%s project=%s mode=rebuild", activationSearchOpen, filepath.Base(a.GetCurrentProjectPath()))
 	initDispatcher()
 	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
