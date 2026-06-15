@@ -48,7 +48,7 @@ func TestExecute_ManualDoesNotRunCommands(t *testing.T) {
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/test\ngo 1.24\n")
 	exec := NewExecutor()
 	called := false
-	exec.runner = func(dir, name string, args ...string) ([]byte, error) {
+	exec.runner = func(command resolvedCommand) ([]byte, error) {
 		called = true
 		return nil, nil
 	}
@@ -65,7 +65,7 @@ func TestExecute_SkipsMissingExecutables(t *testing.T) {
 	writeFile(t, filepath.Join(root, "Cargo.toml"), "[package]\nname='demo'\nversion='0.1.0'\n")
 	exec := NewExecutor()
 	called := false
-	exec.runner = func(dir, name string, args ...string) ([]byte, error) {
+	exec.runner = func(command resolvedCommand) ([]byte, error) {
 		called = true
 		return nil, nil
 	}
@@ -87,8 +87,8 @@ func TestExecute_ContinuesAfterCommandFailure(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/test\ngo 1.24\n")
 	exec := NewExecutor()
-	exec.runner = func(dir, name string, args ...string) ([]byte, error) {
-		if strings.Join(args, " ") == "mod tidy" {
+	exec.runner = func(command resolvedCommand) ([]byte, error) {
+		if strings.Join(command.args, " ") == "mod tidy" {
 			return []byte("tidy failed output"), assertErr("boom")
 		}
 		return []byte("ok"), nil

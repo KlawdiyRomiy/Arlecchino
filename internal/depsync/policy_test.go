@@ -12,17 +12,18 @@ func TestBuildPolicyPlan_AnnotatesActions(t *testing.T) {
 	writeFile(t, filepath.Join(project, "go.mod"), "module example.com/test\ngo 1.26\n")
 
 	exec := NewExecutor()
-	plan, err := exec.BuildPolicyPlan(project, DefaultPolicy())
+	plan, err := exec.BuildPolicyPlan(project, PolicyPlanRequest{Policy: DefaultPolicy()})
 	if err != nil {
 		t.Fatalf("BuildPolicyPlan failed: %v", err)
 	}
-	if len(plan.Actions) == 0 {
+	actions := policyPlanActions(plan)
+	if len(actions) == 0 {
 		t.Fatalf("expected non-empty actions")
 	}
 
 	seenLow := false
 	seenHigh := false
-	for _, action := range plan.Actions {
+	for _, action := range actions {
 		if action.ID == "" {
 			t.Fatalf("action id should not be empty")
 		}
@@ -49,7 +50,7 @@ func TestExecuteWithPolicy_BlocksWithoutConsent(t *testing.T) {
 	writeFile(t, filepath.Join(project, "go.mod"), "module example.com/test\ngo 1.26\n")
 
 	exec := NewExecutor()
-	exec.runner = func(_ string, _ string, _ ...string) ([]byte, error) {
+	exec.runner = func(resolvedCommand) ([]byte, error) {
 		return []byte("ok"), nil
 	}
 
@@ -60,11 +61,11 @@ func TestExecuteWithPolicy_BlocksWithoutConsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteWithPolicy failed: %v", err)
 	}
-	if len(result.Blocked) == 0 {
+	if countPolicyOutcomes(result, OutcomeBlocked) == 0 {
 		t.Fatalf("expected blocked actions without approvals")
 	}
-	if len(result.Results) != 0 {
-		t.Fatalf("expected no runnable actions, got %d", len(result.Results))
+	if countPolicyOutcomes(result, OutcomePlanned)+countPolicyOutcomes(result, OutcomeCompleted) != 0 {
+		t.Fatalf("expected no runnable actions, got %#v", result.Outcomes)
 	}
 }
 
@@ -74,17 +75,17 @@ func TestExecuteWithPolicy_PersistedApprovalAllowsRerun(t *testing.T) {
 
 	exec := NewExecutor()
 	runs := 0
-	exec.runner = func(_ string, _ string, _ ...string) ([]byte, error) {
+	exec.runner = func(resolvedCommand) ([]byte, error) {
 		runs++
 		return []byte("ok"), nil
 	}
 
-	plan, err := exec.BuildPolicyPlan(project, DefaultPolicy())
+	plan, err := exec.BuildPolicyPlan(project, PolicyPlanRequest{Policy: DefaultPolicy()})
 	if err != nil {
 		t.Fatalf("BuildPolicyPlan failed: %v", err)
 	}
 	var highRiskID string
-	for _, action := range plan.Actions {
+	for _, action := range policyPlanActions(plan) {
 		if action.MutationRisk == RiskHigh {
 			highRiskID = action.ID
 			break
@@ -103,7 +104,7 @@ func TestExecuteWithPolicy_PersistedApprovalAllowsRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first ExecuteWithPolicy failed: %v", err)
 	}
-	if _, blocked := first.Blocked[highRiskID]; blocked {
+	if got := policyOutcomeForAction(first, highRiskID); got == nil || got.Status == OutcomeBlocked {
 		t.Fatalf("approved action should not be blocked")
 	}
 
@@ -119,7 +120,7 @@ func TestExecuteWithPolicy_PersistedApprovalAllowsRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second ExecuteWithPolicy failed: %v", err)
 	}
-	if _, blocked := second.Blocked[highRiskID]; blocked {
+	if got := policyOutcomeForAction(second, highRiskID); got == nil || got.Status == OutcomeBlocked {
 		t.Fatalf("persisted approval should allow action")
 	}
 	if runs != 0 {
@@ -140,4 +141,34 @@ func TestExecuteWithPolicy_PersistedApprovalAllowsRerun(t *testing.T) {
 	if !found {
 		t.Fatalf("expected persisted approval id in list")
 	}
+}
+
+func policyPlanActions(plan PolicyPlan) []Action {
+	actions := make([]Action, 0, len(plan.RunnableActions)+len(plan.UnavailableActions))
+	for _, descriptor := range plan.RunnableActions {
+		actions = append(actions, descriptor.Action)
+	}
+	for _, descriptor := range plan.UnavailableActions {
+		actions = append(actions, descriptor.Action)
+	}
+	return actions
+}
+
+func countPolicyOutcomes(result ExecuteResult, status OutcomeStatus) int {
+	count := 0
+	for _, outcome := range result.Outcomes {
+		if outcome.Status == status {
+			count++
+		}
+	}
+	return count
+}
+
+func policyOutcomeForAction(result ExecuteResult, actionID string) *ActionOutcome {
+	for i := range result.Outcomes {
+		if result.Outcomes[i].ActionID == actionID {
+			return &result.Outcomes[i]
+		}
+	}
+	return nil
 }

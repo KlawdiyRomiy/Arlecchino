@@ -95,6 +95,45 @@ func TestGetServerByID(t *testing.T) {
 	t.Logf("gopls installed: %v, version: %s", server.Installed, server.Version)
 }
 
+func TestGetServerByIDCachesInstallStatusProbe(t *testing.T) {
+	tempDir := t.TempDir()
+	binaryPath := filepath.Join(tempDir, "fake-lsp")
+	counterPath := filepath.Join(tempDir, "counter")
+	script := "#!/bin/sh\nprintf x >> \"$FAKE_LSP_COUNTER\"\nprintf 'fake-lsp '\ncat \"$FAKE_LSP_COUNTER\"\nprintf '\\n'\n"
+	if err := os.WriteFile(binaryPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake lsp: %v", err)
+	}
+	t.Setenv("PATH", tempDir)
+	t.Setenv("FAKE_LSP_COUNTER", counterPath)
+
+	installer := &Installer{
+		lspDir:      tempDir,
+		servers:     map[string]*LSPInfo{"fake": {ID: "fake", Name: "Fake", BinaryName: "fake-lsp"}},
+		statusCache: make(map[string]installStatusCacheEntry),
+	}
+
+	first := installer.GetServerByID("fake")
+	if first == nil || !first.Installed {
+		t.Fatalf("first fake status = %#v", first)
+	}
+	second := installer.GetServerByID("fake")
+	if second == nil || !second.Installed {
+		t.Fatalf("second fake status = %#v", second)
+	}
+	if got := len(readTextFile(t, counterPath)); got != 1 {
+		t.Fatalf("version probe count after cached read = %d, want 1", got)
+	}
+
+	installer.invalidateStatus("fake")
+	third := installer.GetServerByID("fake")
+	if third == nil || !third.Installed {
+		t.Fatalf("third fake status = %#v", third)
+	}
+	if got := len(readTextFile(t, counterPath)); got != 2 {
+		t.Fatalf("version probe count after invalidation = %d, want 2", got)
+	}
+}
+
 func TestPublicBetaDoesNotExposeInstallableBinaryDownloads(t *testing.T) {
 	installer, err := NewInstaller(nil)
 	if err != nil {
@@ -552,4 +591,13 @@ func TestExtractTarGzRejectsPathTraversal(t *testing.T) {
 	if _, statErr := os.Stat(outside); !os.IsNotExist(statErr) {
 		t.Fatalf("traversal should not create %q, stat err = %v", outside, statErr)
 	}
+}
+
+func readTextFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
