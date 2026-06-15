@@ -41,6 +41,16 @@ func TestConvertLSPDiagnostics(t *testing.T) {
 	}
 }
 
+func TestConvertLSPDiagnosticsReturnsEmptySlice(t *testing.T) {
+	got := convertLSPDiagnostics(nil)
+	if got == nil {
+		t.Fatalf("expected empty diagnostics slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty diagnostics slice, got %d items", len(got))
+	}
+}
+
 func TestNewLSPDiagnosticsEvent(t *testing.T) {
 	got := newLSPDiagnosticsEvent("/tmp", 12, "go", "/tmp/test.go", []indexerlsp.Diagnostic{{
 		Range: indexerlsp.Range{
@@ -71,5 +81,15 @@ func TestNewLSPDiagnosticsEvent(t *testing.T) {
 	}
 	if got.Items[0].Message != "boom" {
 		t.Fatalf("expected message boom, got %q", got.Items[0].Message)
+	}
+}
+
+func TestNewLSPDiagnosticsEventUsesArrayForEmptyItems(t *testing.T) {
+	got := newLSPDiagnosticsEvent("/tmp", 12, "go", "/tmp/test.go", nil)
+	if got.Items == nil {
+		t.Fatalf("expected empty diagnostics event items slice, got nil")
+	}
+	if len(got.Items) != 0 {
+		t.Fatalf("expected no diagnostics event items, got %d", len(got.Items))
 	}
 }

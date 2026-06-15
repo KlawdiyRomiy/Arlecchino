@@ -11,6 +11,14 @@ const installBaseBridges = async (
   await page.addInitScript(({ panelLayoutState }: MountProjectUIOptions) => {
     localStorage.clear();
 
+    const readMockEditorContent = (path: string): string =>
+      Array.from({ length: 80 }, (_value, index) =>
+        index === 6
+          ? "const diagnosticTarget = missingValue;"
+          : `// ${path} line ${index + 1}`,
+      ).join("\n");
+    const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
+
     const appBridge = new Proxy(
       {},
       {
@@ -32,9 +40,33 @@ const installBaseBridges = async (
                 return true;
               case "ListFiles":
                 return [];
+              case "InspectEditorFile": {
+                const path = typeof args[0] === "string" ? args[0] : "file.ts";
+                const content = readMockEditorContent(path);
+                const lines = content.split("\n");
+                const name = path.split("/").pop() || path;
+                return {
+                  path,
+                  name,
+                  sizeBytes: new TextEncoder().encode(content).length,
+                  formattedSize: `${content.length} B`,
+                  isText: true,
+                  safeForEditor: true,
+                  largeDocument: false,
+                  reason: "safe for interactive editing",
+                  lineCount: lines.length,
+                  maxLineLength: Math.max(
+                    ...lines.map((line) => line.length),
+                    0,
+                  ),
+                  limitBytes: 2 * 1024 * 1024,
+                  lineLimit: 20_000,
+                  maxLineLengthLimit: 20_000,
+                };
+              }
               case "ReadFile": {
                 const path = typeof args[0] === "string" ? args[0] : "file.ts";
-                return `// ${path}\nexport const ready = true;\n`;
+                return readMockEditorContent(path);
               }
               case "GetLanguageForFile":
                 return "typescript";
@@ -51,7 +83,22 @@ const installBaseBridges = async (
       {
         get: (_target, property: string) => {
           if (property === "EventsOn" || property === "EventsOnMultiple") {
-            return () => () => undefined;
+            return (
+              eventName: string,
+              callback: (payload: unknown) => void,
+            ) => {
+              const handlers = eventHandlers.get(eventName) ?? [];
+              handlers.push(callback);
+              eventHandlers.set(eventName, handlers);
+              return () => {
+                eventHandlers.set(
+                  eventName,
+                  (eventHandlers.get(eventName) ?? []).filter(
+                    (handler) => handler !== callback,
+                  ),
+                );
+              };
+            };
           }
           if (property === "EventsOff") {
             return () => undefined;
@@ -65,6 +112,10 @@ const installBaseBridges = async (
     );
 
     Object.assign(window, {
+      __emitRuntimeEvent(eventName: string, payload: unknown) {
+        const handlers = eventHandlers.get(eventName) ?? [];
+        handlers.forEach((handler) => handler(payload));
+      },
       go: { main: { App: appBridge } },
       runtime: runtimeBridge,
     });
@@ -689,6 +740,104 @@ test("problems panel keeps diagnostics visible during split-view diagnostics ref
   await expect(page.getByText("Current file type mismatch")).toBeVisible();
 });
 
+test("project entry rename and delete events remap and prune diagnostics", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await seedProblemsState(page);
+
+  const renamed = await page.evaluate(async () => {
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+    emit("project:entry:renamed", {
+      oldPath: "/workspace/src",
+      newPath: "/workspace/app",
+      isDirectory: true,
+    });
+    await new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => resolve()),
+    );
+
+    const { useDiagnosticsStore } =
+      await import("/src/stores/diagnosticsStore.ts");
+    return Array.from(useDiagnosticsStore.getState().byFile.keys()).sort();
+  });
+
+  expect(renamed).toContain("/workspace/app/ProblemsPanel.tsx");
+  expect(renamed).toContain("/workspace/app/MainLayout.tsx");
+  expect(renamed).not.toContain("/workspace/src/ProblemsPanel.tsx");
+  expect(renamed).not.toContain("/workspace/src/MainLayout.tsx");
+
+  const pruned = await page.evaluate(async () => {
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+    emit("project:entry:deleted", {
+      path: "/workspace/app/ProblemsPanel.tsx",
+      isDirectory: false,
+    });
+    await new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => resolve()),
+    );
+
+    const { useDiagnosticsStore } =
+      await import("/src/stores/diagnosticsStore.ts");
+    return Array.from(useDiagnosticsStore.getState().byFile.keys()).sort();
+  });
+
+  expect(pruned).not.toContain("/workspace/app/ProblemsPanel.tsx");
+  expect(pruned).toContain("/workspace/app/MainLayout.tsx");
+  expect(pruned).toContain("/workspace/index.tsx");
+});
+
+test("problems navigation keeps editor diagnostics visible after opening file", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await seedProblemsState(page);
+  await openProblemsPanel(page);
+
+  await page.getByText("Problems summary layout is inconsistent").click();
+
+  await expect(page.getByTestId("statusbar-file")).toContainText(
+    "ProblemsPanel.tsx",
+  );
+  await expect(page.getByTestId("statusbar-position")).toContainText(
+    "Ln 7, Col 3",
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        collapsed: window.getSelection()?.isCollapsed ?? true,
+        text: window.getSelection()?.toString() ?? "",
+      })),
+    )
+    .toEqual({ collapsed: true, text: "" });
+  const errorRanges = page.locator(".cm-diagnostic-range-error");
+  await expect(errorRanges.first()).toBeVisible();
+
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
+  await errorRanges.first().hover();
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "Problems summary layout is inconsistent",
+  );
+
+  await page.getByText("Filter chip spacing is too tight").click();
+  await expect(page.getByTestId("statusbar-position")).toContainText(
+    "Ln 19, Col 3",
+  );
+
+  await page.getByText("Bubble contrast token is too muted").click();
+  await expect(page.getByTestId("statusbar-position")).toContainText(
+    "Ln 26, Col 3",
+  );
+});
+
 test("expanded problems panel keeps filters visible when warnings filter has no matches", async ({
   page,
 }) => {
@@ -716,11 +865,9 @@ test("expanded problems panel keeps filters visible when warnings filter has no 
     sidebar.getByRole("button", { name: "All files" }),
   ).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "Warnings" })).toBeVisible();
-  await expect(
-    page.getByText(
-      /No matching problems|Diagnostics unavailable|Partial results only/,
-    ),
-  ).toBeVisible();
+  await expect(page.getByText("No matching problems")).toBeVisible();
+  await expect(page.getByText("Diagnostics incomplete")).toHaveCount(0);
+  await expect(page.getByText("Scanning diagnostics")).toHaveCount(0);
 
   await sidebar.getByRole("button", { name: "All files" }).click();
 

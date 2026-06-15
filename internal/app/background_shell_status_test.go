@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -216,5 +217,34 @@ func TestBackgroundShellStatusService_RunsActionContracts(t *testing.T) {
 	}
 	if !handled || action.Intent != "focus-surface" || action.OwnerSurfaceID != "panel:terminal" {
 		t.Fatalf("focus action handled=%v action=%#v, want focus panel:terminal", handled, action)
+	}
+}
+
+func TestRunBackgroundShellAction_CancelInvokesRegisteredCancel(t *testing.T) {
+	app := NewApp()
+	jobID := "diagnostics-scan:main:42"
+	cancelCtx, cancel := context.WithCancel(context.Background())
+
+	app.recordBackgroundShellJob(BackgroundShellJob{
+		ID:         jobID,
+		Kind:       "diagnostics-scan",
+		Title:      "Project diagnostics scan",
+		Status:     BackgroundShellJobRunning,
+		Cancelable: true,
+	})
+	app.registerBackgroundJobCancel(jobID, cancel)
+
+	result, err := app.RunBackgroundShellAction("cancel:" + jobID)
+	if err != nil {
+		t.Fatalf("RunBackgroundShellAction(cancel) error = %v", err)
+	}
+	if !result.Handled || result.Action.Intent != "cancel-job" {
+		t.Fatalf("cancel result = %#v, want handled cancel-job", result)
+	}
+
+	select {
+	case <-cancelCtx.Done():
+	default:
+		t.Fatal("registered cancel func was not invoked")
 	}
 }

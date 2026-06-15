@@ -8,32 +8,21 @@ const mountEditorTab = async (
   content: string,
   options: {
     constrainedPerformance?: boolean;
-    showInlineDiagnostics?: boolean;
   } = {},
 ): Promise<void> => {
-  const { constrainedPerformance = false, showInlineDiagnostics = true } =
-    options;
+  const { constrainedPerformance = false } = options;
 
   await page.evaluate(
-    async ({
-      constrainedPerformance,
-      editorProjectPath,
-      showInlineDiagnostics,
-    }) => {
+    async ({ constrainedPerformance, editorProjectPath }) => {
       const { useWorkspaceStore } =
         await import("/src/stores/workspaceStore.ts");
       const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
       const { useDiagnosticsStore } =
         await import("/src/stores/diagnosticsStore.ts");
-      const { useEditorSettingsStore } =
-        await import("/src/stores/editorSettingsStore.ts");
       const { usePerformanceStore } =
         await import("/src/stores/performanceStore.ts");
 
       useDiagnosticsStore.getState().reset();
-      useEditorSettingsStore
-        .getState()
-        .setShowInlineDiagnostics(showInlineDiagnostics);
       if (constrainedPerformance) {
         usePerformanceStore.getState().updateBudget({
           activeEditorCharCount: 32_000,
@@ -65,7 +54,7 @@ const mountEditorTab = async (
       });
       useExplorerStore.getState().setProjectPath(editorProjectPath);
     },
-    { constrainedPerformance, editorProjectPath, showInlineDiagnostics },
+    { constrainedPerformance, editorProjectPath },
   );
 
   await expect(page.getByTestId("main-layout")).toBeVisible({
@@ -345,7 +334,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("inline diagnostics render viewport overlay without content widgets", async ({
+test("diagnostics render viewport underlines without inline overlays", async ({
   page,
 }) => {
   const content = Array.from(
@@ -358,23 +347,52 @@ test("inline diagnostics render viewport overlay without content widgets", async
       end: { line: index, character: 12 },
     },
     severity: index % 3 === 0 ? 1 : 2,
-    message: `diagnostic ${index} intentionally long enough to exercise truncation and overlay rendering`,
+    message: `diagnostic ${index} intentionally long enough to exercise hover rendering`,
     source: "test",
   }));
 
   await mountEditorTab(page, content);
   await setEditorDiagnostics(page, diagnostics);
 
-  await expect(page.locator(".cm-diagnostic-overlay").first()).toBeVisible();
-  const overlayCount = await page.locator(".cm-diagnostic-overlay").count();
-  expect(overlayCount).toBeGreaterThan(0);
-  expect(overlayCount).toBeLessThan(diagnostics.length);
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
+  const rangeCount = await page.locator(".cm-diagnostic-range").count();
+  expect(rangeCount).toBeGreaterThan(0);
+  expect(rangeCount).toBeLessThan(diagnostics.length);
   await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
     0,
   );
 });
 
-test("inline diagnostics render under constrained performance budget", async ({
+test("large documents keep visible diagnostics underlines", async ({
+  page,
+}) => {
+  const content = Array.from({ length: 2470 }, (_value, index) =>
+    index === 25
+      ? 'describe("HubConnection", () => {'
+      : `const value${index} = ${index};`,
+  ).join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 25, character: 0 },
+        end: { line: 25, character: 8 },
+      },
+      severity: 1,
+      code: "2593",
+      source: "typescript",
+      message: "Cannot find name 'describe'.",
+    },
+  ]);
+
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
+  await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
+    0,
+  );
+});
+
+test("diagnostics hover tooltip renders under constrained performance budget", async ({
   page,
 }) => {
   const content = [
@@ -384,6 +402,12 @@ test("inline diagnostics render under constrained performance budget", async ({
   ].join("\n");
 
   await mountEditorTab(page, content, { constrainedPerformance: true });
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(1.35);
+    useEditorSettingsStore.getState().setUiFontSize(16);
+  });
   await setEditorDiagnostics(page, [
     {
       range: {
@@ -391,16 +415,67 @@ test("inline diagnostics render under constrained performance budget", async ({
         end: { line: 1, character: 32 },
       },
       severity: 1,
+      code: "2304",
       message: "Cannot find name 'missingValue'.",
       source: "tsserver",
     },
   ]);
 
-  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(1);
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
   await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
+
+  await page.locator(".cm-diagnostic-range-error").hover();
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "Cannot find name 'missingValue'.",
+  );
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "tsserver",
+  );
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText("2304");
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText("Ln 2");
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText("Col 21");
+  await expect(page.locator(".cm-diagnostic-tooltip-icon")).toBeVisible();
+  const tooltipStyle = await page
+    .locator(".cm-diagnostic-tooltip")
+    .evaluate((node) => {
+      const style = window.getComputedStyle(node);
+      const icon = node.querySelector<HTMLElement>(
+        ".cm-diagnostic-tooltip-icon",
+      );
+      const message = node.querySelector<HTMLElement>(
+        ".cm-diagnostic-tooltip-message",
+      );
+      const iconStyle = icon ? window.getComputedStyle(icon) : null;
+      const messageStyle = message ? window.getComputedStyle(message) : null;
+      const textProbe = document.createElement("span");
+      textProbe.style.color = "var(--text-primary)";
+      const errorProbe = document.createElement("span");
+      errorProbe.style.color = "var(--status-error)";
+      document.body.append(textProbe, errorProbe);
+      const textPrimary = window.getComputedStyle(textProbe).color;
+      const statusError = window.getComputedStyle(errorProbe).color;
+      textProbe.remove();
+      errorProbe.remove();
+      return {
+        borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+        color: style.color,
+        iconColor: iconStyle?.color ?? "",
+        iconRadius: Number.parseFloat(iconStyle?.borderTopLeftRadius ?? "0"),
+        iconWidth: Number.parseFloat(iconStyle?.width ?? "0"),
+        messageFontSize: Number.parseFloat(messageStyle?.fontSize ?? "0"),
+        statusError,
+        textPrimary,
+      };
+    });
+  expect(tooltipStyle.color).toBe(tooltipStyle.textPrimary);
+  expect(tooltipStyle.iconColor).toBe(tooltipStyle.statusError);
+  expect(tooltipStyle.messageFontSize).toBeGreaterThan(22);
+  expect(tooltipStyle.borderRadius).toBeGreaterThan(24);
+  expect(tooltipStyle.iconRadius).toBeGreaterThan(16);
+  expect(tooltipStyle.iconWidth).toBeGreaterThan(60);
 });
 
-test("inline diagnostic overlay hides only while scroll is active", async ({
+test("diagnostic underlines remain during scroll without inline overlays", async ({
   page,
 }) => {
   const content = Array.from({ length: 120 }, (_value, index) =>
@@ -422,7 +497,7 @@ test("inline diagnostic overlay hides only while scroll is active", async ({
     },
   ]);
 
-  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(1);
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
   await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
 
   const wheelResult = await page.evaluate(async () => {
@@ -460,17 +535,9 @@ test("inline diagnostic overlay hides only while scroll is active", async ({
   expect(wheelResult.scrollTop).toBeGreaterThan(0);
   await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
   await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
-  await expect(page.locator(".cm-lintRange-error")).toHaveCount(1);
-
-  await expect
-    .poll(async () => page.locator(".cm-diagnostic-overlay").count(), {
-      timeout: 1000,
-    })
-    .toBe(1);
-  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
 });
 
-test("inline diagnostic messages stay hidden while wavy lint ranges remain visible when the editor setting is disabled", async ({
+test("diagnostic hover tooltip appears next to the underlined range", async ({
   page,
 }) => {
   const content = [
@@ -479,7 +546,7 @@ test("inline diagnostic messages stay hidden while wavy lint ranges remain visib
     "const tail = true;",
   ].join("\n");
 
-  await mountEditorTab(page, content, { showInlineDiagnostics: false });
+  await mountEditorTab(page, content);
   await setEditorDiagnostics(page, [
     {
       range: {
@@ -493,10 +560,468 @@ test("inline diagnostic messages stay hidden while wavy lint ranges remain visib
   ]);
 
   await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
-  await expect(page.locator(".cm-lintRange-error")).toHaveCount(1);
+  const range = page.locator(".cm-diagnostic-range-error");
+  await expect(range).toHaveCount(1);
+
+  await range.hover();
+  const tooltip = page.locator(".cm-diagnostic-tooltip");
+  const tooltipShell = page.locator(".cm-tooltip:has(.cm-diagnostic-tooltip)");
+  await expect(tooltip).toBeVisible();
+  await expect(
+    page.locator(".cm-tooltip:has(.cm-diagnostic-tooltip) > .cm-tooltip-arrow"),
+  ).toHaveCount(0);
+  await expect(tooltip).toContainText("Cannot find name 'missingValue'.");
+
+  const [rangeBox, tooltipBox] = await Promise.all([
+    range.boundingBox(),
+    tooltipShell.boundingBox(),
+  ]);
+  expect(rangeBox).not.toBeNull();
+  expect(tooltipBox).not.toBeNull();
+
+  const rangeCenterX = rangeBox!.x + rangeBox!.width / 2;
+  expect(rangeCenterX).toBeGreaterThanOrEqual(tooltipBox!.x - 2);
+  expect(rangeCenterX).toBeLessThanOrEqual(
+    tooltipBox!.x + tooltipBox!.width + 2,
+  );
+
+  const gapAbove = Math.abs(rangeBox!.y - (tooltipBox!.y + tooltipBox!.height));
+  const gapBelow = Math.abs(tooltipBox!.y - (rangeBox!.y + rangeBox!.height));
+  expect(Math.min(gapAbove, gapBelow)).toBeLessThanOrEqual(36);
+
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toHaveCount(0);
 });
 
-test("inline diagnostics stay compact until active and survive edits without inline artifacts", async ({
+test("zero-length diagnostics render a line-local point marker on hover", async ({
+  page,
+}) => {
+  const content = [
+    "package controllers",
+    "",
+    "import (",
+    '  "testproject/internal/services"',
+    ")",
+  ].join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      severity: 1,
+      message: "found packages controllers and services in internal/services",
+      source: "go list",
+    },
+  ]);
+
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
+  const range = page.locator(".cm-diagnostic-point-error");
+  await expect(range).toHaveCount(1);
+
+  await range.hover();
+  const tooltip = page.locator(".cm-diagnostic-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText(
+    "found packages controllers and services in internal/services",
+  );
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toHaveCount(0);
+});
+
+test("diagnostics hover follows marked string ranges after another tooltip", async ({
+  page,
+}) => {
+  const importPath = '"testproject/internal/services"';
+  const content = [
+    "package controllers",
+    "",
+    "import (",
+    '    "encoding/json"',
+    '    "net/http"',
+    '    "time"',
+    "",
+    `    ${importPath}`,
+    '    "testproject/internal/stores"',
+    ")",
+  ].join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      severity: 1,
+      message: "found packages controllers and services in internal/services",
+      source: "go list",
+    },
+    {
+      range: {
+        start: { line: 7, character: 4 },
+        end: { line: 7, character: 4 + importPath.length },
+      },
+      severity: 1,
+      code: "BrokenImport",
+      message:
+        'could not import testproject/internal/services (missing metadata for import of "testproject/internal/services")',
+      source: "compiler",
+    },
+  ]);
+
+  const packageRange = page.locator(".cm-diagnostic-point-error");
+  const importRange = page
+    .locator(".cm-diagnostic-range-error")
+    .filter({ hasText: "testproject/internal/services" });
+  await expect(packageRange).toHaveCount(1);
+  await expect(importRange).toHaveCount(1);
+
+  await packageRange.hover();
+  const tooltip = page.locator(".cm-diagnostic-tooltip");
+  await expect(tooltip).toContainText(
+    "found packages controllers and services in internal/services",
+  );
+
+  const importBox = await importRange.boundingBox();
+  expect(importBox).not.toBeNull();
+  await page.evaluate(
+    ({ x, y }) => {
+      const scroller = document.querySelector<HTMLElement>(".cm-scroller");
+      if (!scroller) {
+        throw new Error("CodeMirror scroller not found");
+      }
+      scroller.dispatchEvent(
+        new MouseEvent("mousemove", {
+          bubbles: true,
+          clientX: x,
+          clientY: y,
+          buttons: 0,
+        }),
+      );
+    },
+    {
+      x: importBox!.x + Math.min(18, importBox!.width / 2),
+      y: importBox!.y + importBox!.height + 6,
+    },
+  );
+  await expect(tooltip).toContainText(
+    'could not import testproject/internal/services (missing metadata for import of "testproject/internal/services")',
+  );
+  await expect(tooltip).toContainText("BrokenImport");
+});
+
+test("diagnostics hover follows ordinary javascript ranges below the text box", async ({
+  page,
+}) => {
+  const content = [
+    "const layoutName = selectLayoutName();",
+    "const stageGrid = createStageGrid(layoutName);",
+    "previewStatus.dataset.state = stageGrid;",
+  ].join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 0, character: 6 },
+        end: { line: 0, character: 16 },
+      },
+      severity: 1,
+      code: "JS2304",
+      message: "Cannot find name 'layoutName'.",
+      source: "javascript",
+    },
+  ]);
+
+  const range = page
+    .locator(".cm-diagnostic-range-error")
+    .filter({ hasText: "layoutName" });
+  await expect(range).toHaveCount(1);
+
+  const rangeBox = await range.boundingBox();
+  expect(rangeBox).not.toBeNull();
+  await page.evaluate(
+    ({ x, y }) => {
+      const scroller = document.querySelector<HTMLElement>(".cm-scroller");
+      if (!scroller) {
+        throw new Error("CodeMirror scroller not found");
+      }
+      scroller.dispatchEvent(
+        new MouseEvent("mousemove", {
+          bubbles: true,
+          clientX: x,
+          clientY: y,
+          buttons: 0,
+        }),
+      );
+    },
+    {
+      x: rangeBox!.x + Math.min(12, rangeBox!.width / 2),
+      y: rangeBox!.y + rangeBox!.height + 6,
+    },
+  );
+
+  const tooltip = page.locator(".cm-diagnostic-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText("Cannot find name 'layoutName'.");
+  await expect(tooltip).toContainText("javascript");
+  await expect(tooltip).toContainText("JS2304");
+});
+
+test("diagnostic decorations skip tsx whitespace gaps while range hover still opens", async ({
+  page,
+}) => {
+  const content = [
+    "export function DemoInspector() {",
+    "  return (",
+    "    <section>",
+    "      <h2>Demo Inspector</h2>",
+    '      <button type="button" onClick={() =>',
+    '        setSelectedPanel("terminal")}>',
+    "        Focus terminal",
+    "      </button>",
+    "    </section>",
+    "  );",
+    "}",
+  ].join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 4, character: 6 },
+        end: { line: 5, character: 39 },
+      },
+      severity: 1,
+      code: "TSX1005",
+      message: "JSX diagnostic spans a multiline button tag.",
+      source: "typescript",
+    },
+  ]);
+
+  const fragments = await page
+    .locator(".cm-diagnostic-range-error")
+    .evaluateAll((nodes) => nodes.map((node) => node.textContent ?? ""));
+  expect(fragments.length).toBeGreaterThan(3);
+  expect(fragments.every((text) => text.trim().length > 0)).toBe(true);
+  expect(fragments.every((text) => text === text.trim())).toBe(true);
+  expect(fragments.some((text) => text.includes("setSelectedPanel"))).toBe(
+    true,
+  );
+
+  const range = page
+    .locator(".cm-diagnostic-range-error")
+    .filter({ hasText: "setSelectedPanel" });
+  await expect(range).toHaveCount(1);
+  const rangeBox = await range.boundingBox();
+  expect(rangeBox).not.toBeNull();
+
+  await page.evaluate(
+    ({ x, y }) => {
+      const scroller = document.querySelector<HTMLElement>(".cm-scroller");
+      if (!scroller) {
+        throw new Error("CodeMirror scroller not found");
+      }
+      const HoverEvent = window.PointerEvent ?? MouseEvent;
+      scroller.dispatchEvent(
+        new HoverEvent("pointermove", {
+          bubbles: true,
+          clientX: x,
+          clientY: y,
+          buttons: 0,
+        }),
+      );
+    },
+    {
+      x: rangeBox!.x + Math.min(18, rangeBox!.width / 2),
+      y: rangeBox!.y + rangeBox!.height + 6,
+    },
+  );
+
+  const tooltip = page.locator(".cm-diagnostic-tooltip");
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText(
+    "JSX diagnostic spans a multiline button tag.",
+  );
+  await expect(tooltip).toContainText("TSX1005");
+});
+
+test("warning and info diagnostics keep underline and popup parity after another language clears", async ({
+  page,
+}) => {
+  const content = [
+    "const ok = true;",
+    "const warningValue = 1;",
+    "const infoValue = 2;",
+    "const lintOnly = 3;",
+  ].join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 1, character: 6 },
+        end: { line: 1, character: 18 },
+      },
+      severity: 2,
+      message: "warning remains visible",
+      source: "tsserver",
+      code: "TS6133",
+    },
+    {
+      range: {
+        start: { line: 2, character: 6 },
+        end: { line: 2, character: 15 },
+      },
+      severity: 3,
+      message: "info remains visible",
+      source: "tsserver",
+      code: "TS80006",
+    },
+  ]);
+
+  await page.evaluate(
+    async ({ editorFilePath }) => {
+      const { useDiagnosticsStore } =
+        await import("/src/stores/diagnosticsStore.ts");
+      const state = useDiagnosticsStore.getState();
+      state.setFileDiagnostics(editorFilePath, "eslint", [
+        {
+          range: {
+            start: { line: 3, character: 6 },
+            end: { line: 3, character: 14 },
+          },
+          severity: 1,
+          message: "eslint transient error",
+          source: "eslint",
+          code: "no-demo",
+        },
+      ]);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      state.setFileDiagnostics(editorFilePath, "eslint", []);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    },
+    { editorFilePath },
+  );
+
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(0);
+  await expect(page.locator(".cm-diagnostic-range-warning")).toHaveCount(1);
+  await expect(page.locator(".cm-diagnostic-range-info")).toHaveCount(1);
+
+  await page.locator(".cm-diagnostic-range-warning").hover();
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "warning remains visible",
+  );
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText("TS6133");
+
+  await page.locator(".cm-diagnostic-range-info").hover();
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "info remains visible",
+  );
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText("TS80006");
+});
+
+test("runtime diagnostics ignores malformed items and explicit empty clears only matching language", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const diagnostics = await import("/src/stores/diagnosticsStore.ts");
+    const projectState = await import("/src/utils/projectBoundState.ts");
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+
+    projectState.resetProjectBoundStores();
+    projectState.activateProjectScope("/workspace");
+    const store = diagnostics.useDiagnosticsStore.getState();
+    store.reset();
+    store.setProjectScope("/workspace", 5);
+
+    emit("lsp:diagnostics", {
+      projectPath: "/workspace",
+      generation: 5,
+      filePath: "/workspace/src/shared.ts",
+      language: "typescript",
+      items: [
+        {
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 6 },
+          },
+          severity: 1,
+          message: "typescript diagnostic remains",
+          source: "tsserver",
+          code: "TS1005",
+        },
+      ],
+    });
+    emit("lsp:diagnostics", {
+      projectPath: "/workspace",
+      generation: 5,
+      filePath: "/workspace/src/shared.ts",
+      language: "eslint",
+      items: [
+        {
+          range: {
+            start: { line: 1, character: 0 },
+            end: { line: 1, character: 6 },
+          },
+          severity: 2,
+          message: "eslint diagnostic clears",
+          source: "eslint",
+          code: "lint/demo",
+        },
+      ],
+    });
+    emit("lsp:diagnostics", {
+      projectPath: "/workspace",
+      generation: 5,
+      filePath: "/workspace/src/shared.ts",
+      language: "typescript",
+      items: null,
+    });
+    emit("lsp:diagnostics", {
+      projectPath: "/workspace",
+      generation: 5,
+      filePath: "/workspace/src/shared.ts",
+      language: "typescript",
+    });
+    emit("lsp:diagnostics", {
+      projectPath: "/workspace",
+      generation: 5,
+      filePath: "/workspace/src/shared.ts",
+      language: "eslint",
+      items: [],
+    });
+
+    const snapshot = diagnostics.useDiagnosticsStore.getState();
+    const group = snapshot.byFile.get("/workspace/src/shared.ts");
+    return {
+      total: group?.summary.total ?? 0,
+      languages: group?.language ?? "",
+      messages: group?.items.map((item) => item.message) ?? [],
+      projectTotal: snapshot.projectSummary.total,
+    };
+  });
+
+  expect(result).toEqual({
+    total: 1,
+    languages: "typescript",
+    messages: ["typescript diagnostic remains"],
+    projectTotal: 1,
+  });
+});
+
+test("diagnostics stay out of text flow and aggregate hover messages", async ({
   page,
 }) => {
   const content = [
@@ -540,36 +1065,30 @@ test("inline diagnostics stay compact until active and survive edits without inl
     },
   ]);
 
-  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(2);
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
   await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
     0,
   );
-  await expect(
-    page.locator(".cm-diagnostic-overlay-count").filter({ hasText: "2" }),
-  ).toHaveCount(1);
 
-  const compactTextDisplay = await page
-    .locator(".cm-diagnostic-overlay-text")
-    .first()
-    .evaluate((node) => window.getComputedStyle(node).display);
-  expect(compactTextDisplay).toBe("none");
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(2);
 
-  await page.locator(".cm-line").nth(2).click();
-  await expect(
-    page.locator(".cm-diagnostic-overlay[data-diagnostic-expanded='true']"),
-  ).toHaveCount(1);
-  await expect(
-    page.locator(
-      ".cm-diagnostic-overlay[data-diagnostic-expanded='true'] .cm-diagnostic-overlay-text",
-    ),
-  ).toContainText("not assignable");
+  await page
+    .locator(".cm-diagnostic-range-error")
+    .filter({ hasText: "missingDemoFunction" })
+    .hover();
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "Cannot find name 'missingDemoFunction'.",
+  );
+  await expect(page.locator(".cm-diagnostic-tooltip")).toContainText(
+    "Second diagnostic on the same visible line.",
+  );
 
   await page.locator(".cm-line").first().click();
   await page.keyboard.press("Enter");
   await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
     0,
   );
-  await expect(page.locator(".cm-diagnostic-overlay").first()).toBeVisible();
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
 
   await page.keyboard.press("ArrowRight");
   await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
@@ -735,42 +1254,138 @@ test("preload lifecycle ignores mismatched project generations", async ({
   expect(result.afterWrongStart).toEqual({
     active: false,
     bounded: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "pending",
+    failedCandidates: 0,
     generation: 7,
+    message: "",
     projectPath: "/projects/beta",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
   });
   expect(result.afterCorrectStart).toEqual({
     active: true,
     bounded: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "running",
+    failedCandidates: 0,
     generation: 7,
+    message: "",
     projectPath: "/projects/beta",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
   });
   expect(result.afterWrongComplete).toEqual({
     active: true,
     bounded: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "running",
+    failedCandidates: 0,
     generation: 7,
+    message: "",
     projectPath: "/projects/beta",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
   });
   expect(result.afterCorrectComplete).toEqual({
     active: false,
     bounded: false,
+    checkedCandidates: 0,
+    completed: true,
+    coverageMode: "",
+    coverageState: "unavailable",
+    failedCandidates: 0,
     generation: 7,
+    message: "",
     projectPath: "/projects/beta",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
+  });
+});
+
+test("preload lifecycle resets same-path state for a new project session", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const projectState = await import("/src/utils/projectBoundState.ts");
+    const sessionRoute = await import("/src/shell/projectSessionRoute.ts");
+
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+
+    try {
+      sessionRoute.setProjectSessionRoutePayloadOverride({
+        sessionId: "session-a",
+      });
+      projectState.resetProjectBoundStores();
+      projectState.activateProjectScope("/projects/beta");
+
+      emit("lsp:ready", {
+        sessionId: "session-a",
+        generation: 4,
+        projectPath: "/projects/beta",
+      });
+      emit("lsp:diagnostics:preload:complete", {
+        sessionId: "session-a",
+        generation: 4,
+        projectPath: "/projects/beta",
+        coverageState: "complete",
+        totalCandidates: 1,
+        selectedCandidates: 1,
+        checkedCandidates: 1,
+        totalLanguages: 1,
+        selectedLanguages: 1,
+      });
+      const beforeSwitch = projectState.getProjectDiagnosticsPreloadSnapshot();
+
+      sessionRoute.setProjectSessionRoutePayloadOverride({
+        sessionId: "session-b",
+      });
+      projectState.activateProjectScope("/projects/beta");
+      const afterSwitch = projectState.getProjectDiagnosticsPreloadSnapshot();
+
+      return { beforeSwitch, afterSwitch };
+    } finally {
+      sessionRoute.setProjectSessionRoutePayloadOverride(null);
+    }
+  });
+
+  expect(result.beforeSwitch).toMatchObject({
+    completed: true,
+    coverageState: "complete",
+    generation: 4,
+    projectPath: "/projects/beta",
+  });
+  expect(result.afterSwitch).toMatchObject({
+    active: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageState: "pending",
+    generation: 0,
+    projectPath: "/projects/beta",
+    selectedCandidates: 0,
+    totalCandidates: 0,
   });
 });
 
@@ -817,30 +1432,51 @@ test("preload lifecycle accepts backend events before explicit scope activation"
   expect(result.afterStart).toEqual({
     active: true,
     bounded: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "running",
+    failedCandidates: 0,
     generation: 9,
+    message: "",
     projectPath: "/projects/gamma",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
   });
   expect(result.afterActivate).toEqual({
     active: true,
     bounded: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "running",
+    failedCandidates: 0,
     generation: 9,
+    message: "",
     projectPath: "/projects/gamma",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
   });
   expect(result.afterComplete).toEqual({
     active: false,
     bounded: false,
+    checkedCandidates: 0,
+    completed: true,
+    coverageMode: "",
+    coverageState: "unavailable",
+    failedCandidates: 0,
     generation: 9,
+    message: "",
     projectPath: "/projects/gamma",
     selectedCandidates: 0,
     selectedLanguages: 0,
+    timedOut: false,
     totalCandidates: 0,
     totalLanguages: 0,
   });
@@ -893,20 +1529,34 @@ test("preload lifecycle carries bounded metadata for large workloads", async ({
   expect(result.during).toEqual({
     active: true,
     bounded: true,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "running",
+    failedCandidates: 0,
     generation: 11,
+    message: "",
     projectPath: "/projects/huge",
     selectedCandidates: 16,
     selectedLanguages: 2,
+    timedOut: false,
     totalCandidates: 120,
     totalLanguages: 5,
   });
   expect(result.after).toEqual({
     active: false,
     bounded: true,
+    checkedCandidates: 0,
+    completed: true,
+    coverageMode: "",
+    coverageState: "incomplete",
+    failedCandidates: 0,
     generation: 11,
+    message: "",
     projectPath: "/projects/huge",
     selectedCandidates: 16,
     selectedLanguages: 2,
+    timedOut: false,
     totalCandidates: 120,
     totalLanguages: 5,
   });
@@ -961,6 +1611,13 @@ test("project scope activated before runtime events preserves diagnostics", asyn
     emit("lsp:diagnostics:preload:complete", {
       projectPath: "/projects/beta",
       generation: 3,
+      coverageState: "complete",
+      coverageMode: "synthetic-open",
+      totalCandidates: 1,
+      selectedCandidates: 1,
+      checkedCandidates: 1,
+      totalLanguages: 1,
+      selectedLanguages: 1,
     });
 
     const snapshot = diagnostics.useDiagnosticsStore.getState() as {
@@ -987,12 +1644,19 @@ test("project scope activated before runtime events preserves diagnostics", asyn
   expect(state.preload).toEqual({
     active: false,
     bounded: false,
+    checkedCandidates: 1,
+    completed: true,
+    coverageMode: "synthetic-open",
+    coverageState: "complete",
+    failedCandidates: 0,
     generation: 3,
+    message: "",
     projectPath: "/projects/beta",
-    selectedCandidates: 0,
-    selectedLanguages: 0,
-    totalCandidates: 0,
-    totalLanguages: 0,
+    selectedCandidates: 1,
+    selectedLanguages: 1,
+    timedOut: false,
+    totalCandidates: 1,
+    totalLanguages: 1,
   });
 });
 
@@ -1059,6 +1723,168 @@ test("diagnostics bind through runtime wrapper without legacy window runtime", a
   expect(state.totals).toEqual([1]);
 });
 
+test("activated project without completed diagnostics coverage stays scanning until terminal outcome", async ({
+  page,
+}) => {
+  const afterActivate = await page.evaluate(async () => {
+    const diagnostics = await import("/src/stores/diagnosticsStore.ts");
+    const projectState = await import("/src/utils/projectBoundState.ts");
+
+    projectState.resetProjectBoundStores();
+    projectState.activateProjectScope("/workspace");
+    diagnostics.useDiagnosticsStore.getState().setProjectScope("/workspace", 0);
+
+    return projectState.getProjectDiagnosticsPreloadSnapshot();
+  });
+
+  expect(afterActivate).toEqual({
+    active: false,
+    bounded: false,
+    checkedCandidates: 0,
+    completed: false,
+    coverageMode: "",
+    coverageState: "pending",
+    failedCandidates: 0,
+    generation: 0,
+    message: "",
+    projectPath: "/workspace",
+    selectedCandidates: 0,
+    selectedLanguages: 0,
+    timedOut: false,
+    totalCandidates: 0,
+    totalLanguages: 0,
+  });
+
+  const compactIndicator = page.getByTestId("diagnostics-compact-indicator");
+  await expect(compactIndicator).toBeVisible();
+  await expect(compactIndicator).toHaveText(/Scanning/);
+  await compactIndicator.click();
+
+  const problemsPanel = page.getByTestId("problems-panel");
+  await expect(problemsPanel).toBeVisible();
+  await expect(problemsPanel.getByText("Diagnostics unavailable")).toHaveCount(
+    0,
+  );
+  await expect(
+    problemsPanel.getByText(
+      "Workspace diagnostics are not available for the detected files in this project yet.",
+    ),
+  ).toHaveCount(0);
+  await expect(problemsPanel.getByText("Scanning diagnostics")).toBeVisible();
+  await expect(problemsPanel.getByText("No matching problems")).toHaveCount(0);
+
+  const afterComplete = await page.evaluate(async () => {
+    const projectState = await import("/src/utils/projectBoundState.ts");
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+
+    emit("lsp:diagnostics:preload:complete", {
+      projectPath: "/workspace",
+      generation: 0,
+      totalCandidates: 0,
+      selectedCandidates: 0,
+      totalLanguages: 0,
+      selectedLanguages: 0,
+    });
+
+    return projectState.getProjectDiagnosticsPreloadSnapshot();
+  });
+
+  expect(afterComplete).toEqual({
+    active: false,
+    bounded: false,
+    checkedCandidates: 0,
+    completed: true,
+    coverageMode: "",
+    coverageState: "unavailable",
+    failedCandidates: 0,
+    generation: 0,
+    message: "",
+    projectPath: "/workspace",
+    selectedCandidates: 0,
+    selectedLanguages: 0,
+    timedOut: false,
+    totalCandidates: 0,
+    totalLanguages: 0,
+  });
+
+  await expect(compactIndicator).toHaveText(/Unavailable/);
+  await expect(
+    problemsPanel.getByText("Diagnostics unavailable"),
+  ).toBeVisible();
+  await expect(
+    problemsPanel.getByText(
+      "Workspace diagnostics are not available for the detected files in this project yet.",
+    ),
+  ).toBeVisible();
+  await expect(problemsPanel.getByText("No matching problems")).toHaveCount(0);
+});
+
+test("problems panel stops inline scanning once preload checked every selected file", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const diagnostics = await import("/src/stores/diagnosticsStore.ts");
+    const projectState = await import("/src/utils/projectBoundState.ts");
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+
+    projectState.resetProjectBoundStores();
+    projectState.activateProjectScope("/workspace");
+    const store = diagnostics.useDiagnosticsStore.getState();
+    store.reset();
+    store.setProjectScope("/workspace", 7);
+
+    emit("lsp:ready", {
+      projectPath: "/workspace",
+      generation: 7,
+    });
+    emit("lsp:diagnostics", {
+      projectPath: "/workspace",
+      generation: 7,
+      filePath: "/workspace/src/shared.ts",
+      language: "typescript",
+      items: [
+        {
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 6 },
+          },
+          severity: 1,
+          message: "project diagnostic remains visible",
+        },
+      ],
+    });
+    emit("lsp:diagnostics:preload:start", {
+      projectPath: "/workspace",
+      generation: 7,
+      coverageState: "running",
+      coverageMode: "synthetic-open",
+      totalCandidates: 1915,
+      selectedCandidates: 1915,
+      checkedCandidates: 1915,
+      totalLanguages: 6,
+      selectedLanguages: 6,
+      message: "Still scanning diagnostics across this project.",
+    });
+  });
+
+  await expect(page.getByTestId("diagnostics-compact-indicator")).toBeVisible();
+  await page.getByTestId("diagnostics-compact-indicator").click();
+  const problemsPanel = page.getByTestId("problems-panel");
+  await expect(problemsPanel).toBeVisible();
+  await expect(
+    problemsPanel.getByText("project diagnostic remains visible"),
+  ).toBeVisible();
+  await expect(problemsPanel.getByText("Still scanning")).toHaveCount(0);
+});
+
 test("diagnostics status error shows unavailable problems state instead of false clear", async ({
   page,
 }) => {
@@ -1096,6 +1922,68 @@ test("diagnostics status error shows unavailable problems state instead of false
     page
       .getByTestId("problems-panel")
       .getByText("LSP didOpen failed for diagnostics.ts"),
+  ).toBeVisible();
+  await expect(page.getByText("No matching problems")).toHaveCount(0);
+});
+
+test("incomplete diagnostics coverage shows incomplete state instead of false clear", async ({
+  page,
+}) => {
+  const snapshot = await page.evaluate(async () => {
+    const diagnostics = await import("/src/stores/diagnosticsStore.ts");
+    const projectState = await import("/src/utils/projectBoundState.ts");
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+
+    projectState.resetProjectBoundStores();
+    projectState.activateProjectScope("/workspace");
+    diagnostics.useDiagnosticsStore.getState().setProjectScope("/workspace", 3);
+
+    emit("lsp:diagnostics:preload:complete", {
+      projectPath: "/workspace",
+      generation: 3,
+      bounded: true,
+      coverageState: "incomplete",
+      coverageMode: "synthetic-open",
+      totalCandidates: 100,
+      selectedCandidates: 8,
+      checkedCandidates: 8,
+      totalLanguages: 4,
+      selectedLanguages: 2,
+      message: "Diagnostics scan checked a bounded subset of this project.",
+    });
+
+    return projectState.getProjectDiagnosticsPreloadSnapshot();
+  });
+
+  expect(snapshot).toMatchObject({
+    active: false,
+    bounded: true,
+    checkedCandidates: 8,
+    completed: true,
+    coverageMode: "synthetic-open",
+    coverageState: "incomplete",
+    projectPath: "/workspace",
+    selectedCandidates: 8,
+    totalCandidates: 100,
+  });
+  await expect(page.getByTestId("diagnostics-compact-indicator")).toBeVisible();
+  await expect(page.getByTestId("diagnostics-compact-indicator")).toHaveText(
+    /Incomplete/,
+  );
+  await page.getByTestId("diagnostics-compact-indicator").click();
+  const problemsPanel = page.getByTestId("problems-panel");
+  await expect(problemsPanel).toBeVisible();
+  await expect(problemsPanel.getByText("Diagnostics incomplete")).toHaveCount(
+    2,
+  );
+  await expect(
+    problemsPanel.getByText(
+      "Diagnostics scan checked a bounded subset of this project.",
+    ),
   ).toBeVisible();
   await expect(page.getByText("No matching problems")).toHaveCount(0);
 });
@@ -1151,6 +2039,13 @@ test("preload waits for runtime listeners before backend diagnostics publish", a
               emit("lsp:diagnostics:preload:complete", {
                 generation: 5,
                 projectPath: "/projects/race",
+                coverageState: "complete",
+                coverageMode: "synthetic-open",
+                totalCandidates: 1,
+                selectedCandidates: 1,
+                checkedCandidates: 1,
+                totalLanguages: 1,
+                selectedLanguages: 1,
               });
               return true;
             };
@@ -1218,11 +2113,18 @@ test("preload waits for runtime listeners before backend diagnostics publish", a
   expect(result.preload).toEqual({
     active: false,
     bounded: false,
+    checkedCandidates: 1,
+    completed: true,
+    coverageMode: "synthetic-open",
+    coverageState: "complete",
+    failedCandidates: 0,
     generation: 5,
+    message: "",
     projectPath: "/projects/race",
-    selectedCandidates: 0,
-    selectedLanguages: 0,
-    totalCandidates: 0,
-    totalLanguages: 0,
+    selectedCandidates: 1,
+    selectedLanguages: 1,
+    timedOut: false,
+    totalCandidates: 1,
+    totalLanguages: 1,
   });
 });

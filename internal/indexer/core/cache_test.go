@@ -176,8 +176,8 @@ func TestCacheManager_Stats(t *testing.T) {
 
 	stats := cm.Stats()
 	totalOps := stats.ASTHits + stats.ASTMisses
-	if totalOps < 0 {
-		t.Errorf("Stats should return non-negative values, got hits=%d misses=%d", stats.ASTHits, stats.ASTMisses)
+	if totalOps == 0 {
+		t.Errorf("Stats should include recorded operations, got hits=%d misses=%d", stats.ASTHits, stats.ASTMisses)
 	}
 }
 
