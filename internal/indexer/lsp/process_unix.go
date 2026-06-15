@@ -15,6 +15,40 @@ func configureLSPProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
+func applyLSPProcessPriority(cmd *exec.Cmd) lspProcessPriorityResult {
+	policy := currentLSPProcessPriorityPolicy()
+	result := lspProcessPriorityResult{
+		Policy: policy,
+		Target: "process_group",
+		Status: "disabled",
+	}
+	if !policy.Enabled {
+		return result
+	}
+	if cmd == nil || cmd.Process == nil || cmd.Process.Pid <= 0 {
+		result.Status = "skipped"
+		return result
+	}
+
+	pid := cmd.Process.Pid
+	if err := syscall.Setpriority(syscall.PRIO_PGRP, pid, policy.Nice); err == nil {
+		result.Status = "applied"
+		return result
+	} else {
+		result.Err = err
+	}
+
+	result.Target = "process"
+	if err := syscall.Setpriority(syscall.PRIO_PROCESS, pid, policy.Nice); err != nil {
+		result.Status = "failed"
+		result.Err = err
+		return result
+	}
+	result.Status = "applied"
+	result.Err = nil
+	return result
+}
+
 func terminateLSPProcess(process *os.Process, wait time.Duration) {
 	if process == nil {
 		return

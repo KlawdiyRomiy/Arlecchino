@@ -858,6 +858,7 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 		)
 		return err
 	}
+	logLSPProcessPriority("initialized", cfg, lspProcessID(server), startReason, applyLSPProcessPriority(server.cmd))
 
 	m.clearStartFailure(language)
 	log.Printf("[LSP-MGR] initialized language=%s command=%s pid=%d root=%s reason=%s initDurationMs=%d status=initialized",
@@ -2726,6 +2727,7 @@ func (m *Manager) startServer(cfg ServerConfig, reason string) (*Server, error) 
 		)
 		return nil, err
 	}
+	logLSPProcessPriority("start", cfg, cmd.Process.Pid, reason, applyLSPProcessPriority(cmd))
 	log.Printf("[LSP-MGR] started language=%s command=%s args=%v pid=%d root=%s reason=%s durationMs=%d status=started",
 		cfg.Language,
 		cfg.Command,
@@ -2750,6 +2752,39 @@ func (m *Manager) startServer(cfg ServerConfig, reason string) (*Server, error) 
 	go server.readStderr(stderr)
 
 	return server, nil
+}
+
+func logLSPProcessPriority(phase string, cfg ServerConfig, pid int, reason string, result lspProcessPriorityResult) {
+	if result.Err != nil {
+		log.Printf("[LSP-MGR] priority phase=%s language=%s command=%s pid=%d root=%s reason=%s enabled=%t nice=%d source=%s target=%s status=%s error=%v",
+			phase,
+			cfg.Language,
+			cfg.Command,
+			pid,
+			cfg.RootURI,
+			reason,
+			result.Policy.Enabled,
+			result.Policy.Nice,
+			result.Policy.Source,
+			result.Target,
+			result.Status,
+			result.Err,
+		)
+		return
+	}
+	log.Printf("[LSP-MGR] priority phase=%s language=%s command=%s pid=%d root=%s reason=%s enabled=%t nice=%d source=%s target=%s status=%s",
+		phase,
+		cfg.Language,
+		cfg.Command,
+		pid,
+		cfg.RootURI,
+		reason,
+		result.Policy.Enabled,
+		result.Policy.Nice,
+		result.Policy.Source,
+		result.Target,
+		result.Status,
+	)
 }
 
 func lspProcessID(server *Server) int {
