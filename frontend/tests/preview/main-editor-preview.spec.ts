@@ -255,6 +255,33 @@ test("Browser Preview uses file opened in the main editor", async ({
   expect(previewPayload?.htmlContent).toContain("Main editor preview");
 });
 
+test("dropping the first file on the right editor split opens one editor", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("editor-surface")).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:editor-file-split-drop", {
+        detail: {
+          path: "/workspace/index.html",
+          name: "index.html",
+          side: "right",
+        },
+      }),
+    );
+  });
+
+  await expect(page.locator(".cm-content")).toContainText(
+    "Main editor preview",
+  );
+  await expect(page.getByTestId("editor-split-surface")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toHaveCount(1);
+  await expect(page.getByTestId("editor-tabs-bar")).toContainText("index.html");
+});
+
 test("Browser Preview follows the active static HTML file while open", async ({
   page,
 }) => {

@@ -2,6 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 
 const projectPath = "/workspace";
 
+interface MountEditorOptions {
+  content?: string;
+  filePath?: string;
+  language?: string;
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
@@ -41,8 +47,10 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-const mountEditor = async (page: Page) => {
-  const content = `.root {
+const mountEditor = async (page: Page, options: MountEditorOptions = {}) => {
+  const content =
+    options.content ??
+    `.root {
   color: #ff00aa;
 
   .child {
@@ -50,9 +58,11 @@ const mountEditor = async (page: Page) => {
   }
 }
 `;
+  const filePath = options.filePath ?? `${projectPath}/src/styles/theme.scss`;
+  const language = options.language ?? "scss";
 
   await page.evaluate(
-    async ({ content, projectPath }) => {
+    async ({ content, filePath, language, projectPath }) => {
       const rootElement = document.createElement("div");
       rootElement.id = "playwright-codemirror-workflow-root";
       rootElement.style.width = "1000px";
@@ -80,9 +90,9 @@ const mountEditor = async (page: Page) => {
           ThemeProvider,
           null,
           React.createElement(CodeMirrorEditor, {
-            filePath: `${projectPath}/src/styles/theme.scss`,
+            filePath,
             content,
-            language: "scss",
+            language,
             projectPath,
             onChange: () => undefined,
             onSave: () => undefined,
@@ -96,11 +106,90 @@ const mountEditor = async (page: Page) => {
         ),
       );
     },
-    { content, projectPath },
+    { content, filePath, language, projectPath },
   );
 
   await expect(page.locator(".cm-editor").first()).toBeVisible({
     timeout: 10000,
+  });
+};
+
+const readDefinitionCursorState = async (
+  page: Page,
+): Promise<{
+  contentCursor: string;
+  decorationCount: number;
+  hasActiveClass: boolean;
+  lineCursor: string;
+  scrollerCursor: string;
+}> => {
+  return page.evaluate(() => {
+    const editor = document.querySelector<HTMLElement>(".cm-editor");
+    const content = editor?.querySelector<HTMLElement>(".cm-content") ?? null;
+    const line = editor?.querySelector<HTMLElement>(".cm-line") ?? null;
+    const scroller = editor?.querySelector<HTMLElement>(".cm-scroller") ?? null;
+
+    return {
+      contentCursor: content ? getComputedStyle(content).cursor : "",
+      decorationCount:
+        editor?.querySelectorAll(".definition-link-hover").length ?? 0,
+      hasActiveClass:
+        editor?.classList.contains("cm-definition-link-active") ?? false,
+      lineCursor: line ? getComputedStyle(line).cursor : "",
+      scrollerCursor: scroller ? getComputedStyle(scroller).cursor : "",
+    };
+  });
+};
+
+const activateDefinitionHover = async (
+  page: Page,
+): Promise<Awaited<ReturnType<typeof readDefinitionCursorState>>> => {
+  return page.evaluate(async () => {
+    const { EditorView } =
+      await import("/node_modules/.vite/deps/@codemirror_view.js");
+    const editor = document.querySelector<HTMLElement>(".cm-editor");
+    if (!editor) {
+      throw new Error("Missing CodeMirror editor");
+    }
+
+    const view = EditorView.findFromDOM(editor);
+    if (!view) {
+      throw new Error("Missing CodeMirror view");
+    }
+
+    const source = view.state.doc.toString();
+    const from = source.lastIndexOf("ready");
+    if (from < 0) {
+      throw new Error("Missing ready symbol");
+    }
+
+    const start = view.coordsAtPos(from + 1);
+    const end = view.coordsAtPos(from + "ready".length);
+    if (!start || !end) {
+      throw new Error("Missing ready symbol coordinates");
+    }
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        cancelable: true,
+        clientX: (start.left + end.right) / 2,
+        clientY: start.top + (start.bottom - start.top) / 2,
+        metaKey: true,
+      }),
+    );
+
+    const content = editor.querySelector<HTMLElement>(".cm-content");
+    const line = editor.querySelector<HTMLElement>(".cm-line");
+    const scroller = editor.querySelector<HTMLElement>(".cm-scroller");
+
+    return {
+      contentCursor: content ? getComputedStyle(content).cursor : "",
+      decorationCount: editor.querySelectorAll(".definition-link-hover").length,
+      hasActiveClass: editor.classList.contains("cm-definition-link-active"),
+      lineCursor: line ? getComputedStyle(line).cursor : "",
+      scrollerCursor: scroller ? getComputedStyle(scroller).cursor : "",
+    };
   });
 };
 
@@ -212,6 +301,96 @@ test("editor renders gated color tools", async ({ page }) => {
   await expect(page.locator('input[type="color"]').first()).toBeAttached({
     timeout: 10000,
   });
+});
+
+test("definition hover owns pointer cursor through editor root state", async ({
+  page,
+}) => {
+  await mountEditor(page, {
+    content: `function ready() {
+  return true;
+}
+
+ready();
+`,
+    filePath: `${projectPath}/src/index.ts`,
+    language: "typescript",
+  });
+  await expect(
+    page.locator(".cm-line").filter({ hasText: "ready();" }),
+  ).toBeVisible();
+
+  await activateDefinitionHover(page);
+  await expect
+    .poll(() => readDefinitionCursorState(page))
+    .toEqual({
+      contentCursor: "pointer",
+      decorationCount: 1,
+      hasActiveClass: true,
+      lineCursor: "pointer",
+      scrollerCursor: "pointer",
+    });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        bubbles: true,
+        cancelable: true,
+        key: "Meta",
+      }),
+    );
+  });
+  await expect
+    .poll(() => readDefinitionCursorState(page))
+    .toEqual({
+      contentCursor: "text",
+      decorationCount: 0,
+      hasActiveClass: false,
+      lineCursor: "text",
+      scrollerCursor: "text",
+    });
+
+  await activateDefinitionHover(page);
+  await expect
+    .poll(() => readDefinitionCursorState(page))
+    .toMatchObject({
+      contentCursor: "pointer",
+      hasActiveClass: true,
+    });
+  await page.evaluate(() => {
+    document
+      .querySelector<HTMLElement>(".cm-editor")
+      ?.dispatchEvent(new MouseEvent("mouseleave", { cancelable: true }));
+  });
+  await expect
+    .poll(() => readDefinitionCursorState(page))
+    .toEqual({
+      contentCursor: "text",
+      decorationCount: 0,
+      hasActiveClass: false,
+      lineCursor: "text",
+      scrollerCursor: "text",
+    });
+
+  await activateDefinitionHover(page);
+  await expect
+    .poll(() => readDefinitionCursorState(page))
+    .toMatchObject({
+      contentCursor: "pointer",
+      hasActiveClass: true,
+    });
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+  });
+  await expect
+    .poll(() => readDefinitionCursorState(page))
+    .toEqual({
+      contentCursor: "text",
+      decorationCount: 0,
+      hasActiveClass: false,
+      lineCursor: "text",
+      scrollerCursor: "text",
+    });
 });
 
 test("git diff review mode is backed by CodeMirror merge", async ({ page }) => {

@@ -1038,6 +1038,9 @@ test("terminal indexer errors clear the compact topbar indexing state", async ({
     });
   });
   await expect(page.getByTestId("topbar-indexing-status")).toBeVisible();
+  await expect(page.getByTestId("app-notification-indexer-error")).toHaveCount(
+    0,
+  );
 
   await page.evaluate(() => {
     (
@@ -1067,6 +1070,9 @@ test("terminal indexer errors clear the compact topbar indexing state", async ({
   });
 
   await expect(page.getByTestId("topbar-indexing-status")).toHaveCount(0);
+  await expect(
+    page.getByTestId("app-notification-indexer-error"),
+  ).toBeVisible();
 });
 
 test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
@@ -1193,7 +1199,7 @@ test("native fullscreen hides macOS window controls backdrop", async ({
         ).__nativeWindowControlsVisibleCalls.at(-1),
       ),
     )
-    .toBe(false);
+    .toBe(true);
 
   await page.evaluate(() => {
     (
@@ -1221,6 +1227,103 @@ test("native fullscreen hides macOS window controls backdrop", async ({
       ),
     )
     .toBe(true);
+});
+
+test("native window controls use the topbar placeholder inset", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const expectedInset = await page.evaluate(() => {
+    const placeholder = document.querySelector(
+      '[data-testid="window-controls-native-macos"]',
+    );
+    if (!placeholder) {
+      return null;
+    }
+
+    const rect = placeholder.getBoundingClientRect();
+    const controlScale = rect.width / 84;
+    const closeX = rect.left + (12 + 13 / 2) * controlScale;
+    const centerY = rect.top + (48 / 2) * controlScale;
+    const gap = (13 + 10) * controlScale;
+    return [closeX, centerY, closeX + gap, centerY, closeX + gap * 2, centerY];
+  });
+  const bubbleSideInsets = await page.evaluate(() => {
+    const placeholder = document.querySelector(
+      '[data-testid="window-controls-native-macos"]',
+    );
+    const backdrop = document.querySelector(
+      '[data-testid="window-controls-native-backdrop"]',
+    );
+    if (!placeholder || !backdrop) {
+      return null;
+    }
+
+    const placeholderRect = placeholder.getBoundingClientRect();
+    const backdropRect = backdrop.getBoundingClientRect();
+    const controlScale = placeholderRect.width / 84;
+    const buttonRadius = (13 / 2) * controlScale;
+    const closeCenterX = placeholderRect.left + (12 + 13 / 2) * controlScale;
+    const maximiseCenterX = closeCenterX + (13 + 10) * controlScale * 2;
+    return {
+      left: closeCenterX - buttonRadius - backdropRect.left,
+      right: backdropRect.right - (maximiseCenterX + buttonRadius),
+    };
+  });
+
+  expect(expectedInset).not.toBeNull();
+  expect(bubbleSideInsets).not.toBeNull();
+  expect(bubbleSideInsets!.left).toBeCloseTo(bubbleSideInsets!.right, 2);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsPositionCalls: unknown[][];
+          }
+        ).__nativeWindowControlsPositionCalls.at(-1),
+      ),
+    )
+    .toEqual(expectedInset);
+});
+
+test("native macOS window buttons setting hides controls and shifts topbar actions left", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await expect(
+    page.getByTestId("window-controls-native-backdrop"),
+  ).toBeVisible();
+  const actionBubble = page.getByTestId("topbar-left-action-bubble");
+  const visibleFrame = await actionBubble.boundingBox();
+  expect(visibleFrame).not.toBeNull();
+
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setShowNativeMacWindowControls(false);
+  });
+
+  await expect(page.getByTestId("window-controls-native-backdrop")).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(false);
+
+  const hiddenFrame = await actionBubble.boundingBox();
+  expect(hiddenFrame).not.toBeNull();
+  expect(hiddenFrame!.x).toBeLessThan(visibleFrame!.x);
 });
 
 test("native window controls wait for project switch transition to settle", async ({
