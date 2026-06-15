@@ -216,7 +216,7 @@ test("adaptive performance budget disables expensive editor features under press
   expect(result).toEqual({
     mode: "critical",
     completions: false,
-    diagnostics: false,
+    diagnostics: true,
     gitGutter: false,
     layoutStableFoldGutter: false,
     layoutStableGitGutter: false,

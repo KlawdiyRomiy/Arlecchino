@@ -1142,6 +1142,36 @@ const readNoDragStyles = async (
   }, selector);
 };
 
+const readPanelResizeCleanupState = async (
+  page: Parameters<typeof test>[0]["page"],
+  panelTestId: string,
+): Promise<{
+  contentPointerEvents: string;
+  cursor: string;
+  cursorOwner: string;
+  isResizing: boolean;
+  userSelect: string;
+}> => {
+  return page.evaluate((targetPanelTestId) => {
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        `[data-testid="${targetPanelTestId}"]`,
+      ),
+    );
+    const panel = panels[panels.length - 1] ?? null;
+    const content =
+      panel?.querySelector<HTMLElement>('[data-panel-content="true"]') ?? null;
+
+    return {
+      contentPointerEvents: content?.style.pointerEvents ?? "",
+      cursor: document.body.style.cursor,
+      cursorOwner: document.body.getAttribute("data-arle-cursor-owner") ?? "",
+      isResizing: panel?.dataset.panelState === "resizing",
+      userSelect: document.body.style.userSelect,
+    };
+  }, panelTestId);
+};
+
 const readPanelResizeHoverState = async (
   page: Parameters<typeof test>[0]["page"],
   panelTestId: string,
@@ -1195,6 +1225,59 @@ const readPanelResizeHoverState = async (
       };
     },
     { panelTestId, handleTestId },
+  );
+};
+
+const startSyntheticPanelResize = async (
+  page: Parameters<typeof test>[0]["page"],
+  handleTestId: string,
+  pointerId: number,
+): Promise<void> => {
+  const handleBox = await page.getByTestId(handleTestId).boundingBox();
+  expect(handleBox).not.toBeNull();
+
+  await page.evaluate(
+    ({ handleTestId, pointerId, x, y }) => {
+      const handle = document.querySelector<HTMLElement>(
+        `[data-testid="${handleTestId}"]`,
+      );
+      if (!handle) {
+        throw new Error(`Missing resize handle ${handleTestId}`);
+      }
+
+      const base = {
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+        pointerId,
+        pointerType: "mouse",
+      } as const;
+
+      handle.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          ...base,
+          button: 0,
+          buttons: 1,
+          clientX: x,
+          clientY: y,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointermove", {
+          ...base,
+          button: 0,
+          buttons: 1,
+          clientX: x + 36,
+          clientY: y,
+        }),
+      );
+    },
+    {
+      handleTestId,
+      pointerId,
+      x: (handleBox?.x ?? 0) + (handleBox?.width ?? 0) / 2,
+      y: (handleBox?.y ?? 0) + (handleBox?.height ?? 0) / 2,
+    },
   );
 };
 
@@ -4621,6 +4704,72 @@ test("snapped panel resize rail owns hover hit testing before drag", async ({
       handleWidth: 24,
       hitResizeHandle: "true",
       hitTestId: "panel-explorer-resize-e",
+    });
+});
+
+test("panel resize clears owned cursor state on cancellation paths", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-explorer"]').last();
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+
+  await startSyntheticPanelResize(page, "panel-explorer-resize-e", 31);
+  await expect
+    .poll(() => readPanelResizeCleanupState(page, "panel-explorer"))
+    .toEqual({
+      contentPointerEvents: "none",
+      cursor: "ew-resize",
+      cursorOwner: "floating-panel:explorer:resize:1",
+      isResizing: true,
+      userSelect: "none",
+    });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PointerEvent("pointercancel", {
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+        pointerId: 31,
+        pointerType: "mouse",
+      }),
+    );
+  });
+  await expect
+    .poll(() => readPanelResizeCleanupState(page, "panel-explorer"))
+    .toEqual({
+      contentPointerEvents: "auto",
+      cursor: "",
+      cursorOwner: "",
+      isResizing: false,
+      userSelect: "",
+    });
+
+  await startSyntheticPanelResize(page, "panel-explorer-resize-e", 32);
+  await expect
+    .poll(() => readPanelResizeCleanupState(page, "panel-explorer"))
+    .toEqual({
+      contentPointerEvents: "none",
+      cursor: "ew-resize",
+      cursorOwner: "floating-panel:explorer:resize:2",
+      isResizing: true,
+      userSelect: "none",
+    });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("blur"));
+  });
+  await expect
+    .poll(() => readPanelResizeCleanupState(page, "panel-explorer"))
+    .toEqual({
+      contentPointerEvents: "auto",
+      cursor: "",
+      cursorOwner: "",
+      isResizing: false,
+      userSelect: "",
     });
 });
 
