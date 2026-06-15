@@ -15,7 +15,7 @@ func TestCompletionCacheKeyUsesDocumentVersion(t *testing.T) {
 	m.markDocOpen(language, filePath, 1)
 	keyV1 := fmt.Sprintf("%s|%s|%d|%d|%d", language, filePath, line, column, m.docVersion(language, filePath))
 	m.setCompletionCache(keyV1, completionResult{
-		items:     []CompletionItem{{Label: "EventsEmit"}},
+		response:  CompletionResponse{Items: []CompletionItem{{Label: "EventsEmit"}}},
 		createdAt: time.Now(),
 	})
 
@@ -30,5 +30,34 @@ func TestCompletionCacheKeyUsesDocumentVersion(t *testing.T) {
 	}
 	if _, ok := m.getCompletionCache(keyV2); ok {
 		t.Fatalf("expected cache miss for new document version key")
+	}
+}
+
+func TestMergeCompletionItemMergesAdditionalTextEdits(t *testing.T) {
+	importEdit := TextEdit{
+		Range:   Range{Start: Position{Line: 1, Character: 0}, End: Position{Line: 1, Character: 0}},
+		NewText: "import \"log\"\n\n",
+	}
+	formatEdit := TextEdit{
+		Range:   Range{Start: Position{Line: 4, Character: 0}, End: Position{Line: 4, Character: 0}},
+		NewText: "// resolved\n",
+	}
+
+	merged := mergeCompletionItem(
+		CompletionItem{
+			Label:               "Fatal",
+			AdditionalTextEdits: []TextEdit{importEdit},
+		},
+		CompletionItem{
+			Label:               "Fatal",
+			AdditionalTextEdits: []TextEdit{importEdit, formatEdit},
+		},
+	)
+
+	if len(merged.AdditionalTextEdits) != 2 {
+		t.Fatalf("expected merged de-duped edits, got %#v", merged.AdditionalTextEdits)
+	}
+	if merged.AdditionalTextEdits[0] != importEdit || merged.AdditionalTextEdits[1] != formatEdit {
+		t.Fatalf("unexpected edit order/content: %#v", merged.AdditionalTextEdits)
 	}
 }

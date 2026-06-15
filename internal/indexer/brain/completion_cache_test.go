@@ -25,27 +25,27 @@ func TestCompletionCache_InvalidateByFilePath(t *testing.T) {
 		TriggerChar: "",
 	}
 
-	cache.Set(ctxA, []Suggestion{{Text: "foo"}})
-	cache.Set(ctxB, []Suggestion{{Text: "bar"}})
+	cache.Set(ctxA, []Suggestion{{Text: "foo"}}, false)
+	cache.Set(ctxB, []Suggestion{{Text: "bar"}}, false)
 
-	if _, ok := cache.Get(ctxA); !ok {
+	if _, _, ok := cache.Get(ctxA); !ok {
 		t.Fatalf("expected cache hit for ctxA")
 	}
-	if _, ok := cache.Get(ctxB); !ok {
+	if _, _, ok := cache.Get(ctxB); !ok {
 		t.Fatalf("expected cache hit for ctxB")
 	}
 
 	cache.Invalidate(ctxA.FilePath)
 
-	if _, ok := cache.Get(ctxA); ok {
+	if _, _, ok := cache.Get(ctxA); ok {
 		t.Fatalf("expected cache miss for ctxA after invalidation")
 	}
-	if _, ok := cache.Get(ctxB); !ok {
+	if _, _, ok := cache.Get(ctxB); !ok {
 		t.Fatalf("expected ctxB to remain cached")
 	}
 
 	cache.Invalidate("")
-	if _, ok := cache.Get(ctxB); ok {
+	if _, _, ok := cache.Get(ctxB); ok {
 		t.Fatalf("expected cache miss for ctxB after global invalidation")
 	}
 }

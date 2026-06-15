@@ -15,6 +15,36 @@ type CompletionFixtureItem = {
   detail?: string;
   insertText?: string;
   isSnippet?: boolean;
+  primaryTextEdit?: {
+    newText: string;
+    range?: {
+      startLine: number;
+      startColumn: number;
+      endLine: number;
+      endColumn: number;
+    } | null;
+    insert?: {
+      startLine: number;
+      startColumn: number;
+      endLine: number;
+      endColumn: number;
+    } | null;
+    replace?: {
+      startLine: number;
+      startColumn: number;
+      endLine: number;
+      endColumn: number;
+    } | null;
+  } | null;
+  accessMemberAuthoritative?: boolean;
+  resolveToken?: string;
+  completionId?: string;
+  stableKey?: string;
+  autoImportAllowed?: boolean;
+  requiresResolveBeforeApply?: boolean;
+  requiresSafeEditsBeforeApply?: boolean;
+  command?: unknown;
+  data?: unknown;
   additionalTextEdits?: Array<{
     startLine: number;
     startColumn: number;
@@ -22,6 +52,42 @@ type CompletionFixtureItem = {
     endColumn: number;
     text: string;
   }>;
+};
+
+type CompletionFixtureResponse = {
+  items?: CompletionFixtureItem[];
+  lspStatus?: string;
+  isIncomplete?: boolean;
+};
+
+type CompletionResolveFixtureResponse = {
+  insertText?: string;
+  isSnippet?: boolean;
+  primaryTextEdit?: CompletionFixtureItem["primaryTextEdit"];
+  additionalTextEdits?: CompletionFixtureItem["additionalTextEdits"];
+  command?: unknown;
+  data?: unknown;
+};
+
+type AutocompleteRequestLogEntry = {
+  textBefore: string;
+  completionTriggerKind: number | null;
+  triggerChar: string;
+  accessOperator: string;
+  lspStatus: string;
+  isIncomplete: boolean;
+  itemCount: number;
+};
+
+type AutocompleteApplyRejectLogEntry = {
+  reason: string;
+  label: string;
+  source: string;
+  completionId?: string;
+  stableKey?: string;
+  resolveToken?: string;
+  requiresSafeEdits: boolean;
+  requiresAdditionalSafeEdits: boolean;
 };
 
 type CodeMirrorSnapshot = {
@@ -48,7 +114,22 @@ declare global {
     __autocompletePendingFixture?: EditorFixture;
     __autocompleteDelayMs?: number;
     __autocompleteDelayBySuffix?: Record<string, number>;
+    __autocompleteResolveDelayMs?: number;
+    __autocompleteResolveDelayByToken?: Record<string, number>;
     __autocompleteRequests?: string[];
+    __autocompleteRequestLog?: AutocompleteRequestLogEntry[];
+    __autocompleteResponseBySuffix?: Record<string, CompletionFixtureResponse>;
+    __autocompleteResponseSequenceBySuffix?: Record<
+      string,
+      CompletionFixtureResponse[]
+    >;
+    __autocompleteResolveByToken?: Record<
+      string,
+      CompletionResolveFixtureResponse
+    >;
+    __autocompleteResolveRequests?: string[];
+    __autocompleteResolveRequestLog?: Array<Record<string, unknown>>;
+    __autocompleteApplyRejectLog?: AutocompleteApplyRejectLogEntry[];
     __editorText?: string;
     __autocompleteRoot?: {
       render?: (node: unknown) => void;
@@ -176,13 +257,66 @@ const completionsByPrefix: Record<string, CompletionFixtureItem[]> = {
     { label: "NewRequest", source: "lsp", kind: "function" },
     { label: "WithCancel", source: "lsp", kind: "function" },
   ],
+  "context.B": [
+    { label: "Background", source: "lsp", kind: "function" },
+    { label: "BackgroundCause", source: "lsp", kind: "function" },
+  ],
+  "factory().": [
+    { label: "Build", source: "lsp", kind: "method" },
+    { label: "Close", source: "lsp", kind: "method" },
+  ],
+  "alpha.": [
+    { label: "Zeta", source: "lsp", kind: "method" },
+    { label: "Beta10", source: "lsp", kind: "method" },
+    { label: "Alpha", source: "lsp", kind: "method" },
+    { label: "beta2", source: "lsp", kind: "method" },
+  ],
+  "ptr->": [
+    { label: "begin", source: "lsp", kind: "method" },
+    { label: "end", source: "lsp", kind: "method" },
+  ],
+  "player:": [
+    { label: "MoveTo", source: "lsp", kind: "method" },
+    { label: "Spawn", source: "lsp", kind: "method" },
+  ],
+  "axios.": [],
   wide: [{ label: "wide", source: "library", kind: "module" }],
   "wide.": wideMemberCompletions,
 };
 
+async function latestCompletionApplyReject(
+  page: Page,
+): Promise<AutocompleteApplyRejectLogEntry | null> {
+  return page.evaluate(() => {
+    const log = window.__autocompleteApplyRejectLog || [];
+    return log.length ? log[log.length - 1] : null;
+  });
+}
+
+const authoritativeAccessFixtureSuffixes = new Set([
+  "tele.",
+  "HTTP.",
+  "Carbon::",
+  "json.",
+  "JSON.",
+  "serde_json.",
+  "Console.",
+  "URLSession.",
+  "http.",
+  "sse.",
+  "fmt.",
+  "fmt.P",
+  "fmt.Pr",
+  "wide.",
+]);
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(
-    ({ completionsByPrefix, projectPath }) => {
+    ({
+      authoritativeAccessFixtureSuffixes,
+      completionsByPrefix,
+      projectPath,
+    }) => {
       localStorage.clear();
 
       const pendingFixture = window.__autocompletePendingFixture;
@@ -213,7 +347,10 @@ test.beforeEach(async ({ page }) => {
         return "";
       };
 
-      const normalizeItems = (items: CompletionFixtureItem[]) =>
+      const normalizeItems = (
+        items: CompletionFixtureItem[],
+        accessFixtureAuthoritative: boolean,
+      ) =>
         items.map((item, index) => ({
           label: item.label,
           text: item.label,
@@ -222,10 +359,26 @@ test.beforeEach(async ({ page }) => {
           documentation: "",
           kind: item.kind || "function",
           source: item.source,
+          accessMemberAuthoritative:
+            item.accessMemberAuthoritative ??
+            (item.source === "lsp" ||
+              (accessFixtureAuthoritative && item.source === "library")),
           isSnippet: item.isSnippet || false,
           priority: 100 - index,
           matchType: "prefix",
+          primaryTextEdit: item.primaryTextEdit || null,
           additionalTextEdits: item.additionalTextEdits || [],
+          resolveToken: item.resolveToken || "",
+          completionId: item.completionId || "",
+          stableKey: item.stableKey || "",
+          autoImportAllowed:
+            item.autoImportAllowed ??
+            (item.additionalTextEdits || []).length > 0,
+          requiresResolveBeforeApply: item.requiresResolveBeforeApply ?? false,
+          requiresSafeEditsBeforeApply:
+            item.requiresSafeEditsBeforeApply ?? false,
+          command: item.command,
+          data: item.data,
         }));
 
       const appHandlers: Record<string, (...args: unknown[]) => unknown> = {
@@ -240,14 +393,44 @@ test.beforeEach(async ({ page }) => {
         ReadFile: readFile,
         NotifyFileChanged: async () => true,
         RecordCompletionUsage: async () => true,
+        ResolveEditorCompletion: async (ctx?: Record<string, unknown>) => {
+          const token = String(ctx?.resolveToken || "");
+          window.__autocompleteResolveRequests = [
+            ...(window.__autocompleteResolveRequests || []),
+            token,
+          ];
+          window.__autocompleteResolveRequestLog = [
+            ...(window.__autocompleteResolveRequestLog || []),
+            { ...(ctx || {}) },
+          ];
+          const delay =
+            window.__autocompleteResolveDelayByToken?.[token] ??
+            window.__autocompleteResolveDelayMs ??
+            0;
+          if (delay > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, delay));
+          }
+          return window.__autocompleteResolveByToken?.[token] || null;
+        },
         GetEditorCompletions: async (ctx?: Record<string, unknown>) => {
           const textBefore = String(ctx?.textBefore || "");
           const fullText = String(ctx?.fullText || "");
+          const completionTriggerKind =
+            typeof ctx?.completionTriggerKind === "number"
+              ? ctx.completionTriggerKind
+              : null;
+          const triggerChar = String(ctx?.triggerChar || "");
+          const accessOperator = String(ctx?.accessOperator || "");
           window.__autocompleteRequests = [
             ...(window.__autocompleteRequests || []),
             textBefore,
           ];
-          const suffix = Object.keys(completionsByPrefix)
+          const suffixCandidates = new Set([
+            ...Object.keys(completionsByPrefix),
+            ...Object.keys(window.__autocompleteResponseBySuffix || {}),
+            ...Object.keys(window.__autocompleteResponseSequenceBySuffix || {}),
+          ]);
+          const suffix = [...suffixCandidates]
             .filter((candidate) => textBefore.endsWith(candidate))
             .sort((a, b) => b.length - a.length)[0];
           const delay =
@@ -257,7 +440,17 @@ test.beforeEach(async ({ page }) => {
           if (delay > 0) {
             await new Promise((resolve) => setTimeout(resolve, delay));
           }
-          let items = suffix ? completionsByPrefix[suffix] : [];
+          const sequence = suffix
+            ? window.__autocompleteResponseSequenceBySuffix?.[suffix]
+            : undefined;
+          const sequenceOverride = sequence?.length
+            ? sequence.shift()
+            : undefined;
+          const override =
+            sequenceOverride ??
+            (suffix ? window.__autocompleteResponseBySuffix?.[suffix] : null);
+          let items =
+            override?.items ?? (suffix ? completionsByPrefix[suffix] : []);
           if (textBefore.endsWith("account.")) {
             items = [{ label: "ID", source: "lsp", kind: "field" }];
             if (fullText.includes("DisplayName string")) {
@@ -267,13 +460,36 @@ test.beforeEach(async ({ page }) => {
               ];
             }
           }
+          const lspStatus =
+            override?.lspStatus ?? (items.length > 0 ? "ok" : "empty");
+          const isIncomplete = override?.isIncomplete ?? false;
+          const accessFixtureAuthoritative = Boolean(
+            suffix && authoritativeAccessFixtureSuffixes.includes(suffix),
+          );
+          window.__autocompleteRequestLog = [
+            ...(window.__autocompleteRequestLog || []),
+            {
+              textBefore,
+              completionTriggerKind,
+              triggerChar,
+              accessOperator,
+              lspStatus,
+              isIncomplete,
+              itemCount: items.length,
+            },
+          ];
           return {
-            primary: items[0] ? normalizeItems([items[0]])[0] : null,
-            items: normalizeItems(items),
+            primary: items[0]
+              ? normalizeItems([items[0]], accessFixtureAuthoritative)[0]
+              : null,
+            items: normalizeItems(items, accessFixtureAuthoritative),
             ghostText: "",
             ghostConfidence: 0,
             showGhost: false,
             stale: false,
+            lspStatus,
+            isIncomplete,
+            sourceStatuses: { lsp: lspStatus },
           };
         },
       };
@@ -335,7 +551,13 @@ test.beforeEach(async ({ page }) => {
         }),
       );
     },
-    { completionsByPrefix, projectPath },
+    {
+      authoritativeAccessFixtureSuffixes: [
+        ...authoritativeAccessFixtureSuffixes,
+      ],
+      completionsByPrefix,
+      projectPath,
+    },
   );
 });
 
@@ -346,6 +568,7 @@ async function mountEditor(page: Page, fixture: EditorFixture) {
     async ({ fixture }) => {
       window.__autocompleteFixture = fixture;
       window.__editorText = fixture.content;
+      window.__autocompleteApplyRejectLog = [];
       window.__autocompleteRoot?.unmount();
       window.__autocompleteRoot = undefined;
 
@@ -551,6 +774,45 @@ async function moveCursorToDocumentEnd(page: Page) {
     });
 }
 
+async function moveCursorAfterText(page: Page, marker: string) {
+  await page
+    .locator(".cm-content")
+    .first()
+    .evaluate(async (element, markerText) => {
+      const { EditorView } =
+        await import("/node_modules/.vite/deps/@codemirror_view.js");
+      type CodeMirrorContentElement = HTMLElement & {
+        cmView?: {
+          view?: {
+            state: { doc: { toString: () => string } };
+            dispatch: (spec: {
+              selection: { anchor: number };
+              scrollIntoView?: boolean;
+            }) => void;
+            focus: () => void;
+          };
+        };
+      };
+
+      const view =
+        (element as CodeMirrorContentElement).cmView?.view ??
+        EditorView.findFromDOM(element);
+      if (!view) {
+        throw new Error("CodeMirror view is not available");
+      }
+      const text = view.state.doc.toString();
+      const index = text.indexOf(markerText);
+      if (index < 0) {
+        throw new Error(`Marker not found: ${markerText}`);
+      }
+      view.dispatch({
+        selection: { anchor: index + markerText.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+    }, marker);
+}
+
 async function editorSnapshot(page: Page): Promise<CodeMirrorSnapshot> {
   return page
     .locator(".cm-content")
@@ -593,6 +855,16 @@ async function selectedCompletionLabel(page: Page): Promise<string> {
       .first()
       .textContent()) || ""
   ).trim();
+}
+
+async function completionLabels(page: Page): Promise<string[]> {
+  return page
+    .locator(".cm-tooltip-autocomplete > ul .cm-completionLabel")
+    .evaluateAll((elements) =>
+      elements
+        .map((element) => element.textContent?.trim() || "")
+        .filter(Boolean),
+    );
 }
 
 async function assertAccessPopupScenario(
@@ -659,7 +931,7 @@ test("instant member popup keeps first option and geometry while backend warms",
   await waitForCompletionLabel(page, "Println", { timeout: 1000 });
 
   const initialBox = await popupBox(page);
-  expect(await selectedCompletionLabel(page)).toBe("Println");
+  expect(await selectedCompletionLabel(page)).toBe("Printf");
 
   await page.waitForFunction(() =>
     window.__autocompleteRequests?.some((request) => request.endsWith("fmt.")),
@@ -667,7 +939,7 @@ test("instant member popup keeps first option and geometry while backend warms",
   await page.waitForTimeout(450);
 
   const warmedBox = await popupBox(page);
-  expect(await selectedCompletionLabel(page)).toBe("Println");
+  expect(await selectedCompletionLabel(page)).toBe("Printf");
   expect(Math.abs(warmedBox.width - initialBox.width)).toBeLessThanOrEqual(5);
   expect(Math.abs(warmedBox.x - initialBox.x)).toBeLessThanOrEqual(4);
 });
@@ -974,6 +1246,7 @@ test("accepting completion with import edit keeps cursor at call site", async ({
   await page.keyboard.type(".");
   await waitForCompletionLabel(page, "Println");
 
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await page.keyboard.type('"ok"');
 
@@ -983,6 +1256,1182 @@ test("accepting completion with import edit keeps cursor at call site", async ({
   expect(importIndex).toBeGreaterThan(-1);
   expect(callIndex).toBeGreaterThan(-1);
   expect(snapshot.text).not.toContain('import "fmt""ok"');
+});
+
+test("accepting resolved LSP access member applies import edit", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "fmt.": {
+        items: [
+          {
+            label: "Println",
+            source: "lsp",
+            kind: "function",
+            insertText: "Println($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "fmt-println-resolve",
+            completionId: "completion-println",
+            stableKey: "lsp-println",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "fmt-println-resolve": {
+        insertText: "Println($0)",
+        isSnippet: true,
+        additionalTextEdits: [
+          {
+            startLine: 2,
+            startColumn: 1,
+            endLine: 2,
+            endColumn: 1,
+            text: 'import "fmt"\n\n',
+          },
+        ],
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "fmt");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Println");
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('import "fmt"');
+  await page.keyboard.type('"ok"');
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain('import "fmt"');
+  expect(snapshot.text).toContain('fmt.Println("ok")');
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("fmt-println-resolve");
+});
+
+test("accepting resolved LSP access member applies primary edit covering access expression", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            detail: 'func (from "log")',
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-resolve",
+            completionId: "completion-log-fatal",
+            stableKey: "lsp-log-fatal",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-fatal-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+        primaryTextEdit: {
+          newText: "log.Fatal($0)",
+          range: {
+            startLine: 4,
+            startColumn: 5,
+            endLine: 4,
+            endColumn: 9,
+          },
+        },
+        additionalTextEdits: [
+          {
+            startLine: 2,
+            startColumn: 1,
+            endLine: 2,
+            endColumn: 1,
+            text: 'import "log"\n\n',
+          },
+        ],
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('import "log"');
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.Fatal()");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("log-fatal-resolve");
+});
+
+test("LSP access member with ready import edit applies without resolve", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-item-edit-resolve",
+            completionId: "completion-log-fatal-item-edit",
+            stableKey: "lsp-log-fatal-item-edit",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: false,
+            additionalTextEdits: [
+              {
+                startLine: 2,
+                startColumn: 1,
+                endLine: 2,
+                endColumn: 1,
+                text: 'import "log"\n\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-fatal-item-edit-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('import "log"');
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.Fatal()");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).not.toContain("log-fatal-item-edit-resolve");
+});
+
+test("selected unresolved package member applies item import edit from import block", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content:
+      'package main\n\nimport (\n\t"context"\n\t"fmt"\n\t"strings"\n\t"time"\n\n\t"github.com/gin-gonic/gin"\n)\n\nfunc main() {\n\tlog\n}\n',
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResolveDelayByToken = {
+      "log-default-video-resolve": 2000,
+      "log-fatal-video-resolve": 2000,
+      "log-fatalf-video-resolve": 2000,
+    };
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Default",
+            source: "lsp",
+            kind: "function",
+            detail: 'func (from "log")',
+            insertText: "Default($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-default-video-resolve",
+            completionId: "completion-log-default-video",
+            stableKey: "lsp-log-default-video",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: false,
+            additionalTextEdits: [
+              {
+                startLine: 8,
+                startColumn: 1,
+                endLine: 8,
+                endColumn: 1,
+                text: '\t"log"\n',
+              },
+            ],
+          },
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            detail: 'func (from "log")',
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-video-resolve",
+            completionId: "completion-log-fatal-video",
+            stableKey: "lsp-log-fatal-video",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: false,
+            additionalTextEdits: [
+              {
+                startLine: 8,
+                startColumn: 1,
+                endLine: 8,
+                endColumn: 1,
+                text: '\t"log"\n',
+              },
+            ],
+          },
+          {
+            label: "Fatalf",
+            source: "lsp",
+            kind: "function",
+            detail: 'func (from "log")',
+            insertText: "Fatalf($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatalf-video-resolve",
+            completionId: "completion-log-fatalf-video",
+            stableKey: "lsp-log-fatalf-video",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: false,
+            additionalTextEdits: [
+              {
+                startLine: 8,
+                startColumn: 1,
+                endLine: 8,
+                endColumn: 1,
+                text: '\t"log"\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-default-video-resolve": {
+        insertText: "Default($0)",
+        isSnippet: true,
+      },
+      "log-fatal-video-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+      },
+      "log-fatalf-video-resolve": {
+        insertText: "Fatalf($0)",
+        isSnippet: true,
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  expect(await selectedCompletionLabel(page)).toBe("Default");
+  await page.keyboard.press("ArrowDown");
+  expect(await selectedCompletionLabel(page)).toBe("Fatal");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('"log"');
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.Fatal()");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).not.toContain("log-fatal-video-resolve");
+});
+
+test("Go access member applies gopls import-block splice edit", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content:
+      'package main\n\nimport (\n    "fmt"\n)\n\nfunc main() {\n    log\n}\n',
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            completionId: "completion-log-fatal-gopls-splice",
+            stableKey: "lsp-log-fatal-gopls-splice",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: false,
+            additionalTextEdits: [
+              {
+                startLine: 4,
+                startColumn: 9,
+                endLine: 4,
+                endColumn: 9,
+                text: '"\n\t"log',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('"log"');
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain('"fmt"');
+  expect(snapshot.text).toContain('"log"');
+  expect(snapshot.text).toContain("log.Fatal()");
+  expect(await latestCompletionApplyReject(page)).toBeNull();
+});
+
+test("resolved additional edit supersedes item edit at the same range", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-supersede-resolve",
+            completionId: "completion-log-fatal-supersede",
+            stableKey: "lsp-log-fatal-supersede",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: true,
+            additionalTextEdits: [
+              {
+                startLine: 2,
+                startColumn: 1,
+                endLine: 2,
+                endColumn: 1,
+                text: 'import "wrong/log"\n\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-fatal-supersede-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+        additionalTextEdits: [
+          {
+            startLine: 2,
+            startColumn: 1,
+            endLine: 2,
+            endColumn: 1,
+            text: 'import "log"\n\n',
+          },
+        ],
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('import "log"');
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.Fatal()");
+  expect(snapshot.text).not.toContain("wrong/log");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("log-fatal-supersede-resolve");
+});
+
+test("accepting snippet access member with import edit keeps call-site cursor", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content:
+      'package main\n\nimport (\n\t"context"\n\t"fmt"\n\t"strings"\n\t"time"\n\n\t"github.com/gin-gonic/gin"\n)\n\nfunc main() {\n\tlog\n}\n',
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            additionalTextEdits: [
+              {
+                startLine: 8,
+                startColumn: 1,
+                endLine: 8,
+                endColumn: 1,
+                text: '\t"log"\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('"log"');
+  await page.keyboard.type('"boom"');
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain('"log"');
+  expect(snapshot.text).toContain('log.Fatal("boom")');
+  expect(snapshot.text).not.toContain(
+    'import (\n\t"context"\n\t"fmt"\n\t"strings"\n\t"time"\n\n\t"github.com/gin-gonic/gin"\n)\n\nfunc main() {\n\tlog\n}',
+  );
+});
+
+test("plain-safe access member with metadata resolve preserves receiver without resolve", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "context.": {
+        items: [
+          {
+            label: "WithCancel",
+            source: "lsp",
+            kind: "function",
+            accessMemberAuthoritative: true,
+            resolveToken: "context-withcancel-resolve",
+            completionId: "completion-withcancel",
+            stableKey: "lsp-withcancel",
+            autoImportAllowed: false,
+            requiresResolveBeforeApply: false,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {};
+  });
+  await focusRenderedTextEnd(page, "context");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "WithCancel");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text, { timeout: 3000 })
+    .toContain("context.WithCancel");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).not.toContain("context-withcancel-resolve");
+});
+
+test("bare import-required LSP completion applies resolved import edit", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    l\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      lo: {
+        items: [
+          {
+            label: "log",
+            source: "lsp",
+            kind: "package",
+            insertText: "log",
+            resolveToken: "log-package-resolve",
+            completionId: "completion-log-package",
+            stableKey: "lsp-log-package",
+            requiresResolveBeforeApply: true,
+            requiresSafeEditsBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-package-resolve": {
+        insertText: "log",
+        additionalTextEdits: [
+          {
+            startLine: 2,
+            startColumn: 1,
+            endLine: 2,
+            endColumn: 1,
+            text: 'import "log"\n\n',
+          },
+        ],
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "l");
+
+  await page.keyboard.type("o");
+  await waitForCompletionLabel(page, "log");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text)
+    .toContain('import "log"');
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("    log\n");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("log-package-resolve");
+});
+
+test("command-only resolve completion does not plain-insert", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    f\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      fo: {
+        items: [
+          {
+            label: "formatValue",
+            source: "lsp",
+            kind: "function",
+            insertText: "formatValue",
+            resolveToken: "format-command-resolve",
+            completionId: "completion-format-command",
+            stableKey: "lsp-format-command",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "format-command-resolve": {
+        insertText: "formatValue",
+        command: { title: "apply import", command: "applyImport" },
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "f");
+
+  await page.keyboard.type("o");
+  await waitForCompletionLabel(page, "formatValue");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(250);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("    fo\n");
+  expect(snapshot.text).not.toContain("formatValue");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("format-command-resolve");
+  await expect
+    .poll(() => latestCompletionApplyReject(page))
+    .toMatchObject({
+      reason: "missing-additional-safe-edits",
+      completionId: "completion-format-command",
+      resolveToken: "format-command-resolve",
+    });
+});
+
+test("plain-safe non-access completion still inserts on resolve timeout", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc helper() {}\n\nfunc main() {\n    h\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResolveDelayByToken = {
+      "helper-timeout-resolve": 2000,
+    };
+    window.__autocompleteResponseBySuffix = {
+      he: {
+        items: [
+          {
+            label: "helper",
+            source: "lsp",
+            kind: "function",
+            insertText: "helper()",
+            resolveToken: "helper-timeout-resolve",
+            completionId: "completion-helper-timeout",
+            stableKey: "lsp-helper-timeout",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "helper-timeout-resolve": {
+        insertText: "helper()",
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "h");
+
+  await page.keyboard.type("e");
+  await waitForCompletionLabel(page, "helper");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text, { timeout: 2500 })
+    .toContain("helper()");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("helper-timeout-resolve");
+});
+
+test("misflagged LSP package completion without safe edits does not plain-insert", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    l\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResolveDelayByToken = {
+      "log-package-misflag-resolve": 2000,
+    };
+    window.__autocompleteResponseBySuffix = {
+      lo: {
+        items: [
+          {
+            label: "log",
+            source: "lsp",
+            kind: "package",
+            insertText: "log",
+            resolveToken: "log-package-misflag-resolve",
+            completionId: "completion-log-package-misflag",
+            stableKey: "lsp-log-package-misflag",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-package-misflag-resolve": {
+        insertText: "log",
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "l");
+
+  await page.keyboard.type("o");
+  await waitForCompletionLabel(page, "log");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1600);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("    lo\n");
+  expect(snapshot.text).not.toContain('import "log"');
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("log-package-misflag-resolve");
+});
+
+test("import-required access member does not plain-insert on resolve timeout", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResolveDelayByToken = {
+      "log-fatal-timeout-resolve": 2000,
+    };
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-timeout-resolve",
+            completionId: "completion-log-fatal-timeout",
+            stableKey: "lsp-log-fatal-timeout",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-fatal-timeout-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1600);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.");
+  expect(snapshot.text).not.toContain("log.Fatal");
+  expect(snapshot.text).not.toContain('import "log"');
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("log-fatal-timeout-resolve");
+  await expect
+    .poll(() => latestCompletionApplyReject(page))
+    .toMatchObject({
+      reason: "resolve-timeout-or-empty",
+      completionId: "completion-log-fatal-timeout",
+      resolveToken: "log-fatal-timeout-resolve",
+    });
+});
+
+test("import-required access member rejects resolved primary-only edit without import edit", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-primary-only-resolve",
+            completionId: "completion-log-fatal-primary-only",
+            stableKey: "lsp-log-fatal-primary-only",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: true,
+            primaryTextEdit: {
+              newText: "log.Fatal($0)",
+              range: {
+                startLine: 4,
+                startColumn: 5,
+                endLine: 4,
+                endColumn: 9,
+              },
+            },
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-fatal-primary-only-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+        primaryTextEdit: {
+          newText: "log.Fatal($0)",
+          range: {
+            startLine: 4,
+            startColumn: 5,
+            endLine: 4,
+            endColumn: 9,
+          },
+        },
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(500);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.");
+  expect(snapshot.text).not.toContain("log.Fatal");
+  expect(snapshot.text).not.toContain('import "log"');
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("log-fatal-primary-only-resolve");
+  await expect
+    .poll(() => latestCompletionApplyReject(page))
+    .toMatchObject({
+      reason: "missing-additional-safe-edits",
+      completionId: "completion-log-fatal-primary-only",
+      resolveToken: "log-fatal-primary-only-resolve",
+    });
+});
+
+test("import-required access member rejects unsafe import edit", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            completionId: "completion-log-fatal-unsafe-import",
+            stableKey: "lsp-log-fatal-unsafe-import",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: false,
+            additionalTextEdits: [
+              {
+                startLine: 4,
+                startColumn: 5,
+                endLine: 4,
+                endColumn: 5,
+                text: 'fmt.Println("not an import")\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(250);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.");
+  expect(snapshot.text).not.toContain("log.Fatal");
+  expect(snapshot.text).not.toContain("not an import");
+  await expect
+    .poll(() => latestCompletionApplyReject(page))
+    .toMatchObject({
+      reason: "unsafe-import-edit",
+      completionId: "completion-log-fatal-unsafe-import",
+    });
+});
+
+test("plain-safe access member still inserts on resolve timeout", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResolveDelayByToken = {
+      "context-withcancel-timeout-resolve": 2000,
+    };
+    window.__autocompleteResponseBySuffix = {
+      "context.": {
+        items: [
+          {
+            label: "WithCancel",
+            source: "lsp",
+            kind: "function",
+            insertText: "WithCancel($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "context-withcancel-timeout-resolve",
+            completionId: "completion-withcancel-timeout",
+            stableKey: "lsp-withcancel-timeout",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "context-withcancel-timeout-resolve": {
+        insertText: "WithCancel($0)",
+        isSnippet: true,
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "context");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "WithCancel");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text, { timeout: 2500 })
+    .toContain("context.WithCancel()");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("context-withcancel-timeout-resolve");
+});
+
+test("accepting resolved access member falls back when primary edit starts before receiver", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    x := log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "x := log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "wide-log-fatal-resolve",
+            completionId: "completion-wide-log-fatal",
+            stableKey: "lsp-wide-log-fatal",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "wide-log-fatal-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+        primaryTextEdit: {
+          newText: "x := log.Fatal($0)",
+          range: {
+            startLine: 4,
+            startColumn: 5,
+            endLine: 4,
+            endColumn: 14,
+          },
+        },
+      },
+    };
+  });
+  await focusRenderedTextEnd(page, "log");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await page.waitForTimeout(250);
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("x := log.Fatal()");
+  expect(snapshot.text).not.toContain("x := x := log.Fatal");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("wide-log-fatal-resolve");
+});
+
+test("accepting resolved access member rejects primary edit after cursor", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log.keep\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "suffix-log-fatal-resolve",
+            completionId: "completion-suffix-log-fatal",
+            stableKey: "lsp-suffix-log-fatal",
+            requiresResolveBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "suffix-log-fatal-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+        primaryTextEdit: {
+          newText: "log.Fatal($0)",
+          range: {
+            startLine: 4,
+            startColumn: 5,
+            endLine: 4,
+            endColumn: 13,
+          },
+        },
+      },
+    };
+  });
+  await moveCursorAfterText(page, "log.");
+  await startCompletionExplicitly(page);
+
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await page.waitForTimeout(250);
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("log.keep");
+  expect(snapshot.text).not.toContain("log.Fatal");
+  expect(
+    await page.evaluate(() => window.__autocompleteResolveRequests),
+  ).toContain("suffix-log-fatal-resolve");
+  await expect
+    .poll(() => latestCompletionApplyReject(page))
+    .toMatchObject({
+      reason: "unsafe-primary-edit",
+      completionId: "completion-suffix-log-fatal",
+      resolveToken: "suffix-log-fatal-resolve",
+    });
 });
 
 test("accepting function snippet does not duplicate braces", async ({
@@ -1152,6 +2601,56 @@ test("fast typing after dot restarts pending member autocomplete", async ({
   await waitForCompletionLabel(page, "Println");
 });
 
+test("enter during pending access completion accepts first resolved member", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fmt");
+  await page.evaluate(() => {
+    window.__autocompleteDelayBySuffix = { "fmt.": 350 };
+    window.__autocompleteRequests = [];
+    window.__autocompleteResponseBySuffix = {
+      "fmt.": {
+        items: [
+          {
+            label: "Println",
+            source: "lsp",
+            kind: "function",
+            insertText: "Println($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            additionalTextEdits: [
+              {
+                startLine: 2,
+                startColumn: 1,
+                endLine: 2,
+                endColumn: 1,
+                text: 'import "fmt"\n\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text, { timeout: 2500 })
+    .toContain("fmt.Println()");
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain('import "fmt"');
+});
+
 test("active member popup stays open while filtering typed prefix", async ({
   page,
 }) => {
@@ -1182,6 +2681,530 @@ test("active member popup stays open while filtering typed prefix", async ({
       ) || [],
   );
   expect(memberPrefixRequests).toEqual([]);
+});
+
+test("filtered unresolved access member resolves with current document version and applies import edit", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "log");
+  await page.evaluate(() => {
+    window.__autocompleteResolveRequests = [];
+    window.__autocompleteResolveRequestLog = [];
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            resolveToken: "log-fatal-filtered-resolve",
+            completionId: "completion-log-fatal-filtered",
+            stableKey: "lsp-log-fatal-filtered",
+            autoImportAllowed: true,
+            requiresResolveBeforeApply: true,
+            requiresSafeEditsBeforeApply: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+    window.__autocompleteResolveByToken = {
+      "log-fatal-filtered-resolve": {
+        insertText: "Fatal($0)",
+        isSnippet: true,
+        additionalTextEdits: [
+          {
+            startLine: 2,
+            startColumn: 1,
+            endLine: 2,
+            endColumn: 1,
+            text: 'import "log"\n\n',
+          },
+        ],
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.type("Fa", { delay: 5 });
+  await waitForCompletionLabel(page, "Fatal");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await editorSnapshot(page)).text, { timeout: 2500 })
+    .toContain("log.Fatal()");
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain('import "log"');
+
+  const resolveLog = await page.evaluate(
+    () => window.__autocompleteResolveRequestLog || [],
+  );
+  expect(resolveLog).toHaveLength(1);
+  expect(resolveLog[0]).toMatchObject({
+    resolveToken: "log-fatal-filtered-resolve",
+    completionId: "completion-log-fatal-filtered",
+    stableKey: "lsp-log-fatal-filtered",
+  });
+  expect(Number(resolveLog[0].documentVersion)).toBeGreaterThan(0);
+});
+
+test("complex receiver access stays in member mode while typing prefix", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    factory()\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "factory");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+    window.__autocompleteDelayBySuffix = {};
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Build");
+  await page.keyboard.type("B", { delay: 5 });
+  await waitForCompletionLabel(page, "Build");
+  await expectNoCompletionLabel(page, "Close");
+
+  const requests = await page.evaluate(
+    () => window.__autocompleteRequestLog || [],
+  );
+  expect(
+    requests.some(
+      (entry) =>
+        entry.textBefore.endsWith("factory().") &&
+        entry.completionTriggerKind === 2 &&
+        entry.accessOperator === ".",
+    ),
+    JSON.stringify(requests),
+  ).toBe(true);
+  expect(
+    requests.filter((entry) => entry.textBefore.endsWith("factory().B")),
+  ).toEqual([]);
+});
+
+test("bare access popup renders LSP members alphabetically without CodeMirror resorting", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    alpha\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "alpha");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Alpha");
+
+  expect(await completionLabels(page)).toEqual([
+    "Alpha",
+    "beta2",
+    "Beta10",
+    "Zeta",
+  ]);
+
+  const request = await page.evaluate(
+    () =>
+      window.__autocompleteRequestLog?.find((entry) =>
+        entry.textBefore.endsWith("alpha."),
+      ) ?? null,
+  );
+  expect(request).toMatchObject({
+    completionTriggerKind: 2,
+    triggerChar: ".",
+    accessOperator: ".",
+    lspStatus: "ok",
+    isIncomplete: false,
+    itemCount: 4,
+  });
+});
+
+test("incomplete bare member popup re-requests typed continuation", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "context");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+    window.__autocompleteResponseBySuffix = {
+      "context.": {
+        items: [{ label: "WithCancel", source: "lsp", kind: "function" }],
+        lspStatus: "ok",
+        isIncomplete: true,
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "WithCancel");
+  await page.keyboard.type("B", { delay: 5 });
+  await waitForCompletionLabel(page, "Background");
+
+  const requests = await page.evaluate(
+    () => window.__autocompleteRequestLog || [],
+  );
+  expect(
+    requests.some(
+      (entry) =>
+        entry.textBefore.endsWith("context.") &&
+        entry.completionTriggerKind === 2 &&
+        entry.isIncomplete,
+    ),
+  ).toBe(true);
+  expect(
+    requests.some(
+      (entry) =>
+        entry.textBefore.endsWith("context.B") &&
+        entry.completionTriggerKind === 3,
+    ),
+    JSON.stringify(requests),
+  ).toBe(true);
+});
+
+test("bare member popup retries transient LSP timeout once before showing unavailable", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "context");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+    window.__autocompleteResponseSequenceBySuffix = {
+      "context.": [
+        { items: [], lspStatus: "timeout", isIncomplete: false },
+        {
+          items: [
+            { label: "WithCancel", source: "lsp", kind: "function" },
+            { label: "NewRequest", source: "lsp", kind: "function" },
+          ],
+          lspStatus: "ok",
+          isIncomplete: false,
+        },
+      ],
+    };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "NewRequest", { timeout: 5000 });
+  await expectNoCompletionLabel(page, "Completion unavailable");
+
+  const requests = await page.evaluate(
+    () => window.__autocompleteRequestLog || [],
+  );
+  const contextRequests = requests.filter((entry) =>
+    entry.textBefore.endsWith("context."),
+  );
+  expect(contextRequests.map((entry) => entry.lspStatus).slice(0, 2)).toEqual([
+    "timeout",
+    "ok",
+  ]);
+});
+
+test("access response with ok status but no authoritative members shows unavailable", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "context");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+    window.__autocompleteResponseBySuffix = {
+      "context.": {
+        items: [
+          {
+            label: "GlobalFunction",
+            source: "lsp",
+            kind: "function",
+            accessMemberAuthoritative: false,
+          },
+        ],
+        lspStatus: "ok",
+        isIncomplete: false,
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Completion unavailable");
+  await expectNoCompletionLabel(page, "GlobalFunction");
+
+  const requestCountBeforeEnter = await page.evaluate(
+    () => window.__autocompleteRequestLog?.length || 0,
+  );
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(250);
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).not.toContain("GlobalFunction");
+  expect(
+    await page.evaluate(() => window.__autocompleteRequestLog?.length || 0),
+  ).toBe(requestCountBeforeEnter);
+});
+
+test("empty LSP member response does not fabricate unknown library members", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/index.ts`,
+    language: "typescript",
+    content: "axios\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "axios");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+    window.__autocompleteResponseBySuffix = {
+      "axios.": { items: [], lspStatus: "empty", isIncomplete: false },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "No LSP members");
+  await expectNoCompletionLabel(page, "get");
+
+  const requestCountBeforeEnter = await page.evaluate(
+    () => window.__autocompleteRequestLog?.length || 0,
+  );
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(250);
+  expect(
+    await page.evaluate(() => window.__autocompleteRequestLog?.length || 0),
+  ).toBe(requestCountBeforeEnter);
+
+  const request = await page.evaluate(
+    () =>
+      window.__autocompleteRequestLog?.find((entry) =>
+        entry.textBefore.endsWith("axios."),
+      ) ?? null,
+  );
+  expect(request).toMatchObject({
+    completionTriggerKind: 2,
+    triggerChar: ".",
+    accessOperator: ".",
+    lspStatus: "empty",
+    isIncomplete: false,
+    itemCount: 0,
+  });
+});
+
+test("enter on loading access members does not arm hidden accept", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/index.ts`,
+    language: "typescript",
+    content: "axios\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "axios");
+  await page.evaluate(() => {
+    window.__autocompleteDelayBySuffix = { "axios.": 500 };
+    window.__autocompleteResponseBySuffix = {
+      "axios.": {
+        items: [
+          {
+            label: "get",
+            source: "lsp",
+            kind: "function",
+            accessMemberAuthoritative: true,
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Loading members...");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(800);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).not.toContain("axios.get");
+});
+
+test("escape clears deferred pending access accept", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "log");
+  await page.evaluate(() => {
+    window.__autocompleteDelayBySuffix = { "log.": 450 };
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            additionalTextEdits: [
+              {
+                startLine: 2,
+                startColumn: 1,
+                endLine: 2,
+                endColumn: 1,
+                text: 'import "log"\n\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(800);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).not.toContain("log.Fatal");
+  expect(snapshot.text).not.toContain('import "log"');
+});
+
+test("blur clears deferred pending access accept", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    log\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "log");
+  await page.evaluate(() => {
+    let blurTarget = document.getElementById("autocomplete-blur-target");
+    if (!blurTarget) {
+      blurTarget = document.createElement("button");
+      blurTarget.id = "autocomplete-blur-target";
+      blurTarget.textContent = "blur";
+      blurTarget.style.position = "fixed";
+      blurTarget.style.left = "4px";
+      blurTarget.style.top = "4px";
+      document.body.appendChild(blurTarget);
+    }
+    window.__autocompleteDelayBySuffix = { "log.": 450 };
+    window.__autocompleteResponseBySuffix = {
+      "log.": {
+        items: [
+          {
+            label: "Fatal",
+            source: "lsp",
+            kind: "function",
+            insertText: "Fatal($0)",
+            isSnippet: true,
+            accessMemberAuthoritative: true,
+            additionalTextEdits: [
+              {
+                startLine: 2,
+                startColumn: 1,
+                endLine: 2,
+                endColumn: 1,
+                text: 'import "log"\n\n',
+              },
+            ],
+          },
+        ],
+        lspStatus: "ok",
+      },
+    };
+  });
+
+  await page.keyboard.type(".");
+  await page.keyboard.press("Enter");
+  await page.locator("#autocomplete-blur-target").focus();
+  await page.waitForTimeout(800);
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).not.toContain("log.Fatal");
+  expect(snapshot.text).not.toContain('import "log"');
+});
+
+test("numeric and comment suffixes do not start access member popup", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    1\n    // context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "1");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteRequestLog = [];
+  });
+
+  await page.keyboard.type(".");
+  await expectNoCompletionLabel(page, "Loading members...");
+  await expectNoCompletionLabel(page, "No LSP members");
+
+  await focusRenderedTextEnd(page, "// context");
+  await page.keyboard.type(".");
+  await expectNoCompletionLabel(page, "Loading members...");
+  await expectNoCompletionLabel(page, "No LSP members");
+
+  const requests = await page.evaluate(
+    () => window.__autocompleteRequestLog || [],
+  );
+  expect(
+    requests.filter(
+      (entry) =>
+        entry.textBefore.endsWith("1.") ||
+        entry.textBefore.endsWith("// context."),
+    ),
+  ).toEqual([]);
 });
 
 test("instant keyword popup appears before delayed backend", async ({
@@ -1298,6 +3321,31 @@ test("static access restarts popup immediately for PHP class alias", async ({
       .locator(".cm-completionLabel", { hasText: "now" })
       .first(),
   ).toBeVisible();
+});
+
+test("arrow access works for pointer-style member operators", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.cpp`,
+    language: "cpp",
+    content: "int main() {\n    ptr\n}\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "ptr", "->", ["begin", "end"]);
+});
+
+test("colon access works for Lua method operators", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.lua`,
+    language: "lua",
+    content: "local player = {}\nplayer\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "player", ":", [
+    "MoveTo",
+    "Spawn",
+  ]);
 });
 
 test("unresolved package member popup appears immediately after dot", async ({

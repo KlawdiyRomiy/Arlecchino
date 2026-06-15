@@ -70,7 +70,7 @@ func TestDependencyCatalog_GoStdlibSkipsInternalPackages(t *testing.T) {
 		if name != "go" || len(args) != 2 || args[0] != "list" || args[1] != "std" {
 			t.Fatalf("unexpected command: %s %#v", name, args)
 		}
-		return []byte("crypto/internal/fips140deps/time\nfmt\ninternal/testenv\ntime\nvendor/foo\n"), nil
+		return []byte("crypto/internal/fips140deps/time\ncrypto/sha256\nfmt\ninternal/testenv\nlog\ntime\nvendor/foo\n"), nil
 	}
 
 	suggestions := catalog.Suggestions("go", "time")
@@ -86,6 +86,12 @@ func TestDependencyCatalog_GoStdlibSkipsInternalPackages(t *testing.T) {
 	}
 	if got := catalog.ResolveLibraryByOwner("go", "fmt"); got != "fmt" {
 		t.Fatalf("expected fmt owner to resolve to public stdlib package, got %q", got)
+	}
+	if got := catalog.ResolveLibraryByOwner("go", "log"); got != "log" {
+		t.Fatalf("expected log owner to resolve to public stdlib package, got %q", got)
+	}
+	if got := catalog.ResolveLibraryByOwner("go", "sha256"); got != "crypto/sha256" {
+		t.Fatalf("expected sha256 owner to resolve to crypto/sha256, got %q", got)
 	}
 }
 
@@ -105,5 +111,8 @@ func TestDependencyCatalog_ResolveAmbiguousSuffixReturnsEmpty(t *testing.T) {
 
 	if got := catalog.ResolveLibraryByOwner("go", "client"); got != "" {
 		t.Fatalf("expected ambiguous owner to stay unresolved, got %q", got)
+	}
+	if _, status := catalog.ResolveLibraryByOwnerStatus("go", "client"); status != dependencyOwnerAmbiguous {
+		t.Fatalf("expected ambiguous owner status, got %v", status)
 	}
 }

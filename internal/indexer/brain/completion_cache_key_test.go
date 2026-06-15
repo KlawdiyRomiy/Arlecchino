@@ -20,14 +20,14 @@ func TestCompletionCache_KeyIncludesAccessChainAndContextFlags(t *testing.T) {
 	ctxB := ctxA
 	ctxB.AccessChain = "Auth::"
 
-	cache.Set(ctxA, []Suggestion{{Text: "get"}})
-	cache.Set(ctxB, []Suggestion{{Text: "guard"}})
+	cache.Set(ctxA, []Suggestion{{Text: "get"}}, false)
+	cache.Set(ctxB, []Suggestion{{Text: "guard"}}, false)
 
-	a, ok := cache.Get(ctxA)
+	a, _, ok := cache.Get(ctxA)
 	if !ok || len(a) != 1 || a[0].Text != "get" {
 		t.Fatalf("expected cache hit for ctxA")
 	}
-	b, ok := cache.Get(ctxB)
+	b, _, ok := cache.Get(ctxB)
 	if !ok || len(b) != 1 || b[0].Text != "guard" {
 		t.Fatalf("expected cache hit for ctxB")
 	}
@@ -36,18 +36,18 @@ func TestCompletionCache_KeyIncludesAccessChainAndContextFlags(t *testing.T) {
 	ctxC := ctxA
 	ctxC.AccessChain = ""
 	ctxC.InImport = true
-	cache.Set(ctxC, []Suggestion{{Text: "import_path"}})
+	cache.Set(ctxC, []Suggestion{{Text: "import_path"}}, false)
 
 	ctxD := ctxA
 	ctxD.InString = true
 	ctxD.StringContextType = "path"
-	cache.Set(ctxD, []Suggestion{{Text: "string_path"}})
+	cache.Set(ctxD, []Suggestion{{Text: "string_path"}}, false)
 
-	c, ok := cache.Get(ctxC)
+	c, _, ok := cache.Get(ctxC)
 	if !ok || len(c) != 1 || c[0].Text != "import_path" {
 		t.Fatalf("expected cache hit for ctxC")
 	}
-	d, ok := cache.Get(ctxD)
+	d, _, ok := cache.Get(ctxD)
 	if !ok || len(d) != 1 || d[0].Text != "string_path" {
 		t.Fatalf("expected cache hit for ctxD")
 	}
@@ -66,14 +66,14 @@ func TestCompletionCache_KeyIncludesImportsHash(t *testing.T) {
 	ctxB := ctxA
 	ctxB.ImportsHash = "imports-b"
 
-	cache.Set(ctxA, []Suggestion{{Text: "Println"}})
-	cache.Set(ctxB, []Suggestion{{Text: "Printf"}})
+	cache.Set(ctxA, []Suggestion{{Text: "Println"}}, false)
+	cache.Set(ctxB, []Suggestion{{Text: "Printf"}}, false)
 
-	a, ok := cache.Get(ctxA)
+	a, _, ok := cache.Get(ctxA)
 	if !ok || len(a) != 1 || a[0].Text != "Println" {
 		t.Fatalf("expected cache hit for ctxA")
 	}
-	b, ok := cache.Get(ctxB)
+	b, _, ok := cache.Get(ctxB)
 	if !ok || len(b) != 1 || b[0].Text != "Printf" {
 		t.Fatalf("expected cache hit for ctxB")
 	}
@@ -94,14 +94,14 @@ func TestCompletionCache_KeyIncludesDocumentVersion(t *testing.T) {
 	ctxB := ctxA
 	ctxB.DocumentVersion = 2
 
-	cache.Set(ctxA, []Suggestion{{Text: "ID"}})
-	cache.Set(ctxB, []Suggestion{{Text: "DisplayName"}})
+	cache.Set(ctxA, []Suggestion{{Text: "ID"}}, false)
+	cache.Set(ctxB, []Suggestion{{Text: "DisplayName"}}, false)
 
-	a, ok := cache.Get(ctxA)
+	a, _, ok := cache.Get(ctxA)
 	if !ok || len(a) != 1 || a[0].Text != "ID" {
 		t.Fatalf("expected cache hit for ctxA")
 	}
-	b, ok := cache.Get(ctxB)
+	b, _, ok := cache.Get(ctxB)
 	if !ok || len(b) != 1 || b[0].Text != "DisplayName" {
 		t.Fatalf("expected cache hit for ctxB")
 	}

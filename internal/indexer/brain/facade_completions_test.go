@@ -23,5 +23,8 @@ func TestFacadeMethods_InsertTextHasNoSnippetPlaceholders(t *testing.T) {
 		if strings.Contains(s.InsertText, "$") {
 			t.Fatalf("InsertText must not contain snippet placeholders, got %q", s.InsertText)
 		}
+		if s.ProofKind != "self-static-member" || s.Namespace != "Route" {
+			t.Fatalf("facade access method must carry static-member proof, got namespace=%q proof=%q", s.Namespace, s.ProofKind)
+		}
 	}
 }

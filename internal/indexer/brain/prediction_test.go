@@ -4,6 +4,7 @@ import (
 	"arlecchino/internal/indexer/core"
 	"arlecchino/internal/indexer/lsp"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -396,6 +397,212 @@ func TestShouldSkipLSP(t *testing.T) {
 	}
 }
 
+func TestLSPCompletionTrigger_TreatsBareAccessOperatorAsAccessMemberIntent(t *testing.T) {
+	trigger := lspCompletionTrigger(CompletionContext{
+		Language:       "go",
+		AccessOperator: ".",
+	})
+
+	if trigger.TriggerKind != 2 {
+		t.Fatalf("TriggerKind = %d, want 2", trigger.TriggerKind)
+	}
+	if trigger.TriggerCharacter != "." {
+		t.Fatalf("TriggerCharacter = %q, want .", trigger.TriggerCharacter)
+	}
+	if !trigger.RetryInvokedOnEmpty {
+		t.Fatal("expected retry on empty for access operator")
+	}
+	if !trigger.RetryInvokedOnIncomplete {
+		t.Fatal("expected retry on incomplete for access operator")
+	}
+	if !trigger.AccessMemberIntent {
+		t.Fatal("expected access member intent")
+	}
+}
+
+func TestLSPCompletionTriggerAttemptReportsInvokedFallback(t *testing.T) {
+	got := lspCompletionTriggerAttempt(lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "incomplete",
+	})
+	if got != "invoked-fallback:incomplete" {
+		t.Fatalf("trigger attempt = %q, want invoked-fallback:incomplete", got)
+	}
+
+	got = lspCompletionTriggerAttempt(lsp.CompletionResponse{
+		InvokedFallbackRejected:       true,
+		InvokedFallbackRejectedReason: "disjoint",
+	})
+	if got != "invoked-fallback-rejected:disjoint" {
+		t.Fatalf("trigger attempt = %q, want invoked-fallback-rejected:disjoint", got)
+	}
+}
+
+func TestLSPCompletionNoItemsStatusPreservesTriggerError(t *testing.T) {
+	if got := lspCompletionNoItemsStatus(lsp.CompletionResponse{}); got != "empty" {
+		t.Fatalf("status = %q, want empty", got)
+	}
+	if got := lspCompletionNoItemsStatus(lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "empty",
+	}); got != "empty" {
+		t.Fatalf("status = %q, want empty", got)
+	}
+	if got := lspCompletionNoItemsStatus(lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "error",
+	}); got != "error" {
+		t.Fatalf("status = %q, want error", got)
+	}
+}
+
+func TestLSPCompletionProofKindMarksAccessMembers(t *testing.T) {
+	if got := lspCompletionProofKind(nil, "", "lsp-member"); got != "lsp-member" {
+		t.Fatalf("proof kind = %q, want lsp-member", got)
+	}
+	if got := lspCompletionProofKind([]core.TextEdit{{Text: `import "log"`}}, "resolve-token", "lsp-member"); got != "lsp-member" {
+		t.Fatalf("access proof with edits = %q, want lsp-member", got)
+	}
+	if got := lspCompletionProofKind([]core.TextEdit{{Text: `import "log"`}}, "resolve-token", "lsp-fallback-member"); got != "lsp-fallback-member" {
+		t.Fatalf("fallback access proof with edits = %q, want lsp-fallback-member", got)
+	}
+	if got := completionProofTier(Suggestion{Source: core.SourceLSP, ProofKind: "lsp-member"}); got <= completionProofTier(Suggestion{Source: core.SourceIndex, ProofKind: "receiver-member"}) {
+		t.Fatalf("expected lsp-member tier to outrank receiver-member index proof")
+	}
+}
+
+func TestLSPCompletionAccessMemberProofRequiresDirectOrValidatedFallback(t *testing.T) {
+	ctx := CompletionContext{Language: "go", AccessOperator: "."}
+	if !lspCompletionAccessMemberProof(ctx, lsp.CompletionResponse{}) {
+		t.Fatal("expected direct access LSP response to prove member list")
+	}
+	if !lspCompletionAccessMemberProof(ctx, lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "incomplete",
+	}) {
+		t.Fatal("expected accepted incomplete fallback to prove member list")
+	}
+	if !lspCompletionAccessMemberProof(ctx, lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "empty",
+	}) {
+		t.Fatal("expected empty invoked fallback with items to prove a fallback member list")
+	}
+	if !lspCompletionAccessMemberProof(ctx, lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "unsupported-trigger",
+	}) {
+		t.Fatal("expected unsupported-trigger fallback to prove a fallback member list")
+	}
+	if got := lspCompletionAccessMemberProofKind(ctx, lsp.CompletionResponse{
+		UsedInvokedFallback:   true,
+		InvokedFallbackReason: "unsupported-trigger",
+	}); got != "lsp-fallback-member" {
+		t.Fatalf("unsupported-trigger proof kind = %q, want lsp-fallback-member", got)
+	}
+}
+
+func TestCompletionMaxSuggestions_RaisesBareAccessCapToRenderLimit(t *testing.T) {
+	if got := completionMaxSuggestions(CompletionContext{AccessOperator: "."}, 50); got != accessCompletionMaxItems {
+		t.Fatalf("completionMaxSuggestions(access) = %d, want %d", got, accessCompletionMaxItems)
+	}
+	if got := completionMaxSuggestions(CompletionContext{Prefix: "N", AccessOperator: "."}, 50); got != 50 {
+		t.Fatalf("completionMaxSuggestions(typed access) = %d, want configured cap", got)
+	}
+}
+
+func TestLimitCompletionSuggestions_PreservesLSPBeforeNonLSPForBareAccess(t *testing.T) {
+	suggestions := make([]Suggestion, 0, accessCompletionMaxItems+3)
+	for i := 0; i < accessCompletionMaxItems+2; i++ {
+		suggestions = append(suggestions, Suggestion{
+			Text:   fmt.Sprintf("Member%d", i),
+			Source: core.SourceLSP,
+		})
+	}
+	suggestions = append(suggestions, Suggestion{Text: "LibraryNoise", Source: core.SourceLibrary})
+
+	got, clipped := limitCompletionSuggestions(CompletionContext{AccessOperator: "."}, suggestions, accessCompletionMaxItems)
+	if !clipped {
+		t.Fatal("expected bare access suggestions to be clipped at render limit")
+	}
+	if len(got) != accessCompletionMaxItems {
+		t.Fatalf("limited suggestions = %d, want %d", len(got), accessCompletionMaxItems)
+	}
+	for _, suggestion := range got {
+		if suggestion.Source != core.SourceLSP {
+			t.Fatalf("unexpected non-LSP suggestion preserved before LSP cap: %+v", suggestion)
+		}
+	}
+}
+
+func TestIndexAccessProofKindMarksUnresolvedProjectReceiver(t *testing.T) {
+	got := indexAccessProofKind(
+		CompletionContext{Language: "go", AccessChain: "router.", IsMethodCall: true},
+		core.Symbol{
+			Name:      "Get",
+			Kind:      core.SymbolKindFunction,
+			Source:    core.SourceIndex,
+			Namespace: "router",
+		},
+		"router",
+		"",
+	)
+	if got != "receiver-member" {
+		t.Fatalf("proof kind = %q, want receiver-member", got)
+	}
+}
+
+func TestLSPCompletionAllowsExpiredContextItemsOnlyForFallbackTimeout(t *testing.T) {
+	if lspCompletionAllowsExpiredContextItems(lsp.CompletionResponse{
+		InvokedFallbackRejected:       true,
+		InvokedFallbackRejectedReason: "canceled",
+	}) {
+		t.Fatal("did not expect canceled fallback items to survive expired context")
+	}
+	if !lspCompletionAllowsExpiredContextItems(lsp.CompletionResponse{
+		InvokedFallbackRejected:       true,
+		InvokedFallbackRejectedReason: "timeout",
+	}) {
+		t.Fatal("expected timed-out fallback to preserve original trigger items")
+	}
+}
+
+func TestDeduplicate_PreservesLSPMemberOverAccessIndexDuplicate(t *testing.T) {
+	brain := &PredictionBrain{}
+
+	got := brain.deduplicate([]Suggestion{
+		{
+			Text:        "Background",
+			DisplayText: "Background",
+			MatchText:   "Background",
+			Kind:        core.SymbolKindFunction,
+			Source:      core.SourceIndex,
+			Score:       0.95,
+			Namespace:   "context",
+			ProofKind:   "receiver-member",
+		},
+		{
+			Text:        "Background",
+			DisplayText: "Background",
+			MatchText:   "Background",
+			Kind:        core.SymbolKindFunction,
+			Source:      core.SourceLSP,
+			Score:       0.8,
+			ProofKind:   "lsp-member",
+		},
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("deduplicate returned %d suggestions, want 1", len(got))
+	}
+	if got[0].Source != core.SourceLSP {
+		t.Fatalf("deduplicated source = %s, want lsp", got[0].Source)
+	}
+	if got[0].ProofKind != "lsp-member" {
+		t.Fatalf("deduplicated proof = %q, want lsp-member", got[0].ProofKind)
+	}
+}
+
 func TestShouldSkipIndexGroup(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -497,6 +704,27 @@ func TestSourceWaitBudget_UsesFastFollowupAfterAnyFallback(t *testing.T) {
 	}
 }
 
+func TestSourceWaitBudget_UsesFocusedBudgetForAccessOperatorIntent(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  CompletionContext
+	}{
+		{name: "dot operator only", ctx: CompletionContext{AccessOperator: "."}},
+		{name: "arrow operator only", ctx: CompletionContext{AccessOperator: "->"}},
+		{name: "static operator only", ctx: CompletionContext{AccessOperator: "::"}},
+		{name: "optional chaining operator only", ctx: CompletionContext{AccessOperator: "?."}},
+		{name: "lua colon operator only", ctx: CompletionContext{AccessOperator: ":"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sourceWaitBudget(tt.ctx, 0); got != focusedSourceWait {
+				t.Fatalf("sourceWaitBudget(%+v, fallback=0) = %s, want %s", tt.ctx, got, focusedSourceWait)
+			}
+		})
+	}
+}
+
 func TestShouldOfferFillAll(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -555,10 +783,9 @@ func TestCompletionSourceLanguageResolution(t *testing.T) {
 			ctx:  CompletionContext{Language: "unknown", FilePath: "/tmp/file.unknown"},
 		},
 		{
-			name:  "blade keeps blade lsp id",
-			ctx:   CompletionContext{Language: "blade", FilePath: "/tmp/welcome.blade.php"},
-			index: "blade",
-			lsp:   "blade",
+			name: "blade keeps blade lsp id",
+			ctx:  CompletionContext{Language: "blade", FilePath: "/tmp/welcome.blade.php"},
+			lsp:  "blade",
 		},
 	}
 
@@ -574,7 +801,29 @@ func TestCompletionSourceLanguageResolution(t *testing.T) {
 }
 
 func TestPredictionBrain_LastCompletionTrace(t *testing.T) {
-	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 10, MinConfidence: 0.1, EnablePredictive: false, EnableLSP: false})
+	dir := t.TempDir()
+	engine, err := core.NewEngine(core.EngineConfig{
+		ProjectID:   "trace-test",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, ".arlecchino", "brain.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	if err := engine.Store().SaveSymbols([]core.Symbol{{
+		Name:       "func",
+		Kind:       core.SymbolKindFunction,
+		Source:     core.SourceIndex,
+		Language:   "go",
+		Namespace:  "github.com/gin-contrib/sse",
+		FilePath:   filepath.Join(dir, "sse.go"),
+		Confidence: 0.9,
+	}}); err != nil {
+		t.Fatalf("SaveSymbols: %v", err)
+	}
+
+	brain := NewPredictionBrain(engine, BrainConfig{MaxSuggestions: 10, MinConfidence: 0.1, EnablePredictive: false, EnableLSP: false})
 	content := []byte(`package main
 
 import sse "github.com/gin-contrib/sse"
@@ -681,9 +930,11 @@ func TestFilterByContext_DropsScaffoldInMethodCall(t *testing.T) {
 			Extra:  map[string]string{"is_scaffold": "true"},
 		},
 		{
-			Text:   "DoWork",
-			Kind:   core.SymbolKindMethod,
-			Source: core.SourcePredictive,
+			Text:      "DoWork",
+			Kind:      core.SymbolKindMethod,
+			Source:    core.SourceIndex,
+			Namespace: "worker",
+			ProofKind: "receiver-member",
 		},
 		{
 			Text:   "class",
