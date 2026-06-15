@@ -242,6 +242,10 @@ const scheduleRefresh = (get: () => GitStoreState): void => {
   }
   refreshTimer = window.setTimeout(() => {
     refreshTimer = null;
+    if (usePerformanceStore.getState().panelMotionActive) {
+      scheduleRefresh(get);
+      return;
+    }
     void get().refresh();
   }, fileRefreshDebounceMs);
 };
@@ -266,6 +270,10 @@ const scheduleFileMarkerRefresh = (
 
   const timer = window.setTimeout(() => {
     markerRefreshTimers.delete(filePath);
+    if (usePerformanceStore.getState().panelMotionActive) {
+      scheduleFileMarkerRefresh(get, filePath);
+      return;
+    }
     void get().refreshFileMarkers(filePath);
   }, delay);
   markerRefreshTimers.set(filePath, timer);

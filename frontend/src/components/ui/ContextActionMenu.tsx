@@ -12,6 +12,10 @@ import {
 import { canUseShellCapability } from "../../shell/shellCapabilities";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { EventsOn } from "../../wails/runtime";
+import {
+  getInteractiveSurfaceMotionStyle,
+  markInteractiveSurfaceMotion,
+} from "./interactiveSurfaceMotion";
 
 export interface ContextActionMenuItem {
   actionId?: string;
@@ -101,7 +105,11 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   );
   const actionRegistryRef = React.useRef(new Map<string, () => void>());
   const suppressNextOpenRef = React.useRef(false);
+  const markMenuMotion = React.useCallback(() => {
+    markInteractiveSurfaceMotion("menu");
+  }, []);
   const closeAndRun = React.useCallback((action?: () => void) => {
+    markInteractiveSurfaceMotion("menu");
     setOpen(false);
 
     if (!action) {
@@ -122,6 +130,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
       suppressNextOpenRef.current = false;
     }
 
+    markInteractiveSurfaceMotion("menu");
     setOpen(nextOpen);
   }, []);
 
@@ -247,6 +256,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
 
     event.preventDefault();
     event.stopPropagation();
+    markInteractiveSurfaceMotion("menu");
     setOpen(false);
     actionRegistryRef.current = actionRegistry;
 
@@ -289,9 +299,13 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                 className="shell-context-menu-content"
                 data-shell-context-menu-id={menuInstanceIdRef.current}
                 data-shell-menu-content
+                onAnimationStart={markMenuMotion}
                 style={
                   {
                     "--shell-context-menu-scale": String(uiScale),
+                    ...getInteractiveSurfaceMotionStyle({
+                      preserveTransform: true,
+                    }),
                   } as React.CSSProperties
                 }
               >

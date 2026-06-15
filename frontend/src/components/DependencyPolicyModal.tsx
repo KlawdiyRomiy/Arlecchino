@@ -27,6 +27,10 @@ import {
   SHELL_DIALOG_OVERLAY_TRANSITION,
   SHELL_DIALOG_PANEL_TRANSITION,
 } from "./ui/motionContracts";
+import {
+  interactiveSurfaceOverlayStyle,
+  useInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
 
 interface DependencyPolicyModalProps {
   isOpen: boolean;
@@ -155,6 +159,11 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
 }) => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const reduceDialogMotion = useReducedMotion();
+  const { markMotionStart: markDialogMotion, surfaceStyle } =
+    useInteractiveSurfaceMotion("dialog", {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceDialogMotion),
+    });
   const [consentMode, setConsentMode] = useState<ConsentMode>(
     ConsentMode.ConsentModeConfirmOncePerProject,
   );
@@ -414,6 +423,8 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                       ? { duration: 0 }
                       : SHELL_DIALOG_OVERLAY_TRANSITION
                   }
+                  onAnimationStart={markDialogMotion}
+                  style={interactiveSurfaceOverlayStyle}
                 />
               </Dialog.Overlay>
               <Dialog.Content
@@ -438,7 +449,9 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                       ? { duration: 0 }
                       : SHELL_DIALOG_OVERLAY_TRANSITION
                   }
+                  onAnimationStart={markDialogMotion}
                   style={{
+                    ...surfaceStyle,
                     transform: `translate(-50%, -50%) scale(${uiScale})`,
                     transformOrigin: "center",
                     width: `min(${94 / uiScale}vw, 1180px)`,
@@ -461,6 +474,8 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                         ? { duration: 0 }
                         : SHELL_DIALOG_PANEL_TRANSITION
                     }
+                    onAnimationStart={markDialogMotion}
+                    style={surfaceStyle}
                   >
                     <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-6 py-5">
                       <div className="flex items-center gap-3">

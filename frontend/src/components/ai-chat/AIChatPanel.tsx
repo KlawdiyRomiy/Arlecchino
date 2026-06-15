@@ -293,6 +293,23 @@ function activeEditorContextFromStore(
   };
 }
 
+function activeTerminalContextFromStore(
+  store: ReturnType<typeof useTerminalStore.getState>,
+): ActiveTerminalContext | null {
+  const activePane = store.panes.find((pane) => pane.id === store.activePaneId);
+  const activeTerminalId = activePane?.activeTabId ?? "";
+  const shellState = activeTerminalId
+    ? store.sessionShellState.get(activeTerminalId)
+    : null;
+  if (!shellState) {
+    return null;
+  }
+  return {
+    raw: shellState.raw,
+    cwd: shellState.cwd,
+  };
+}
+
 type DrawerId = "history" | "review";
 type DrawerSnapEdge = Extract<PanelPosition, "left" | "right">;
 
@@ -1300,22 +1317,6 @@ export function AIChatPanelContent({
   presentation = "panel",
   projectPath = "",
 }: AIChatPanelProps) {
-  const activeTerminal = useTerminalStore(
-    useShallow((store): ActiveTerminalContext | null => {
-      const activePane = store.panes.find(
-        (pane) => pane.id === store.activePaneId,
-      );
-      const activeTerminalId = activePane?.activeTabId ?? "";
-      const shellState = activeTerminalId
-        ? store.sessionShellState.get(activeTerminalId)
-        : null;
-      if (!shellState) return null;
-      return {
-        raw: shellState.raw,
-        cwd: shellState.cwd,
-      };
-    }),
-  );
   const beginPanelMotionWindow = usePerformanceStore(
     (store) => store.beginPanelMotionWindow,
   );
@@ -2061,7 +2062,7 @@ export function AIChatPanelContent({
         state.input,
         selectedMentionsForActiveSession,
         state.selectedProfileId,
-        activeTerminal,
+        activeTerminalContextFromStore(useTerminalStore.getState()),
         state.selectedAction,
         activeSessionId,
         {
@@ -2175,7 +2176,6 @@ export function AIChatPanelContent({
     }
   }, [
     activeSessionId,
-    activeTerminal,
     clearHydrationFailuresForRunIds,
     setContextPreview,
     setContextProviders,
@@ -2705,7 +2705,7 @@ export function AIChatPanelContent({
             state.input,
             selectedMentionsForActiveSession,
             state.selectedProfileId,
-            activeTerminal,
+            activeTerminalContextFromStore(useTerminalStore.getState()),
             state.selectedAction,
             activeSessionId,
             {
@@ -2728,7 +2728,6 @@ export function AIChatPanelContent({
     },
     [
       activeSessionId,
-      activeTerminal,
       selectedContextWindowHint,
       selectedModel,
       selectedProvider?.id,
@@ -2937,7 +2936,7 @@ export function AIChatPanelContent({
         prompt,
         mentions,
         profileId,
-        activeTerminal,
+        activeTerminalContextFromStore(useTerminalStore.getState()),
         action,
         sessionId,
         {
@@ -2992,7 +2991,6 @@ export function AIChatPanelContent({
       }
     },
     [
-      activeTerminal,
       activeSessionId,
       providerDisabledReason,
       runs,

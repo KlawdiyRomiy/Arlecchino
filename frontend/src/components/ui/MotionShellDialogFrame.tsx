@@ -4,6 +4,10 @@ import {
   SHELL_DIALOG_OVERLAY_TRANSITION,
   SHELL_DIALOG_PANEL_TRANSITION,
 } from "./motionContracts";
+import {
+  interactiveSurfaceOverlayStyle,
+  useInteractiveSurfaceMotion,
+} from "./interactiveSurfaceMotion";
 
 interface MotionShellDialogFrameProps {
   children: React.ReactNode;
@@ -19,6 +23,13 @@ export const MotionShellDialogFrame: React.FC<MotionShellDialogFrameProps> = ({
   panelTestId,
 }) => {
   const reduceMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "dialog",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceMotion),
+    },
+  );
 
   return (
     <motion.div
@@ -30,6 +41,8 @@ export const MotionShellDialogFrame: React.FC<MotionShellDialogFrameProps> = ({
       transition={
         reduceMotion ? { duration: 0 } : SHELL_DIALOG_OVERLAY_TRANSITION
       }
+      onAnimationStart={markMotionStart}
+      style={interactiveSurfaceOverlayStyle}
     >
       <motion.div
         className={panelClassName}
@@ -44,6 +57,8 @@ export const MotionShellDialogFrame: React.FC<MotionShellDialogFrameProps> = ({
         transition={
           reduceMotion ? { duration: 0 } : SHELL_DIALOG_PANEL_TRANSITION
         }
+        onAnimationStart={markMotionStart}
+        style={surfaceStyle}
       >
         {children}
       </motion.div>

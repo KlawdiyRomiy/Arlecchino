@@ -46,6 +46,7 @@ const matchesCurrentProjectSession = (data?: IndexerEventPayload) => {
 };
 
 const listeners = new Set<() => void>();
+let deferredMotionNotification = false;
 let pendingProgress: {
   state: IndexingState;
   data: IndexerEventPayload;
@@ -72,8 +73,28 @@ function emit(next: IndexingState | ((prev: IndexingState) => IndexingState)) {
     return;
   }
   state = resolved;
+  notifyListeners();
+}
+
+function notifyListeners() {
+  if (usePerformanceStore.getState().panelMotionActive) {
+    deferredMotionNotification = true;
+    return;
+  }
+
+  deferredMotionNotification = false;
   listeners.forEach((fn) => fn());
 }
+
+usePerformanceStore.subscribe((current, previous) => {
+  if (
+    previous.panelMotionActive &&
+    !current.panelMotionActive &&
+    deferredMotionNotification
+  ) {
+    notifyListeners();
+  }
+});
 
 function getSnapshot(): IndexingState {
   return state;
@@ -83,6 +104,9 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+export const getIndexingProgressSnapshot = getSnapshot;
+export const subscribeIndexingProgress = subscribe;
 
 const recordIndexerBudget = (data?: IndexerEventPayload) => {
   if (!data) {

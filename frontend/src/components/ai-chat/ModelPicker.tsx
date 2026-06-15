@@ -45,6 +45,7 @@ import {
   isFrontierModelProvider,
   isRemoteBYOKProvider,
 } from "./providerPresentation";
+import { useInteractiveSurfaceMotion } from "../ui/interactiveSurfaceMotion";
 
 interface ModelPickerProps {
   open?: boolean;
@@ -161,6 +162,13 @@ export function ModelPicker({
   const [oauthError, setOAuthError] = useState("");
   const [agentAuthRun, setAgentAuthRun] = useState<AIChatRun | null>(null);
   const reduceMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "popover",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceMotion),
+    },
+  );
   const refreshedAfterOAuthRef = useRef("");
   const observedAgentAuthRunIdsRef = useRef<Set<string>>(new Set());
   const refreshedAgentAuthRunIdsRef = useRef<Set<string>>(new Set());
@@ -743,6 +751,7 @@ export function ModelPicker({
               className="ai-chat-popover ai-chat-model-picker"
               data-testid="ai-chat-model-picker"
               layout
+              onAnimationStart={markMotionStart}
               initial={
                 reduceMotion
                   ? { opacity: 0 }
@@ -763,6 +772,7 @@ export function ModelPicker({
                 damping: 38,
                 mass: 0.72,
               }}
+              style={surfaceStyle}
             >
               <div className="ai-chat-model-picker__header">
                 <h3>Model</h3>

@@ -24,6 +24,10 @@ import {
   matchesRelationFilter,
   type RelationGroup,
 } from "../utils/perspectiveRelations";
+import {
+  getInteractiveSurfaceMotionStyle,
+  markInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
 
 interface QuickRelationsMenuProps {
   isOpen: boolean;
@@ -66,21 +70,27 @@ export const QuickRelationsMenu: React.FC<QuickRelationsMenuProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const markInteractiveMotion = React.useCallback(() => {
+    markInteractiveSurfaceMotion("menu");
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        markInteractiveSurfaceMotion("menu");
         onClose();
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        markInteractiveSurfaceMotion("menu");
         onClose();
       }
     };
 
     if (isOpen) {
+      markInteractiveSurfaceMotion("menu");
       document.addEventListener("mousedown", handleClickOutside);
       document.addEventListener("keydown", handleKeyDown);
       setFilter("");
@@ -178,6 +188,7 @@ export const QuickRelationsMenu: React.FC<QuickRelationsMenuProps> = ({
               <div
                 key={item.id}
                 onClick={() => {
+                  markInteractiveSurfaceMotion("menu");
                   onFileSelect(item.path, item.line);
                   onClose();
                 }}
@@ -252,6 +263,7 @@ export const QuickRelationsMenu: React.FC<QuickRelationsMenuProps> = ({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
+      onAnimationStart={markInteractiveMotion}
       style={{
         position: "fixed",
         left: finalX,
@@ -267,6 +279,7 @@ export const QuickRelationsMenu: React.FC<QuickRelationsMenuProps> = ({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        ...getInteractiveSurfaceMotionStyle({ preserveTransform: true }),
       }}
     >
       {fitsBelow ? (

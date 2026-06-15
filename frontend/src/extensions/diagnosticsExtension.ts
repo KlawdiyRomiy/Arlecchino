@@ -1776,11 +1776,10 @@ class DiagnosticsBridge {
       console.debug("[diagnostics] initial pull failed", error);
     } finally {
       this.awaitingInitialPull = false;
-      if (this.destroyed) {
-        return;
-      }
-
-      if (!useDiagnosticsStore.getState().byFile.has(this.filePath)) {
+      if (
+        !this.destroyed &&
+        !useDiagnosticsStore.getState().byFile.has(this.filePath)
+      ) {
         this.pendingProblems = EMPTY_PROBLEMS;
         this.pendingSignature = this.getCurrentSignature(EMPTY_PROBLEMS);
         this.scheduleApply();

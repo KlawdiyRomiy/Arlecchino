@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
+import { usePerformanceStore } from "../../stores/performanceStore";
 import {
   getEffectiveUiScale,
   logicalToScreenPixels,
@@ -38,6 +39,7 @@ import {
   FLOATING_PANEL_LAYOUT_TRANSITION,
   FLOATING_PANEL_LAYOUT_TRANSITION_MS,
 } from "./floatingPanelMotion";
+import { markInteractiveSurfaceMotion } from "./interactiveSurfaceMotion";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -328,6 +330,9 @@ export const FloatingPanel = React.forwardRef<
     const effectiveUiScale = getEffectiveUiScale(uiScale);
     const prefersReducedMotion = useReducedMotion();
     const reduceMotion = prefersReducedMotion;
+    const storeMotionPressureActive = usePerformanceStore(
+      (state) => state.panelMotionActive || state.mode !== "normal",
+    );
     const isPresent = useIsPresent();
     const [isResizing, setIsResizing] = useState(false);
     const [resizeEdge, setResizeEdge] = useState<string | null>(null);
@@ -349,6 +354,7 @@ export const FloatingPanel = React.forwardRef<
     const dragSessionRef = useRef<PanelDragSession | null>(null);
     const resizeSessionRef = useRef<PanelResizeSession | null>(null);
     const resizeSessionIdRef = useRef(0);
+    const lastInteractiveMotionRefreshRef = useRef(Number.NEGATIVE_INFINITY);
     const dragSelectionReleaseRef = useRef<(() => void) | null>(null);
     const metaKeyPressedRef = useRef(false);
     const isResizingRef = useRef(isResizing);
@@ -375,6 +381,21 @@ export const FloatingPanel = React.forwardRef<
       panelX: 0,
       panelY: 0,
     });
+
+    const refreshInteractiveMotionWindow = useCallback(() => {
+      if (reduceMotion) {
+        return;
+      }
+
+      const now =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (now - lastInteractiveMotionRefreshRef.current < 120) {
+        return;
+      }
+
+      lastInteractiveMotionRefreshRef.current = now;
+      markInteractiveSurfaceMotion(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180);
+    }, [reduceMotion]);
 
     useEffect(() => {
       if (reduceMotion || mode === "floating") {
@@ -784,6 +805,7 @@ export const FloatingPanel = React.forwardRef<
 
         e.preventDefault();
         e.stopPropagation();
+        refreshInteractiveMotionWindow();
 
         if (resizeSessionRef.current) {
           finishActiveResizeSession();
@@ -828,6 +850,7 @@ export const FloatingPanel = React.forwardRef<
 
           event.preventDefault();
           document.getSelection()?.removeAllRanges();
+          refreshInteractiveMotionWindow();
           applyResizeMove(event, edge);
         };
 
@@ -917,6 +940,7 @@ export const FloatingPanel = React.forwardRef<
         effectiveUiScale,
         finishActiveResizeSession,
         id,
+        refreshInteractiveMotionWindow,
         size.height,
         size.width,
         x,
@@ -1114,6 +1138,7 @@ export const FloatingPanel = React.forwardRef<
 
         e.preventDefault();
         e.stopPropagation();
+        refreshInteractiveMotionWindow();
 
         if (dragSessionRef.current) {
           finishActiveDragSession({ commitDrop: false });
@@ -1164,6 +1189,7 @@ export const FloatingPanel = React.forwardRef<
 
           event.preventDefault();
           document.getSelection()?.removeAllRanges();
+          refreshInteractiveMotionWindow();
 
           const dx = screenToLogicalPixels(
             event.clientX - startRef.current.x,
@@ -1223,6 +1249,7 @@ export const FloatingPanel = React.forwardRef<
         id,
         mode,
         onZenPinToggle,
+        refreshInteractiveMotionWindow,
         scheduleDragTargetUpdate,
         size.height,
         size.width,
@@ -1305,7 +1332,11 @@ export const FloatingPanel = React.forwardRef<
       !isDragging &&
       !isResizing;
     const motionPaintConstrained =
-      motionPressureActive || isDragging || isResizing || isRelocating;
+      motionPressureActive ||
+      storeMotionPressureActive ||
+      isDragging ||
+      isResizing ||
+      isRelocating;
 
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
@@ -1884,6 +1915,12 @@ export const FloatingPanel = React.forwardRef<
       position: "relative",
       zIndex: 0,
       pointerEvents: isResizing ? "none" : "auto",
+      contain: motionPaintConstrained ? "layout paint style" : "paint",
+      contentVisibility: "auto",
+      containIntrinsicSize: "1px 480px",
+      isolation: "isolate",
+      transform: "translateZ(0)",
+      willChange: motionPaintConstrained ? "transform" : "auto",
     };
 
     const readableClipStyle: React.CSSProperties = {
@@ -1897,6 +1934,8 @@ export const FloatingPanel = React.forwardRef<
       minHeight: 0,
       position: "relative",
       overflow: "hidden",
+      contain: motionPaintConstrained ? "layout paint style" : "paint",
+      isolation: "isolate",
     };
 
     const readableLayerStyle: React.CSSProperties = {
@@ -1917,7 +1956,11 @@ export const FloatingPanel = React.forwardRef<
         ? "scale(var(--panel-projected-inverse-scale-x, 1), var(--panel-projected-inverse-scale-y, 1))"
         : undefined,
       transformOrigin: "top left",
-      willChange: readableLayerLayoutMotionEnabled ? "transform" : "auto",
+      willChange:
+        readableLayerLayoutMotionEnabled || motionPaintConstrained
+          ? "transform"
+          : "auto",
+      contain: motionPaintConstrained ? "layout paint style" : "paint",
       backfaceVisibility: "hidden",
     };
 
@@ -1944,35 +1987,50 @@ export const FloatingPanel = React.forwardRef<
         icon: <ArrowLeft size={14} />,
         hidden: !onMoveToPosition,
         disabled: mode === "snapped" && position === "left",
-        onSelect: () => onMoveToPosition?.("left"),
+        onSelect: () => {
+          refreshInteractiveMotionWindow();
+          onMoveToPosition?.("left");
+        },
       },
       {
         label: "Move to Right",
         icon: <ArrowRight size={14} />,
         hidden: !onMoveToPosition,
         disabled: mode === "snapped" && position === "right",
-        onSelect: () => onMoveToPosition?.("right"),
+        onSelect: () => {
+          refreshInteractiveMotionWindow();
+          onMoveToPosition?.("right");
+        },
       },
       {
         label: "Move to Top",
         icon: <ArrowUp size={14} />,
         hidden: !onMoveToPosition,
         disabled: mode === "snapped" && position === "top",
-        onSelect: () => onMoveToPosition?.("top"),
+        onSelect: () => {
+          refreshInteractiveMotionWindow();
+          onMoveToPosition?.("top");
+        },
       },
       {
         label: "Move to Bottom",
         icon: <ArrowDown size={14} />,
         hidden: !onMoveToPosition,
         disabled: mode === "snapped" && position === "bottom",
-        onSelect: () => onMoveToPosition?.("bottom"),
+        onSelect: () => {
+          refreshInteractiveMotionWindow();
+          onMoveToPosition?.("bottom");
+        },
       },
       { separator: true, hidden: !onFullscreen && !onPin && !onZenPinToggle },
       {
         label: isFullscreen ? "Exit Full Screen" : "Full Screen",
         icon: <Maximize2 size={14} />,
         hidden: !onFullscreen,
-        onSelect: onFullscreen,
+        onSelect: () => {
+          refreshInteractiveMotionWindow();
+          onFullscreen?.();
+        },
       },
       {
         label: isZenPinned ? "Unpin in Zen" : "Pin in Zen",
@@ -1993,6 +2051,7 @@ export const FloatingPanel = React.forwardRef<
         danger: true,
         hidden: !onClose,
         onSelect: () => {
+          refreshInteractiveMotionWindow();
           captureLatestBounds();
           onClose?.();
         },
@@ -2029,6 +2088,7 @@ export const FloatingPanel = React.forwardRef<
               className="panel-control-button topbar-control-button"
               onClick={(e) => {
                 e.stopPropagation();
+                refreshInteractiveMotionWindow();
                 onFullscreen();
               }}
               onMouseDown={(e) => e.stopPropagation()}
@@ -2050,6 +2110,7 @@ export const FloatingPanel = React.forwardRef<
               }`}
               onClick={(e) => {
                 e.stopPropagation();
+                refreshInteractiveMotionWindow();
                 onPin();
               }}
               onMouseDown={(e) => e.stopPropagation()}
@@ -2066,6 +2127,7 @@ export const FloatingPanel = React.forwardRef<
               className="panel-control-button panel-control-button-danger topbar-control-button"
               onClick={(e) => {
                 e.stopPropagation();
+                refreshInteractiveMotionWindow();
                 captureLatestBounds();
                 onClose();
               }}

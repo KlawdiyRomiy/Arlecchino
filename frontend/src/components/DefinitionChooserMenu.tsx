@@ -3,6 +3,10 @@ import { motion } from "framer-motion";
 import { FileCode, FolderOpen } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { getThemeColors, radius, shadows, zIndex } from "../styles/colors";
+import {
+  getInteractiveSurfaceMotionStyle,
+  markInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
 
 export interface DefinitionItem {
   path: string;
@@ -34,6 +38,9 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
   const menuRef = useRef<HTMLDivElement>(null);
+  const markInteractiveMotion = React.useCallback(() => {
+    markInteractiveSurfaceMotion("menu");
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -79,6 +86,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, y: 10 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
+      onAnimationStart={markInteractiveMotion}
       style={{
         position: "fixed",
         left: finalX,
@@ -93,6 +101,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        ...getInteractiveSurfaceMotionStyle({ preserveTransform: true }),
       }}
     >
       <div

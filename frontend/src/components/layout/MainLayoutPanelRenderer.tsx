@@ -133,6 +133,252 @@ interface MainLayoutPanelRendererProps {
   onZenPinToggle: (panelId: PanelId) => void;
 }
 
+interface ExplorerPanelBodyProps {
+  activeProjectPath: string;
+  configPosition: PanelPosition;
+  filePanelSnapDrag: PanelSnapDragCallbacks;
+  onFileOpen: MainLayoutPanelRendererProps["onFileOpen"];
+  onFileOpenInPanel: MainLayoutPanelRendererProps["onFileOpenInPanel"];
+  onPerspectiveOpen: MainLayoutPanelRendererProps["onPerspectiveOpen"];
+  onPerspectiveClose: MainLayoutPanelRendererProps["onPerspectiveClose"];
+}
+
+const ExplorerPanelBody = React.memo(function ExplorerPanelBody({
+  activeProjectPath,
+  configPosition,
+  filePanelSnapDrag,
+  onFileOpen,
+  onFileOpenInPanel,
+  onPerspectiveOpen,
+  onPerspectiveClose,
+}: ExplorerPanelBodyProps) {
+  return (
+    <FileExplorer
+      projectPath={activeProjectPath}
+      onFileOpen={onFileOpen}
+      onFileOpenInPanel={onFileOpenInPanel}
+      {...filePanelSnapDrag}
+      isHorizontal={configPosition === "bottom" || configPosition === "top"}
+      onPerspectiveOpen={onPerspectiveOpen}
+      onPerspectiveClose={onPerspectiveClose}
+    />
+  );
+});
+
+interface TerminalPanelBodyProps {
+  tuiModeActive: boolean;
+  tuiTerminalPaneStyle: React.CSSProperties;
+  onOpenFileFromPath: MainLayoutPanelRendererProps["onOpenFileFromPath"];
+  onOpenPreviewFromTerminal: MainLayoutPanelRendererProps["onOpenPreviewFromTerminal"];
+}
+
+const TerminalPanelBody = React.memo(function TerminalPanelBody({
+  tuiModeActive,
+  tuiTerminalPaneStyle,
+  onOpenFileFromPath,
+  onOpenPreviewFromTerminal,
+}: TerminalPanelBodyProps) {
+  const handleOpenFileRef = React.useCallback(
+    (path: string, line?: number, column?: number) => {
+      void onOpenFileFromPath(path, line, column);
+    },
+    [onOpenFileFromPath],
+  );
+  const handleOpenPreviewUrl = React.useCallback(
+    (url: string, sessionId: string) => {
+      onOpenPreviewFromTerminal({
+        url,
+        sessionId,
+        forceOpen: true,
+      });
+    },
+    [onOpenPreviewFromTerminal],
+  );
+
+  const content = (
+    <TerminalPanelContent
+      onOpenFileRef={handleOpenFileRef}
+      onOpenPreviewUrl={handleOpenPreviewUrl}
+    />
+  );
+
+  return tuiModeActive ? (
+    <div style={tuiTerminalPaneStyle}>{content}</div>
+  ) : (
+    content
+  );
+});
+
+interface AIChatPanelBodyProps {
+  activeProjectPath: string;
+  presentation: "fullscreen" | "panel";
+}
+
+const AIChatPanelBody = React.memo(function AIChatPanelBody({
+  activeProjectPath,
+  presentation,
+}: AIChatPanelBodyProps) {
+  return (
+    <AIChatPanelContent
+      presentation={presentation}
+      projectPath={activeProjectPath}
+    />
+  );
+});
+
+interface GitPanelBodyProps {
+  activeProjectPath: string;
+  configPosition: PanelPosition;
+  presentationMode: "expanded" | "compact";
+  onGitDiffFocusChange: MainLayoutPanelRendererProps["onGitDiffFocusChange"];
+  onOpenFileFromPath: MainLayoutPanelRendererProps["onOpenFileFromPath"];
+}
+
+const GitPanelBody = React.memo(function GitPanelBody({
+  activeProjectPath,
+  configPosition,
+  presentationMode,
+  onGitDiffFocusChange,
+  onOpenFileFromPath,
+}: GitPanelBodyProps) {
+  const handleFileOpen = React.useCallback(
+    (path: string) => {
+      void onOpenFileFromPath(path);
+    },
+    [onOpenFileFromPath],
+  );
+
+  return (
+    <GitPanel
+      projectPath={activeProjectPath}
+      panelPosition={configPosition}
+      onDiffFocusChange={onGitDiffFocusChange}
+      presentationMode={presentationMode}
+      onFileOpen={handleFileOpen}
+    />
+  );
+});
+
+interface ProblemsPanelBodyProps {
+  activeFilePath: string | null;
+  presentationMode: "expanded" | "compact";
+  onOpenFileFromPath: MainLayoutPanelRendererProps["onOpenFileFromPath"];
+}
+
+const ProblemsPanelBody = React.memo(function ProblemsPanelBody({
+  activeFilePath,
+  presentationMode,
+  onOpenFileFromPath,
+}: ProblemsPanelBodyProps) {
+  const handleNavigate = React.useCallback(
+    (path: string, line?: number, column?: number) =>
+      onOpenFileFromPath(path, line, column),
+    [onOpenFileFromPath],
+  );
+
+  return (
+    <ProblemsPanel
+      activeFilePath={activeFilePath}
+      onNavigate={handleNavigate}
+      presentationMode={presentationMode}
+    />
+  );
+});
+
+interface CodePanelBodyProps {
+  activeCodePanelTab: CodePanelTab | null;
+  activeCodePanelPatchPreview: AIInlinePatchPreview | null;
+  codePanelPatchBusyId: string | null;
+  codePanelTabs: CodePanelTab[];
+  activeProjectPath: string;
+  filePanelSnapDrag: PanelSnapDragCallbacks;
+  onCodePanelActivate: MainLayoutPanelRendererProps["onCodePanelActivate"];
+  onCodePanelClose: MainLayoutPanelRendererProps["onCodePanelClose"];
+  onCodePanelCloseOthers: MainLayoutPanelRendererProps["onCodePanelCloseOthers"];
+  onCodePanelDetachToPanel: MainLayoutPanelRendererProps["onCodePanelDetachToPanel"];
+  onCodePanelRevealInExplorer: MainLayoutPanelRendererProps["onCodePanelRevealInExplorer"];
+  onCodePanelMoveToEditorTabs: MainLayoutPanelRendererProps["onCodePanelMoveToEditorTabs"];
+  onCodePanelAcceptAIInlinePatch: MainLayoutPanelRendererProps["onCodePanelAcceptAIInlinePatch"];
+  onCodePanelRejectAIInlinePatch: MainLayoutPanelRendererProps["onCodePanelRejectAIInlinePatch"];
+}
+
+const CodePanelBody = React.memo(function CodePanelBody({
+  activeCodePanelTab,
+  activeCodePanelPatchPreview,
+  codePanelPatchBusyId,
+  codePanelTabs,
+  activeProjectPath,
+  filePanelSnapDrag,
+  onCodePanelActivate,
+  onCodePanelClose,
+  onCodePanelCloseOthers,
+  onCodePanelDetachToPanel,
+  onCodePanelRevealInExplorer,
+  onCodePanelMoveToEditorTabs,
+  onCodePanelAcceptAIInlinePatch,
+  onCodePanelRejectAIInlinePatch,
+}: CodePanelBodyProps) {
+  if (!activeCodePanelTab) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-sm text-[var(--text-muted)]">
+        Open file from Explorer to start editing in panel
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <CodePanelTabs
+        tabs={codePanelTabs}
+        activePath={activeCodePanelTab.path}
+        projectPath={activeProjectPath}
+        onActivate={onCodePanelActivate}
+        onClose={onCodePanelClose}
+        onCloseOthers={onCodePanelCloseOthers}
+        onDetachToPanel={onCodePanelDetachToPanel}
+        onRevealInExplorer={onCodePanelRevealInExplorer}
+        onMoveToEditorTabs={onCodePanelMoveToEditorTabs}
+        {...filePanelSnapDrag}
+      />
+      <div className="min-h-0 flex-1">
+        <CodePanelSurface
+          key={activeCodePanelTab.path}
+          path={activeCodePanelTab.path}
+          name={activeCodePanelTab.name}
+          initialContent={activeCodePanelTab.content}
+          projectPath={activeProjectPath}
+          language={activeCodePanelTab.language}
+          loadState={activeCodePanelTab.loadState}
+          completionProviderMode="full"
+          aiInlinePatchPreview={activeCodePanelPatchPreview}
+          aiInlinePatchBusy={
+            codePanelPatchBusyId === activeCodePanelPatchPreview?.id
+          }
+          onAcceptAIInlinePatch={onCodePanelAcceptAIInlinePatch}
+          onRejectAIInlinePatch={onCodePanelRejectAIInlinePatch}
+        />
+      </div>
+    </div>
+  );
+});
+
+interface MarkdownPreviewPanelBodyProps {
+  source: MarkdownPreviewSource | null;
+  onMarkdownLinkPreviewOpen: MainLayoutPanelRendererProps["onMarkdownLinkPreviewOpen"];
+}
+
+const MarkdownPreviewPanelBody = React.memo(function MarkdownPreviewPanelBody({
+  source,
+  onMarkdownLinkPreviewOpen,
+}: MarkdownPreviewPanelBodyProps) {
+  return (
+    <MarkdownPreviewPanelContent
+      source={source}
+      onOpenExternalLinkPreview={onMarkdownLinkPreviewOpen}
+    />
+  );
+});
+
 export const MainLayoutPanelRenderer: React.FC<
   MainLayoutPanelRendererProps
 > = ({
@@ -344,14 +590,12 @@ export const MainLayoutPanelRenderer: React.FC<
           maxSize={500}
           {...panelProps}
         >
-          <FileExplorer
-            projectPath={activeProjectPath}
+          <ExplorerPanelBody
+            activeProjectPath={activeProjectPath}
+            configPosition={config.position}
+            filePanelSnapDrag={filePanelSnapDrag}
             onFileOpen={onFileOpen}
             onFileOpenInPanel={onFileOpenInPanel}
-            {...filePanelSnapDrag}
-            isHorizontal={
-              config.position === "bottom" || config.position === "top"
-            }
             onPerspectiveOpen={onPerspectiveOpen}
             onPerspectiveClose={onPerspectiveClose}
           />
@@ -372,31 +616,12 @@ export const MainLayoutPanelRenderer: React.FC<
           immersiveOverlay={tuiModeActive}
           zIndex={terminalZIndex}
         >
-          {tuiModeActive ? (
-            <div style={tuiTerminalPaneStyle}>
-              <TerminalPanelContent
-                onOpenFileRef={(path, line, column) => {
-                  void onOpenFileFromPath(path, line, column);
-                }}
-                onOpenPreviewUrl={(url, sessionId) => {
-                  onOpenPreviewFromTerminal({
-                    url,
-                    sessionId,
-                    forceOpen: true,
-                  });
-                }}
-              />
-            </div>
-          ) : (
-            <TerminalPanelContent
-              onOpenFileRef={(path, line, column) => {
-                void onOpenFileFromPath(path, line, column);
-              }}
-              onOpenPreviewUrl={(url, sessionId) => {
-                onOpenPreviewFromTerminal({ url, sessionId, forceOpen: true });
-              }}
-            />
-          )}
+          <TerminalPanelBody
+            tuiModeActive={tuiModeActive}
+            tuiTerminalPaneStyle={tuiTerminalPaneStyle}
+            onOpenFileFromPath={onOpenFileFromPath}
+            onOpenPreviewFromTerminal={onOpenPreviewFromTerminal}
+          />
         </FloatingPanel>
       );
     case "aiChat":
@@ -410,9 +635,9 @@ export const MainLayoutPanelRenderer: React.FC<
           maxSize={600}
           {...panelProps}
         >
-          <AIChatPanelContent
+          <AIChatPanelBody
             presentation={isFullscreen ? "fullscreen" : "panel"}
-            projectPath={activeProjectPath}
+            activeProjectPath={activeProjectPath}
           />
         </FloatingPanel>
       );
@@ -427,14 +652,12 @@ export const MainLayoutPanelRenderer: React.FC<
           maxSize={1400}
           {...panelProps}
         >
-          <GitPanel
-            projectPath={activeProjectPath}
-            panelPosition={config.position}
-            onDiffFocusChange={onGitDiffFocusChange}
+          <GitPanelBody
+            activeProjectPath={activeProjectPath}
+            configPosition={config.position}
             presentationMode={isFullscreen ? "expanded" : "compact"}
-            onFileOpen={(path) => {
-              void onOpenFileFromPath(path);
-            }}
+            onGitDiffFocusChange={onGitDiffFocusChange}
+            onOpenFileFromPath={onOpenFileFromPath}
           />
         </FloatingPanel>
       );
@@ -449,12 +672,10 @@ export const MainLayoutPanelRenderer: React.FC<
           maxSize={1400}
           {...panelProps}
         >
-          <ProblemsPanel
+          <ProblemsPanelBody
             activeFilePath={activeStatusFilePath ?? activeEditorTabPath}
-            onNavigate={(path, line, column) =>
-              onOpenFileFromPath(path, line, column)
-            }
             presentationMode={isFullscreen ? "expanded" : "compact"}
+            onOpenFileFromPath={onOpenFileFromPath}
           />
         </FloatingPanel>
       );
@@ -471,44 +692,22 @@ export const MainLayoutPanelRenderer: React.FC<
           maxSize={900}
           {...panelProps}
         >
-          {activeCodePanelTab ? (
-            <div className="flex h-full min-h-0 w-full flex-col">
-              <CodePanelTabs
-                tabs={codePanelTabs}
-                activePath={activeCodePanelTab.path}
-                projectPath={activeProjectPath}
-                onActivate={onCodePanelActivate}
-                onClose={onCodePanelClose}
-                onCloseOthers={onCodePanelCloseOthers}
-                onDetachToPanel={onCodePanelDetachToPanel}
-                onRevealInExplorer={onCodePanelRevealInExplorer}
-                onMoveToEditorTabs={onCodePanelMoveToEditorTabs}
-                {...filePanelSnapDrag}
-              />
-              <div className="min-h-0 flex-1">
-                <CodePanelSurface
-                  key={activeCodePanelTab.path}
-                  path={activeCodePanelTab.path}
-                  name={activeCodePanelTab.name}
-                  initialContent={activeCodePanelTab.content}
-                  projectPath={activeProjectPath}
-                  language={activeCodePanelTab.language}
-                  loadState={activeCodePanelTab.loadState}
-                  completionProviderMode="full"
-                  aiInlinePatchPreview={activeCodePanelPatchPreview}
-                  aiInlinePatchBusy={
-                    codePanelPatchBusyId === activeCodePanelPatchPreview?.id
-                  }
-                  onAcceptAIInlinePatch={onCodePanelAcceptAIInlinePatch}
-                  onRejectAIInlinePatch={onCodePanelRejectAIInlinePatch}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="h-full w-full flex items-center justify-center text-sm text-[var(--text-muted)]">
-              Open file from Explorer to start editing in panel
-            </div>
-          )}
+          <CodePanelBody
+            activeCodePanelTab={activeCodePanelTab}
+            activeCodePanelPatchPreview={activeCodePanelPatchPreview}
+            codePanelPatchBusyId={codePanelPatchBusyId}
+            codePanelTabs={codePanelTabs}
+            activeProjectPath={activeProjectPath}
+            filePanelSnapDrag={filePanelSnapDrag}
+            onCodePanelActivate={onCodePanelActivate}
+            onCodePanelClose={onCodePanelClose}
+            onCodePanelCloseOthers={onCodePanelCloseOthers}
+            onCodePanelDetachToPanel={onCodePanelDetachToPanel}
+            onCodePanelRevealInExplorer={onCodePanelRevealInExplorer}
+            onCodePanelMoveToEditorTabs={onCodePanelMoveToEditorTabs}
+            onCodePanelAcceptAIInlinePatch={onCodePanelAcceptAIInlinePatch}
+            onCodePanelRejectAIInlinePatch={onCodePanelRejectAIInlinePatch}
+          />
         </FloatingPanel>
       );
     case "markdownPreview":
@@ -526,9 +725,9 @@ export const MainLayoutPanelRenderer: React.FC<
           maxSize={1100}
           {...panelProps}
         >
-          <MarkdownPreviewPanelContent
+          <MarkdownPreviewPanelBody
             source={markdownPreviewSource}
-            onOpenExternalLinkPreview={onMarkdownLinkPreviewOpen}
+            onMarkdownLinkPreviewOpen={onMarkdownLinkPreviewOpen}
           />
         </FloatingPanel>
       );

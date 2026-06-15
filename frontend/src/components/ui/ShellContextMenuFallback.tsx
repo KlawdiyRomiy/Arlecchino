@@ -4,6 +4,10 @@ import {
   getLogicalViewportSize,
   screenToLogicalPixels,
 } from "../../utils/logicalViewport";
+import {
+  getInteractiveSurfaceMotionStyle,
+  markInteractiveSurfaceMotion,
+} from "./interactiveSurfaceMotion";
 
 const FALLBACK_MENU_WIDTH = 224;
 const FALLBACK_MENU_HEIGHT = 42;
@@ -45,6 +49,9 @@ const clampMenuPosition = (x: number, y: number): FallbackMenuState => {
 
 export const ShellContextMenuFallback: React.FC = () => {
   const [menu, setMenu] = React.useState<FallbackMenuState | null>(null);
+  const markMenuMotion = React.useCallback(() => {
+    markInteractiveSurfaceMotion("menu");
+  }, []);
 
   React.useEffect(() => {
     const closeMenu = () => setMenu(null);
@@ -65,6 +72,7 @@ export const ShellContextMenuFallback: React.FC = () => {
       }
 
       event.preventDefault();
+      markInteractiveSurfaceMotion("menu");
       setMenu(clampMenuPosition(event.clientX, event.clientY));
     };
 
@@ -107,8 +115,14 @@ export const ShellContextMenuFallback: React.FC = () => {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: -5 }}
           role="menu"
-          style={{ left: menu.x, position: "fixed", top: menu.y }}
+          style={{
+            left: menu.x,
+            position: "fixed",
+            top: menu.y,
+            ...getInteractiveSurfaceMotionStyle({ preserveTransform: true }),
+          }}
           transition={{ duration: 0.12, ease: "easeOut" }}
+          onAnimationStart={markMenuMotion}
           onContextMenu={(event) => event.preventDefault()}
         >
           <div

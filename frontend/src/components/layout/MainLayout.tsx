@@ -561,10 +561,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const { isDark, theme: currentTheme, setTheme, resolvedThemeId } = useTheme();
   const prefersReducedMotion = useReducedMotion();
   const reducePanelMotion = prefersReducedMotion;
-  const panelMotionActive = usePerformanceStore(
-    (state) => state.panelMotionActive,
-  );
-  const adaptivePerformanceMode = usePerformanceStore((state) => state.mode);
   const panelLayoutTransition = reducePanelMotion
     ? { duration: 0 }
     : FLOATING_PANEL_LAYOUT_TRANSITION;
@@ -1327,8 +1323,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     resizingPanel !== null ||
     resizingPreviewWindowId !== null;
   const panelMotionPressureActive =
-    panelMotionActive ||
-    adaptivePerformanceMode !== "normal" ||
     panelInteractionPressureActive ||
     panelDropSettling ||
     relocatingPanelIds.length > 0 ||

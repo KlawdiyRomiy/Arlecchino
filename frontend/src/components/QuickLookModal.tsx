@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import CodeMirror, { ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import {
   EditorView,
@@ -21,6 +21,10 @@ import { tags as t } from "@lezer/highlight";
 import { createTheme } from "thememirror";
 import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import { createCodeMirrorFoldExtensions } from "../utils/codeMirrorWorkflowExtensions";
+import {
+  interactiveSurfaceOverlayStyle,
+  useInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
 
 interface QuickLookModalProps {
   isOpen: boolean;
@@ -198,6 +202,14 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
   onClose,
   onExpand,
 }) => {
+  const reduceModalMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "modal",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceModalMotion),
+    },
+  );
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<HTMLDivElement>(null);
@@ -316,12 +328,14 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduceModalMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
+          exit={reduceModalMotion ? { opacity: 1 } : { opacity: 0 }}
+          transition={{ duration: reduceModalMotion ? 0 : 0.15 }}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
           onClick={handleBackdropClick}
+          onAnimationStart={markMotionStart}
+          style={interactiveSurfaceOverlayStyle}
           role="button"
           tabIndex={-1}
           onKeyDown={(e) => {
@@ -345,12 +359,23 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
           <motion.div
             ref={modalRef}
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            initial={
+              reduceModalMotion ? false : { opacity: 0, scale: 0.95, y: 20 }
+            }
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
+            exit={
+              reduceModalMotion
+                ? { opacity: 1, scale: 1, y: 0 }
+                : { opacity: 0, scale: 0.95, y: 20 }
+            }
+            transition={{
+              duration: reduceModalMotion ? 0 : 0.2,
+              ease: "easeOut",
+            }}
             className="relative flex flex-col rounded-lg shadow-2xl overflow-hidden bg-black"
+            onAnimationStart={markMotionStart}
             style={{
+              ...surfaceStyle,
               width: modalSize.width,
               height: modalSize.height,
             }}
@@ -433,12 +458,16 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
             <div
               ref={resizeRef}
               className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
-              onMouseDown={() => setIsResizing(true)}
+              onMouseDown={() => {
+                markMotionStart();
+                setIsResizing(true);
+              }}
               role="button"
               tabIndex={0}
               aria-label="Resize modal"
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
+                  markMotionStart();
                   setIsResizing(true);
                 }
               }}

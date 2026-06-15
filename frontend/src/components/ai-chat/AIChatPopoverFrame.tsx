@@ -1,9 +1,6 @@
 import React from "react";
-import {
-  m,
-  useReducedMotion,
-  type HTMLMotionProps,
-} from "framer-motion";
+import { m, useReducedMotion, type HTMLMotionProps } from "framer-motion";
+import { useInteractiveSurfaceMotion } from "../ui/interactiveSurfaceMotion";
 
 interface AIChatPopoverFrameProps extends HTMLMotionProps<"div"> {
   children: React.ReactNode;
@@ -12,13 +9,33 @@ interface AIChatPopoverFrameProps extends HTMLMotionProps<"div"> {
 export function AIChatPopoverFrame({
   children,
   className = "",
+  onAnimationStart,
+  style,
   ...props
 }: AIChatPopoverFrameProps) {
   const reduceMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "popover",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceMotion),
+    },
+  );
+  const handleAnimationStart = React.useCallback<
+    NonNullable<HTMLMotionProps<"div">["onAnimationStart"]>
+  >(
+    (definition) => {
+      markMotionStart();
+      onAnimationStart?.(definition);
+    },
+    [markMotionStart, onAnimationStart],
+  );
+
   return (
     <m.div
       {...props}
       className={`ai-chat-popover ai-chat-popover-frame ${className}`.trim()}
+      onAnimationStart={handleAnimationStart}
       initial={
         reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
       }
@@ -27,6 +44,10 @@ export function AIChatPopoverFrame({
       transition={{
         duration: reduceMotion ? 0.1 : 0.16,
         ease: [0.22, 1, 0.36, 1],
+      }}
+      style={{
+        ...surfaceStyle,
+        ...style,
       }}
     >
       {children}

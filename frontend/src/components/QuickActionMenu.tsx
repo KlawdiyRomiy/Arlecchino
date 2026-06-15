@@ -3,6 +3,10 @@ import { motion } from "framer-motion";
 import { WandSparkles } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { getThemeColors, radius, shadows, zIndex } from "../styles/colors";
+import {
+  getInteractiveSurfaceMotionStyle,
+  markInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
 
 export interface QuickActionMenuItem {
   title: string;
@@ -31,20 +35,27 @@ export const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
   const menuRef = useRef<HTMLDivElement>(null);
+  const markInteractiveMotion = React.useCallback(() => {
+    markInteractiveSurfaceMotion("menu");
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
 
+    markInteractiveSurfaceMotion("menu");
+
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        markInteractiveSurfaceMotion("menu");
         onClose();
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        markInteractiveSurfaceMotion("menu");
         onClose();
       }
     };
@@ -90,6 +101,7 @@ export const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, y: 10 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
+      onAnimationStart={markInteractiveMotion}
       style={{
         position: "fixed",
         left: finalX,
@@ -104,6 +116,7 @@ export const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        ...getInteractiveSurfaceMotionStyle({ preserveTransform: true }),
       }}
     >
       <div
@@ -134,6 +147,7 @@ export const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
                 if (action.disabled) {
                   return;
                 }
+                markInteractiveSurfaceMotion("menu");
                 onSelect(index);
               }}
               style={{

@@ -331,6 +331,12 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   },
 }));
 
+export const beginInteractiveSurfaceMotionWindow = (
+  durationMs?: number,
+): void => {
+  usePerformanceStore.getState().beginPanelMotionWindow(durationMs);
+};
+
 export const resolveAdaptiveEditorFeatureBudget = (
   snapshot: PerformanceBudgetSnapshot,
 ): AdaptiveEditorFeatureBudget => {

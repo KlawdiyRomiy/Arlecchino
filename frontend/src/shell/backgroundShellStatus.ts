@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { usePerformanceStore } from "../stores/performanceStore";
 
 export const BACKGROUND_SHELL_STATUS_EVENT = "shell:background:status";
 
@@ -141,6 +142,7 @@ const listeners = new Set<() => void>();
 
 let snapshot: BackgroundShellStatusSnapshot = FALLBACK_SNAPSHOT;
 let snapshotFingerprint = "";
+let deferredMotionNotification = false;
 
 const JOB_STATUSES: readonly BackgroundShellJobStatus[] = [
   "queued",
@@ -533,6 +535,26 @@ export const subscribeBackgroundShellStatus = (
   };
 };
 
+const notifyBackgroundShellStatusListeners = (): void => {
+  if (usePerformanceStore.getState().panelMotionActive) {
+    deferredMotionNotification = true;
+    return;
+  }
+
+  deferredMotionNotification = false;
+  listeners.forEach((listener) => listener());
+};
+
+usePerformanceStore.subscribe((state, previousState) => {
+  if (
+    previousState.panelMotionActive &&
+    !state.panelMotionActive &&
+    deferredMotionNotification
+  ) {
+    notifyBackgroundShellStatusListeners();
+  }
+});
+
 export const syncBackgroundShellStatusFromPayload = (
   payload: unknown,
 ): BackgroundShellStatusSnapshot => {
@@ -544,7 +566,7 @@ export const syncBackgroundShellStatusFromPayload = (
 
   snapshotFingerprint = fingerprint;
   snapshot = cloneSnapshot(normalized);
-  listeners.forEach((listener) => listener());
+  notifyBackgroundShellStatusListeners();
   return snapshot;
 };
 

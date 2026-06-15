@@ -14,6 +14,7 @@ import {
   type AIChatMentionCandidate,
   type AIChatMentionTrigger,
 } from "../../../bindings/arlecchino/internal/ai/models";
+import { useInteractiveSurfaceMotion } from "../ui/interactiveSurfaceMotion";
 
 interface MentionPickerProps {
   open: boolean;
@@ -75,6 +76,13 @@ export function MentionPicker({
   onHover,
 }: MentionPickerProps) {
   const reduceMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "popover",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceMotion),
+    },
+  );
   const groups = useMemo(() => groupedCandidates(candidates), [candidates]);
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   let flatIndex = -1;
@@ -105,6 +113,7 @@ export function MentionPicker({
             event.stopPropagation();
           }}
           onPointerDown={(event) => event.stopPropagation()}
+          onAnimationStart={markMotionStart}
           initial={
             reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.98 }
           }
@@ -118,6 +127,7 @@ export function MentionPicker({
             duration: reduceMotion ? 0.1 : 0.16,
             ease: [0.22, 1, 0.36, 1],
           }}
+          style={surfaceStyle}
         >
           <div className="ai-chat-popover__title">
             {title ?? (trigger === "/" ? "Commands" : "Mentions")}

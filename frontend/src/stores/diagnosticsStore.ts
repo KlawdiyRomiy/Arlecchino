@@ -7,6 +7,7 @@ import {
   isSameOrChildPath,
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
+import { usePerformanceStore } from "./performanceStore";
 
 export type DiagnosticsSeverity = "error" | "warning" | "info";
 export type DiagnosticsSeverityFilter = "all" | DiagnosticsSeverity;
@@ -530,6 +531,9 @@ const normalizeRuntimeState = (state?: string): DiagnosticsRuntimeState => {
 let diagnosticsEventsBound = false;
 let diagnosticsEventsBindTimer: number | null = null;
 let diagnosticsEventsBoundWaiters: Array<() => void> = [];
+let diagnosticsMotionSubscriptionStarted = false;
+let pendingDiagnosticsStatusEvent: DiagnosticsStatusEventPayload | null = null;
+const pendingDiagnosticsEvents = new Map<string, DiagnosticsEventPayload>();
 const diagnosticPayloadMatchesCurrentSession = (
   payload: DiagnosticsEventPayload | DiagnosticsStatusEventPayload,
 ) => {
@@ -538,6 +542,81 @@ const diagnosticPayloadMatchesCurrentSession = (
       ? payload.sessionId
       : "main";
   return sessionId === getCurrentProjectSessionId();
+};
+
+const getDiagnosticsEventCoalescingKey = (
+  event: DiagnosticsEventPayload,
+): string => {
+  const filePath = resolveFilePath(event);
+  return [
+    filePath,
+    normalizeDiagnosticsLanguage(event.language ?? ""),
+    event.projectPath ?? "",
+    normalizeGeneration(event.generation),
+  ].join("\u0000");
+};
+
+const flushDeferredDiagnosticsEvents = () => {
+  if (
+    pendingDiagnosticsEvents.size === 0 &&
+    pendingDiagnosticsStatusEvent === null
+  ) {
+    return;
+  }
+
+  const events = Array.from(pendingDiagnosticsEvents.values());
+  const statusEvent = pendingDiagnosticsStatusEvent;
+  pendingDiagnosticsEvents.clear();
+  pendingDiagnosticsStatusEvent = null;
+
+  events.forEach((event) => {
+    if (diagnosticPayloadMatchesCurrentSession(event)) {
+      useDiagnosticsStore.getState().ingestDiagnosticsEvent(event);
+    }
+  });
+  if (statusEvent && diagnosticPayloadMatchesCurrentSession(statusEvent)) {
+    useDiagnosticsStore.getState().ingestDiagnosticsStatusEvent(statusEvent);
+  }
+};
+
+const ensureDiagnosticsMotionSubscription = () => {
+  if (diagnosticsMotionSubscriptionStarted) {
+    return;
+  }
+
+  diagnosticsMotionSubscriptionStarted = true;
+  usePerformanceStore.subscribe((state, previousState) => {
+    if (previousState.panelMotionActive && !state.panelMotionActive) {
+      flushDeferredDiagnosticsEvents();
+    }
+  });
+};
+
+const ingestDiagnosticsEventWithMotionBarrier = (
+  event: DiagnosticsEventPayload,
+) => {
+  ensureDiagnosticsMotionSubscription();
+  if (usePerformanceStore.getState().panelMotionActive) {
+    pendingDiagnosticsEvents.set(
+      getDiagnosticsEventCoalescingKey(event),
+      event,
+    );
+    return;
+  }
+
+  useDiagnosticsStore.getState().ingestDiagnosticsEvent(event);
+};
+
+const ingestDiagnosticsStatusEventWithMotionBarrier = (
+  event: DiagnosticsStatusEventPayload,
+) => {
+  ensureDiagnosticsMotionSubscription();
+  if (usePerformanceStore.getState().panelMotionActive) {
+    pendingDiagnosticsStatusEvent = event;
+    return;
+  }
+
+  useDiagnosticsStore.getState().ingestDiagnosticsStatusEvent(event);
 };
 
 const resolveDiagnosticsEventsBound = () => {
@@ -918,13 +997,13 @@ const bindDiagnosticsEvents = () => {
     if (!diagnosticPayloadMatchesCurrentSession(event)) {
       return;
     }
-    useDiagnosticsStore.getState().ingestDiagnosticsEvent(event);
+    ingestDiagnosticsEventWithMotionBarrier(event);
   });
   EventsOn("lsp:diagnostics:status", (event: DiagnosticsStatusEventPayload) => {
     if (!diagnosticPayloadMatchesCurrentSession(event)) {
       return;
     }
-    useDiagnosticsStore.getState().ingestDiagnosticsStatusEvent(event);
+    ingestDiagnosticsStatusEventWithMotionBarrier(event);
   });
 };
 

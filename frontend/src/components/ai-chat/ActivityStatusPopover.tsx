@@ -13,6 +13,7 @@ import { ActivityIcon } from "./ActivityIcon";
 import { compactText, getActionMeta } from "./aiChatPresentation";
 import type { ActivityStatusItem } from "./activityStatus";
 import { getProviderPresentation } from "./providerPresentation";
+import { useInteractiveSurfaceMotion } from "../ui/interactiveSurfaceMotion";
 
 interface RuntimeEgressMetrics {
   inputTokens?: number;
@@ -87,6 +88,13 @@ export function ActivityStatusPopover({
   summary: ActivityStatusItem;
 }) {
   const reduceMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "popover",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceMotion),
+    },
+  );
   const visibleItems = items.length > 0 ? items : [summary];
   const activeContext: AIContextSummary | AIContextSnapshot | null =
     activeRun?.contextSummary ??
@@ -166,6 +174,7 @@ export function ActivityStatusPopover({
       className="ai-chat-popover ai-chat-activity-popover ai-chat-runtime-popover"
       role="menu"
       aria-label="AI runtime status"
+      onAnimationStart={markMotionStart}
       initial={
         reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
       }
@@ -175,6 +184,7 @@ export function ActivityStatusPopover({
         duration: reduceMotion ? 0.1 : 0.16,
         ease: [0.22, 1, 0.36, 1],
       }}
+      style={surfaceStyle}
     >
       <div className="ai-chat-popover__title">Runtime status</div>
 

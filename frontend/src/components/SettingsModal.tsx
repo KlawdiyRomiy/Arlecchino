@@ -113,6 +113,10 @@ import { isAppNotificationInteractionEvent } from "../utils/appNotificationTarge
 import { MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from "../utils/uiScale";
 import { MotionDropdownContent } from "./ui/MotionDropdownContent";
 import {
+  interactiveSurfaceOverlayStyle,
+  useInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
+import {
   SHELL_DIALOG_OVERLAY_TRANSITION,
   SHELL_DIALOG_PANEL_TRANSITION,
 } from "./ui/motionContracts";
@@ -1283,6 +1287,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
 }) => {
   const reduceSettingsMotion = useReducedMotion();
+  const { markMotionStart: markSettingsMotion, surfaceStyle } =
+    useInteractiveSurfaceMotion("dialog", {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceSettingsMotion),
+    });
   const [activeTab, setActiveTab] = useState<TabId>("appearance");
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(false);
@@ -3664,6 +3673,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       ? { duration: 0 }
                       : SHELL_DIALOG_OVERLAY_TRANSITION
                   }
+                  onAnimationStart={markSettingsMotion}
+                  style={interactiveSurfaceOverlayStyle}
                 />
               </Dialog.Overlay>
               <Dialog.Content
@@ -3690,11 +3701,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       : SHELL_DIALOG_OVERLAY_TRANSITION
                   }
                   style={{
+                    ...surfaceStyle,
                     transform: `translate(-50%, -50%) scale(${uiScale})`,
                     transformOrigin: "center",
                     width: `min(${94 / uiScale}vw, 1080px)`,
                     height: `min(${86 / uiScale}vh, 800px)`,
                   }}
+                  onAnimationStart={markSettingsMotion}
                 >
                   <motion.div
                     className="flex h-full w-full overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)]"
@@ -3712,6 +3725,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         ? { duration: 0 }
                         : SHELL_DIALOG_PANEL_TRANSITION
                     }
+                    onAnimationStart={markSettingsMotion}
+                    style={surfaceStyle}
                   >
                     <div className="flex w-[276px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] p-3">
                       <div className="shell-cluster-soft mb-3 flex min-h-[58px] w-full items-center gap-3 px-3 py-2">
@@ -3810,6 +3825,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               }
                               className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_94%,transparent)] shadow-[var(--shadow-overlay)]"
                               data-testid="settings-search-suggestions"
+                              onAnimationStart={markSettingsMotion}
+                              style={surfaceStyle}
                             >
                               <div className="max-h-[270px] overflow-y-auto p-1.5">
                                 <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">

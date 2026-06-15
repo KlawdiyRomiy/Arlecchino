@@ -2,6 +2,7 @@ import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { motion, useReducedMotion } from "framer-motion";
 import { SHELL_DROPDOWN_TRANSITION } from "./motionContracts";
+import { useInteractiveSurfaceMotion } from "./interactiveSurfaceMotion";
 
 type DropdownMenuContentProps = React.ComponentPropsWithoutRef<
   typeof DropdownMenu.Content
@@ -17,6 +18,13 @@ export const MotionDropdownContent = React.forwardRef<
   MotionDropdownContentProps
 >(({ children, style, collisionPadding = 8, ...contentProps }, ref) => {
   const reduceMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "dropdown",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceMotion),
+    },
+  );
 
   return (
     <DropdownMenu.Content
@@ -32,9 +40,11 @@ export const MotionDropdownContent = React.forwardRef<
           reduceMotion ? { opacity: 1 } : { opacity: 0, scale: 0.98, y: -4 }
         }
         transition={reduceMotion ? { duration: 0 } : SHELL_DROPDOWN_TRANSITION}
+        onAnimationStart={markMotionStart}
         style={{
           transformOrigin:
             "var(--radix-dropdown-menu-content-transform-origin)",
+          ...surfaceStyle,
           ...style,
         }}
         data-motion-dropdown="true"

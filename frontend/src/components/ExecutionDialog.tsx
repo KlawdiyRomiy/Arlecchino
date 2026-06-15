@@ -1,9 +1,13 @@
 import React, { useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Play, Bug, TerminalSquare, Globe, X } from "lucide-react";
 
 import { Input } from "./ui";
+import {
+  interactiveSurfaceOverlayStyle,
+  useInteractiveSurfaceMotion,
+} from "./ui/interactiveSurfaceMotion";
 import type { ExecutionProfile } from "../utils/executionProfiles";
 
 interface ExecutionDialogProps {
@@ -37,6 +41,14 @@ export const ExecutionDialog: React.FC<ExecutionDialogProps> = ({
   onExecuteProfile,
   onExecuteCustomCommand,
 }) => {
+  const reduceDialogMotion = useReducedMotion();
+  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
+    "dialog",
+    {
+      preserveTransform: true,
+      reduceMotion: Boolean(reduceDialogMotion),
+    },
+  );
   const [customCommand, setCustomCommand] = useState("");
 
   const sectionLabelClass =
@@ -79,16 +91,35 @@ export const ExecutionDialog: React.FC<ExecutionDialogProps> = ({
           {isOpen && (
             <>
               <Dialog.Overlay forceMount asChild>
-                <div className="fixed inset-0 z-[110] bg-black/45 backdrop-blur-sm" />
+                <motion.div
+                  className="fixed inset-0 z-[110] bg-black/45 backdrop-blur-sm"
+                  initial={reduceDialogMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
+                  transition={{ duration: reduceDialogMotion ? 0 : 0.12 }}
+                  onAnimationStart={markMotionStart}
+                  style={interactiveSurfaceOverlayStyle}
+                />
               </Dialog.Overlay>
               <Dialog.Content forceMount asChild>
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
+                  initial={
+                    reduceDialogMotion ? false : { opacity: 0, scale: 0.95 }
+                  }
                   animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.97 }}
-                  transition={{ duration: 0.14, ease: "easeOut" }}
+                  exit={
+                    reduceDialogMotion
+                      ? { opacity: 1, scale: 1 }
+                      : { opacity: 0, scale: 0.97 }
+                  }
+                  transition={{
+                    duration: reduceDialogMotion ? 0 : 0.14,
+                    ease: "easeOut",
+                  }}
                   className="fixed left-1/2 top-1/2 z-[111] w-[min(760px,calc(100vw-40px))] -translate-x-1/2 -translate-y-1/2 rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
                   data-testid="execution-dialog"
+                  onAnimationStart={markMotionStart}
+                  style={surfaceStyle}
                 >
                   <div className="flex items-start justify-between gap-6">
                     <div className="min-w-0">
