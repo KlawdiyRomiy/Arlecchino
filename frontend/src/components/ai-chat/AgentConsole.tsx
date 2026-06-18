@@ -53,9 +53,18 @@ const ptyFallbackTransport = "pty_fallback";
 const terminalBufferLimit = 32 * 1024;
 const statusLimit = 24;
 
-const ansiPattern =
-  // eslint-disable-next-line no-control-regex
-  /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
+const ansiPattern = new RegExp(
+  String.raw`\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))`,
+  "g",
+);
+const terminalControlPattern = new RegExp(
+  String.raw`[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]`,
+  "g",
+);
+const nonPrintablePattern = new RegExp(
+  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ufffd]`,
+  "g",
+);
 
 function isInteractiveFallbackEnvelope(
   envelope: AIChatRunEnvelope | null,
@@ -84,11 +93,8 @@ function appendLimitedBuffer(current: string, chunk: string): string {
 function normalizeTerminalText(value: string): string {
   return value
     .replace(ansiPattern, "")
-    .replace(
-      /[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
-      "",
-    )
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\ufffd]/g, "")
+    .replace(terminalControlPattern, "")
+    .replace(nonPrintablePattern, "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/\n{3,}/g, "\n\n")

@@ -548,7 +548,7 @@ export function ghostExtension(
         return;
       }
 
-      let ghostText = helpers.trimToTokenLimit(
+      const ghostText = helpers.trimToTokenLimit(
         fullInsertText,
         forceIdle ? 24 : 5,
       );

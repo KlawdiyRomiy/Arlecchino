@@ -39,7 +39,10 @@ import {
   FLOATING_PANEL_LAYOUT_TRANSITION,
   FLOATING_PANEL_LAYOUT_TRANSITION_MS,
 } from "./floatingPanelMotion";
-import { markInteractiveSurfaceMotion } from "./interactiveSurfaceMotion";
+import {
+  beginInteractiveSurfaceMotionSession,
+  markInteractiveSurfaceMotion,
+} from "./interactiveSurfaceMotion";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -57,6 +60,7 @@ interface PanelBounds {
 
 interface PanelDragSession {
   captureTarget: HTMLElement | null;
+  finishMotionSession: () => void;
   handlePointerCancel: (event: PointerEvent) => void;
   handlePointerMove: (event: PointerEvent) => void;
   handlePointerUp: (event: PointerEvent) => void;
@@ -68,6 +72,7 @@ interface PanelResizeSession {
   cursor: string;
   cursorOwner: string;
   edge: string;
+  finishMotionSession: () => void;
   handleLostPointerCapture: (event: PointerEvent) => void;
   handlePageHide: () => void;
   handlePointerCancel: (event: PointerEvent) => void;
@@ -759,6 +764,7 @@ export const FloatingPanel = React.forwardRef<
         session.handleLostPointerCapture,
       );
       releasePointerCapture(session.captureTarget, session.pointerId);
+      session.finishMotionSession();
 
       if (resizeFrameRef.current !== null || pendingResizeRef.current) {
         if (resizeFrameRef.current !== null) {
@@ -814,6 +820,9 @@ export const FloatingPanel = React.forwardRef<
           return;
         }
 
+        const finishMotionSession = beginInteractiveSurfaceMotionSession(
+          FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180,
+        );
         const pointerId = e.pointerId;
         const captureTarget = e.currentTarget;
         const cursor = getResizeCursor(edge);
@@ -894,6 +903,7 @@ export const FloatingPanel = React.forwardRef<
           cursor,
           cursorOwner,
           edge,
+          finishMotionSession,
           handleLostPointerCapture,
           handlePageHide,
           handlePointerCancel,
@@ -1056,6 +1066,7 @@ export const FloatingPanel = React.forwardRef<
           true,
         );
         releasePointerCapture(session.captureTarget, session.pointerId);
+        session.finishMotionSession();
         cancelDragTargetUpdate();
 
         if (options.commitDrop && options.event) {
@@ -1147,6 +1158,9 @@ export const FloatingPanel = React.forwardRef<
           finishActiveResizeSession();
         }
 
+        const finishMotionSession = beginInteractiveSurfaceMotionSession(
+          FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180,
+        );
         const rect = panelRef.current?.getBoundingClientRect();
         startRef.current = {
           ...startRef.current,
@@ -1221,6 +1235,7 @@ export const FloatingPanel = React.forwardRef<
 
         dragSessionRef.current = {
           captureTarget,
+          finishMotionSession,
           handlePointerCancel,
           handlePointerMove,
           handlePointerUp,
@@ -1337,6 +1352,13 @@ export const FloatingPanel = React.forwardRef<
       isDragging ||
       isResizing ||
       isRelocating;
+    const contentVisibilityStyle: React.CSSProperties =
+      mode === "floating" || isDragging || isResizing || isRelocating
+        ? {}
+        : {
+            contentVisibility: "auto",
+            containIntrinsicSize: "1px 480px",
+          };
 
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
@@ -1916,8 +1938,7 @@ export const FloatingPanel = React.forwardRef<
       zIndex: 0,
       pointerEvents: isResizing ? "none" : "auto",
       contain: motionPaintConstrained ? "layout paint style" : "paint",
-      contentVisibility: "auto",
-      containIntrinsicSize: "1px 480px",
+      ...contentVisibilityStyle,
       isolation: "isolate",
       transform: "translateZ(0)",
       willChange: motionPaintConstrained ? "transform" : "auto",

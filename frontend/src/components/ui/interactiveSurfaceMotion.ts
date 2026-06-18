@@ -40,6 +40,35 @@ export const markInteractiveSurfaceMotion = (
   beginInteractiveSurfaceMotionWindow(resolveMotionDuration(kindOrDuration));
 };
 
+export const beginInteractiveSurfaceMotionSession = (
+  kindOrDuration: InteractiveSurfaceMotionKind | number = "popover",
+): (() => void) => {
+  const duration = resolveMotionDuration(kindOrDuration);
+  if (duration <= 0) {
+    return () => undefined;
+  }
+
+  beginInteractiveSurfaceMotionWindow(duration);
+  if (typeof window === "undefined") {
+    return () => beginInteractiveSurfaceMotionWindow(duration);
+  }
+
+  const refreshIntervalMs = Math.max(25, Math.floor(duration * 0.45));
+  let finished = false;
+  const refreshTimer = window.setInterval(() => {
+    beginInteractiveSurfaceMotionWindow(duration);
+  }, refreshIntervalMs);
+
+  return () => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    window.clearInterval(refreshTimer);
+    beginInteractiveSurfaceMotionWindow(duration);
+  };
+};
+
 export const interactiveSurfaceOverlayStyle: CSSProperties = {
   contain: "layout paint style",
   transform: "translateZ(0)",
