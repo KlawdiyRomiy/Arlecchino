@@ -121,7 +121,10 @@ import {
   type AIChatUIPreferences,
   useEditorSettingsStore,
 } from "../../stores/editorSettingsStore";
-import { useAIChatStore } from "../../stores/aiChatStore";
+import {
+  aiChatProjectScopeKey,
+  useAIChatStore,
+} from "../../stores/aiChatStore";
 import { useAIInlinePatchStore } from "../../stores/aiInlinePatchStore";
 import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 import { useAppNotificationStore } from "../../stores/appNotificationStore";
@@ -133,6 +136,7 @@ import {
 } from "../../utils/aiChatFullscreenCommands";
 import { dispatchApplicationMenuAction } from "../../utils/applicationMenu";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
+import { normalizeProjectPathIdentity } from "../../utils/projectPaths";
 import { AIChatHeader } from "./AIChatHeader";
 import { ActivityStatusPopover } from "./ActivityStatusPopover";
 import {
@@ -191,6 +195,7 @@ import "./ai-chat.css";
 
 const defaultChatSessionId = "default";
 const chatHydrationBatchSize = 4;
+const allProjectChatRunsLimit = 0;
 const chatHydrationMaxAttempts = 3;
 const chatHydrationRetryDelayMs = 750;
 
@@ -721,6 +726,51 @@ function clamp(value: number, min: number, max: number): number {
 
 function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
   return run.sessionId?.trim() || defaultChatSessionId;
+}
+
+const defaultProjectSessionId = "main";
+
+type ProjectScopedRecord = {
+  projectSessionId?: string | null;
+  runId?: string | null;
+  id?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+function projectSessionIdOf(
+  record: ProjectScopedRecord | null | undefined,
+): string {
+  return record?.projectSessionId?.trim() || defaultProjectSessionId;
+}
+
+function projectSessionMatches(
+  record: ProjectScopedRecord | null | undefined,
+  currentProjectSessionId: string,
+): boolean {
+  return (
+    projectSessionIdOf(record) ===
+    (currentProjectSessionId.trim() || defaultProjectSessionId)
+  );
+}
+
+function projectScopedRunId(
+  record: ProjectScopedRecord | null | undefined,
+): string {
+  return record?.runId?.trim() || record?.id?.trim() || "";
+}
+
+function projectScopedRecordTime(record: ProjectScopedRecord): number {
+  const timestamp = Date.parse(record.createdAt || record.updatedAt || "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isFreshForProjectScope(
+  record: ProjectScopedRecord,
+  scopeActivatedAt: number,
+): boolean {
+  const timestamp = projectScopedRecordTime(record);
+  return timestamp > 0 && timestamp >= scopeActivatedAt - 1000;
 }
 
 function isBackgroundLinkedReviewRun(
@@ -1332,6 +1382,7 @@ export function AIChatPanelContent({
       })),
     );
   const {
+    projectScopeKey,
     status,
     providers,
     actions,
@@ -1351,6 +1402,7 @@ export function AIChatPanelContent({
     activeRunId,
     contextPreview,
     contextProviders,
+    setProjectScopeKey,
     setStatus,
     setProviders,
     setActions,
@@ -1364,6 +1416,7 @@ export function AIChatPanelContent({
     upsertRunEnvelope,
     appendRunTimelineEvent,
     deleteSessionRuns,
+    clearProjectChatState,
     setHydratedRun,
     upsertHydratedRuns,
     appendRunToken,
@@ -1403,6 +1456,14 @@ export function AIChatPanelContent({
   );
   const [artifactsByRunId, setArtifactsByRunId] = useState<ArtifactMap>({});
   const currentProjectSessionId = getCurrentProjectSessionId();
+  const currentProjectPathKey = useMemo(
+    () => normalizeProjectPathIdentity(projectPath || ""),
+    [projectPath],
+  );
+  const currentChatProjectScopeKey = useMemo(
+    () => aiChatProjectScopeKey(currentProjectSessionId, currentProjectPathKey),
+    [currentProjectPathKey, currentProjectSessionId],
+  );
   const upsertInlinePatchArtifact = useAIInlinePatchStore(
     (store) => store.upsertArtifact,
   );
@@ -1436,6 +1497,9 @@ export function AIChatPanelContent({
   const hydrationFailureAttemptsRef = useRef<Record<string, number>>({});
   const hydrationRetryTimersRef = useRef<Record<string, number>>({});
   const hydrationMountedRef = useRef(true);
+  const chatProjectScopeKeyRef = useRef(currentChatProjectScopeKey);
+  const chatProjectScopeActivatedAtRef = useRef(Date.now());
+  const currentProjectRunIdsRef = useRef<Set<string>>(new Set());
   const continuityRequestSeqRef = useRef(0);
   const lastFullscreenCommandRef = useRef<{
     command: AIChatFullscreenCommandDetail["command"];
@@ -1724,13 +1788,123 @@ export function AIChatPanelContent({
       : modelAgentRuntimeFamily
     : "";
   const activeSessionId = state.activeSessionId || defaultChatSessionId;
+  const chatProjectScopeReady =
+    projectScopeKey === currentChatProjectScopeKey &&
+    chatProjectScopeKeyRef.current === currentChatProjectScopeKey;
+  const scopedRuns = useMemo(
+    () =>
+      chatProjectScopeReady
+        ? runs.filter((run) =>
+            projectSessionMatches(run, currentProjectSessionId),
+          )
+        : [],
+    [chatProjectScopeReady, currentProjectSessionId, runs],
+  );
+  const scopedRunIds = useMemo(
+    () => new Set(scopedRuns.map((run) => run.id).filter(Boolean)),
+    [scopedRuns],
+  );
+  currentProjectRunIdsRef.current = scopedRunIds;
+  const scopedHydratedRuns = useMemo(() => {
+    const next: Record<string, AIChatRun> = {};
+    for (const [runId, run] of Object.entries(hydratedRuns)) {
+      if (
+        run?.id &&
+        projectSessionMatches(run, currentProjectSessionId) &&
+        (scopedRunIds.has(runId) || scopedRunIds.has(run.id))
+      ) {
+        next[runId] = run;
+      }
+    }
+    return next;
+  }, [currentProjectSessionId, hydratedRuns, scopedRunIds]);
+  const scopedStreamingTextByRunId = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const [runId, text] of Object.entries(streamingTextByRunId)) {
+      if (scopedRunIds.has(runId) || scopedHydratedRuns[runId]) {
+        next[runId] = text;
+      }
+    }
+    return next;
+  }, [scopedHydratedRuns, scopedRunIds, streamingTextByRunId]);
+  const scopedEgressRecords = useMemo(
+    () =>
+      egressRecords.filter((record) => {
+        if (!chatProjectScopeReady) return false;
+        if (!projectSessionMatches(record, currentProjectSessionId))
+          return false;
+        const runId = projectScopedRunId(record);
+        return !runId || scopedRunIds.has(runId);
+      }),
+    [
+      chatProjectScopeReady,
+      currentProjectSessionId,
+      egressRecords,
+      scopedRunIds,
+    ],
+  );
+  const scopedPendingApprovals = useMemo(
+    () =>
+      pendingApprovals.filter((approval) => {
+        if (!chatProjectScopeReady) return false;
+        if (!projectSessionMatches(approval, currentProjectSessionId)) {
+          return false;
+        }
+        const runId = projectScopedRunId(approval);
+        return !runId || scopedRunIds.has(runId);
+      }),
+    [
+      chatProjectScopeReady,
+      currentProjectSessionId,
+      pendingApprovals,
+      scopedRunIds,
+    ],
+  );
+  const scopedToolAudit = useMemo(
+    () =>
+      toolAudit.filter((record) => {
+        if (!chatProjectScopeReady) return false;
+        const runId = projectScopedRunId(record);
+        return !runId || scopedRunIds.has(runId);
+      }),
+    [chatProjectScopeReady, scopedRunIds, toolAudit],
+  );
+  const recordMatchesCurrentProjectScope = useCallback(
+    (
+      record: ProjectScopedRecord | null | undefined,
+      options: { allowFresh?: boolean; allowRunless?: boolean } = {},
+    ): boolean => {
+      if (!chatProjectScopeReady) return false;
+      if (!record || !projectSessionMatches(record, currentProjectSessionId)) {
+        return false;
+      }
+      const runId = projectScopedRunId(record);
+      if (runId && currentProjectRunIdsRef.current.has(runId)) {
+        return true;
+      }
+      if (
+        options.allowFresh &&
+        isFreshForProjectScope(record, chatProjectScopeActivatedAtRef.current)
+      ) {
+        return true;
+      }
+      if (!runId && options.allowRunless) {
+        return (
+          currentProjectSessionId.trim() !== defaultProjectSessionId ||
+          isFreshForProjectScope(record, chatProjectScopeActivatedAtRef.current)
+        );
+      }
+      return false;
+    },
+    [chatProjectScopeReady, currentProjectSessionId],
+  );
   const selectedMentionsForActiveSession = useMemo(
     () => mentionsForSession(state, activeSessionId),
     [activeSessionId, state.selectedMentionsBySession],
   );
   const activeSessionEnvelopes = useMemo(
-    () => runs.filter((run) => sessionIdOf(run) === activeSessionId),
-    [activeSessionId, runs],
+    () => scopedRuns.filter((run) => sessionIdOf(run) === activeSessionId),
+    [activeSessionId, scopedRuns],
   );
   const activeSessionRunIds = useMemo(
     () => new Set(activeSessionEnvelopes.map((run) => run.id)),
@@ -1741,13 +1915,16 @@ export function AIChatPanelContent({
     activeRunKeyCandidate && activeSessionRunIds.has(activeRunKeyCandidate)
       ? activeRunKeyCandidate
       : (activeSessionEnvelopes[0]?.id ?? "");
-  const activeRun = activeRunKey ? (hydratedRuns[activeRunKey] ?? null) : null;
-  const activeEnvelope = runs.find((run) => run.id === activeRunKey) ?? null;
+  const activeRun = activeRunKey
+    ? (scopedHydratedRuns[activeRunKey] ?? null)
+    : null;
+  const activeEnvelope =
+    scopedRuns.find((run) => run.id === activeRunKey) ?? null;
   const selectedProviderAuthRun = useMemo(() => {
     const providerId = selectedProvider?.id || "";
     if (!providerId) return null;
     return (
-      Object.values(hydratedRuns)
+      Object.values(scopedHydratedRuns)
         .filter((run) => isProviderAuthRun(run, providerId))
         .sort((left, right) => {
           const rightTime = Date.parse(
@@ -1760,7 +1937,7 @@ export function AIChatPanelContent({
           );
         })[0] ?? null
     );
-  }, [hydratedRuns, selectedProvider?.id]);
+  }, [scopedHydratedRuns, selectedProvider?.id]);
   const activeArtifacts = activeRunKey
     ? (artifactsByRunId[activeRunKey] ?? [])
     : [];
@@ -1796,7 +1973,7 @@ export function AIChatPanelContent({
     artifacts: activeArtifacts,
     activeRun,
     activeRunText:
-      activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? "",
+      activeRun?.response ?? scopedStreamingTextByRunId[activeRunKey] ?? "",
     approvalPolicy,
     consentPolicy,
     embeddingStatus,
@@ -1823,6 +2000,7 @@ export function AIChatPanelContent({
         ? providerDisabledReason
         : providerDisabledReason;
   const canSend =
+    chatProjectScopeReady &&
     inputReady &&
     selectedProviderReady &&
     !activeRunRunning &&
@@ -1834,14 +2012,14 @@ export function AIChatPanelContent({
   const newestSessionRunIds = useMemo(() => {
     const seen = new Set<string>();
     const ids: string[] = [];
-    for (const run of runs) {
+    for (const run of scopedRuns) {
       const sessionId = sessionIdOf(run);
       if (!run.id || seen.has(sessionId)) continue;
       seen.add(sessionId);
       ids.push(run.id);
     }
     return ids;
-  }, [runs]);
+  }, [scopedRuns]);
   const hydrationTargetRunIds = useMemo(() => {
     const ids = new Set<string>();
     newestSessionRunIds.forEach((id) => ids.add(id));
@@ -1852,12 +2030,12 @@ export function AIChatPanelContent({
   }, [newestSessionRunIds, transcriptRuns]);
   const hydrationStatusForRun = useCallback(
     (runId: string) => {
-      if (hydratedRuns[runId]) return "hydrated";
+      if (scopedHydratedRuns[runId]) return "hydrated";
       if (failedHydrationRunIds.has(runId)) return "failed";
       if (hydratingRunIds.has(runId)) return "loading";
       return "idle";
     },
-    [failedHydrationRunIds, hydratedRuns, hydratingRunIds],
+    [failedHydrationRunIds, scopedHydratedRuns, hydratingRunIds],
   );
   const sessionSearchTerms = useMemo(
     () => (sessionSearchOpen ? normalizeSessionSearchTerms(sessionSearch) : []),
@@ -1870,11 +2048,11 @@ export function AIChatPanelContent({
         : transcriptRuns.filter((envelope) =>
             runMatchesSessionSearch(
               envelope,
-              hydratedRuns[envelope.id] ?? null,
+              scopedHydratedRuns[envelope.id] ?? null,
               sessionSearchTerms,
             ),
           ),
-    [hydratedRuns, sessionSearchTerms, transcriptRuns],
+    [scopedHydratedRuns, sessionSearchTerms, transcriptRuns],
   );
   const activeSessionSearchIndex = useMemo(() => {
     if (sessionSearchTerms.length === 0 || sessionSearchMatches.length === 0) {
@@ -2052,6 +2230,7 @@ export function AIChatPanelContent({
   );
 
   const refreshRuntime = useCallback(async () => {
+    const requestScopeKey = currentChatProjectScopeKey;
     setLoading(true);
     setRuntimeHydrated(false);
     setRuntimeError(null);
@@ -2092,7 +2271,7 @@ export function AIChatPanelContent({
         nextPendingApprovals,
       ] = await Promise.all([
         AIGetStatus(),
-        AIListChatRuns(50),
+        AIListChatRuns(allProjectChatRunsLimit),
         AIGetContextPreview(contextRequest),
         AIListChatActions(),
         AIListContextProviders(),
@@ -2108,6 +2287,9 @@ export function AIChatPanelContent({
         AIListProviderRuntimes(),
         AIListPendingApprovals(50),
       ]);
+      if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+        return;
+      }
       const safeStatus = normalizeAIStatus(nextStatus);
       const nextProviders = safeStatus.providers;
       const safeConsentPolicy =
@@ -2118,7 +2300,36 @@ export function AIChatPanelContent({
       const safeEmbeddingStatus =
         normalizeAIEmbeddingStatus(nextEmbeddingStatus) ??
         defaultAIEmbeddingStatus();
-      const safeEnvelopes = normalizeAIChatRuns(envelopes);
+      const safeEnvelopes = normalizeAIChatRuns(envelopes).filter((envelope) =>
+        projectSessionMatches(envelope, currentProjectSessionId),
+      );
+      const refreshedRunIds = new Set(
+        safeEnvelopes.map((envelope) => envelope.id).filter(Boolean),
+      );
+      const safeEgressRecords = normalizeAIEgressRecords(
+        nextEgressRecords,
+      ).filter((record) => {
+        if (!projectSessionMatches(record, currentProjectSessionId)) {
+          return false;
+        }
+        const runId = projectScopedRunId(record);
+        return !runId || refreshedRunIds.has(runId);
+      });
+      const safeToolAudit = normalizeAIToolAudit(nextToolAudit).filter(
+        (record) => {
+          const runId = projectScopedRunId(record);
+          return !runId || refreshedRunIds.has(runId);
+        },
+      );
+      const normalizedPendingApprovals = normalizeAIPendingApprovals(
+        nextPendingApprovals,
+      ).filter((approval) => {
+        if (!projectSessionMatches(approval, currentProjectSessionId)) {
+          return false;
+        }
+        const runId = projectScopedRunId(approval);
+        return !runId || refreshedRunIds.has(runId);
+      });
       clearHydrationFailuresForRunIds(
         safeEnvelopes.map((envelope) => envelope.id),
       );
@@ -2126,18 +2337,16 @@ export function AIChatPanelContent({
       setProviders(nextProviders);
       setActions(normalizeAIChatActions(nextActions));
       setContextProviders(normalizeAIContextProviders(nextContextProviders));
-      setEgressRecords(normalizeAIEgressRecords(nextEgressRecords));
+      setEgressRecords(safeEgressRecords);
       setAgentProfiles(normalizeAIAgentProfiles(nextAgentProfiles));
       setPromptWorkflows(normalizeAIPromptWorkflows(nextPromptWorkflows));
       setTools(normalizeAITools(nextTools));
-      setToolAudit(normalizeAIToolAudit(nextToolAudit));
+      setToolAudit(safeToolAudit);
       setModelCapabilities(normalizeAIModelCapabilities(nextModelCapabilities));
       setConsentPolicy(safeConsentPolicy);
       setEmbeddingStatus(safeEmbeddingStatus);
       setApprovalPolicy(safeApprovalPolicy);
       setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
-      const normalizedPendingApprovals =
-        normalizeAIPendingApprovals(nextPendingApprovals);
       setPendingApprovals(normalizedPendingApprovals);
       setStorePendingApprovals(normalizedPendingApprovals);
       setRuns(safeEnvelopes);
@@ -2169,14 +2378,20 @@ export function AIChatPanelContent({
         });
       }
     } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : String(error));
+      if (chatProjectScopeKeyRef.current === requestScopeKey) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setRuntimeHydrated(true);
-      setLoading(false);
+      if (chatProjectScopeKeyRef.current === requestScopeKey) {
+        setRuntimeHydrated(true);
+        setLoading(false);
+      }
     }
   }, [
     activeSessionId,
     clearHydrationFailuresForRunIds,
+    currentChatProjectScopeKey,
+    currentProjectSessionId,
     setContextPreview,
     setContextProviders,
     setEgressRecords,
@@ -2212,14 +2427,60 @@ export function AIChatPanelContent({
     clearHydrationFailuresForRunIds(hydrationTargetRunIds);
   });
 
-  useEffect(() => {
-    refreshRuntimeEvent();
-  }, []);
+  useLayoutEffect(() => {
+    if (projectScopeKey !== currentChatProjectScopeKey) {
+      setProjectScopeKey(currentChatProjectScopeKey);
+    }
+  }, [currentChatProjectScopeKey, projectScopeKey, setProjectScopeKey]);
+
+  useLayoutEffect(() => {
+    const scopeChanged =
+      chatProjectScopeKeyRef.current !== currentChatProjectScopeKey;
+    if (scopeChanged) {
+      chatProjectScopeKeyRef.current = currentChatProjectScopeKey;
+      chatProjectScopeActivatedAtRef.current = Date.now();
+      initialSelectionHydratedRef.current = false;
+      requestedHydrationRunIdsRef.current.clear();
+      retryingHydrationRunIdsRef.current.clear();
+      failedHydrationRunIdsRef.current.clear();
+      hydrationFailureAttemptsRef.current = {};
+      Object.values(hydrationRetryTimersRef.current).forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      hydrationRetryTimersRef.current = {};
+      setHydratingRunIds(new Set());
+      setRetryingHydrationRunIds(new Set());
+      setFailedHydrationRunIds(new Set());
+      clearProjectChatState();
+      setPendingApprovals([]);
+      setArtifactsByRunId({});
+      setRuntimeError(null);
+      setRuntimeHydrated(false);
+      setActiveRunId(null);
+      setContinuityPlan(null);
+      setContinuityCapsules([]);
+      setContinuityError("");
+      dispatch({ type: "setActiveSession", sessionId: defaultChatSessionId });
+      dispatch({ type: "setActiveRun", runId: "" });
+      dispatchChrome({
+        type: "patch",
+        value: {
+          sessionSearch: "",
+          sessionSearchOpen: false,
+          historySearch: "",
+        },
+      });
+    } else {
+      chatProjectScopeKeyRef.current = currentChatProjectScopeKey;
+    }
+    void refreshRuntimeEvent();
+  }, [clearProjectChatState, currentChatProjectScopeKey, setActiveRunId]);
 
   useEffect(() => {
+    const hydrationScopeKey = currentChatProjectScopeKey;
     const pendingRunIds = hydrationTargetRunIds
       .filter((runId) => runId.trim())
-      .filter((runId) => !hydratedRuns[runId])
+      .filter((runId) => !scopedHydratedRuns[runId])
       .filter((runId) => !requestedHydrationRunIdsRef.current.has(runId))
       .filter((runId) => !retryingHydrationRunIdsRef.current.has(runId))
       .filter((runId) => !failedHydrationRunIdsRef.current.has(runId))
@@ -2240,7 +2501,10 @@ export function AIChatPanelContent({
         pendingRunIds.forEach((runId) =>
           requestedHydrationRunIdsRef.current.delete(runId),
         );
-        if (!hydrationMountedRef.current) {
+        if (
+          !hydrationMountedRef.current ||
+          chatProjectScopeKeyRef.current !== hydrationScopeKey
+        ) {
           return;
         }
         const loadedRuns: AIChatRun[] = [];
@@ -2248,7 +2512,11 @@ export function AIChatPanelContent({
         const failedRunIds: string[] = [];
         results.forEach((result, index) => {
           const runId = pendingRunIds[index];
-          if (result.status === "fulfilled" && result.value?.id) {
+          if (
+            result.status === "fulfilled" &&
+            result.value?.id &&
+            projectSessionMatches(result.value, currentProjectSessionId)
+          ) {
             loadedRuns.push(result.value);
             loadedRunIds.add(runId);
             loadedRunIds.add(result.value.id);
@@ -2273,37 +2541,55 @@ export function AIChatPanelContent({
     return undefined;
   }, [
     clearHydrationFailuresForRunIds,
+    currentChatProjectScopeKey,
+    currentProjectSessionId,
     failedHydrationRunIds,
-    hydratedRuns,
     hydrationTargetRunIds,
     markHydrationFailure,
     retryingHydrationRunIds,
+    scopedHydratedRuns,
     upsertHydratedRuns,
   ]);
 
-  const refreshRunArtifacts = useCallback(async (runId: string) => {
-    const key = runId.trim();
-    if (!key) {
-      return;
-    }
-    const artifacts = await AIListChatRunArtifacts(key);
-    const normalized = normalizeAIChatArtifacts(artifacts);
-    setArtifactsByRunId((current) => ({
-      ...current,
-      [key]: mergeArtifactsById(current[key] ?? [], normalized),
-    }));
-  }, []);
+  const refreshRunArtifacts = useCallback(
+    async (runId: string) => {
+      const key = runId.trim();
+      if (!key) {
+        return;
+      }
+      const requestScopeKey = currentChatProjectScopeKey;
+      const artifacts = await AIListChatRunArtifacts(key);
+      if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+        return;
+      }
+      const normalized = normalizeAIChatArtifacts(artifacts).filter(
+        (artifact) =>
+          artifact.runId === key &&
+          projectSessionMatches(artifact, currentProjectSessionId),
+      );
+      setArtifactsByRunId((current) => ({
+        ...current,
+        [key]: mergeArtifactsById(current[key] ?? [], normalized),
+      }));
+    },
+    [currentChatProjectScopeKey, currentProjectSessionId],
+  );
 
   const refreshPendingApprovals = useCallback(async () => {
     try {
       const approvals = await AIListPendingApprovals(50);
-      const normalizedApprovals = normalizeAIPendingApprovals(approvals);
+      const normalizedApprovals = normalizeAIPendingApprovals(approvals).filter(
+        (approval) =>
+          projectSessionMatches(approval, currentProjectSessionId) &&
+          (!approval.runId ||
+            currentProjectRunIdsRef.current.has(approval.runId)),
+      );
       setPendingApprovals(normalizedApprovals);
       setStorePendingApprovals(normalizedApprovals);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     }
-  }, [setRuntimeError, setStorePendingApprovals]);
+  }, [currentProjectSessionId, setRuntimeError, setStorePendingApprovals]);
 
   const refreshModelCapabilities = useCallback(async () => {
     try {
@@ -2349,9 +2635,9 @@ export function AIChatPanelContent({
     };
   }, [
     activeSessionId,
-    runs,
+    scopedRuns,
     activeRun?.response,
-    streamingTextByRunId,
+    scopedStreamingTextByRunId,
     state.displayPrefs.autoScroll,
   ]);
 
@@ -2368,7 +2654,13 @@ export function AIChatPanelContent({
     autoReviewBuildRunIdsRef.current[run.id] = true;
     void AIStartLinkedReview({ buildRunId: run.id })
       .then((result) => {
-        if (!result?.run?.id || result.status.startsWith("skipped_")) return;
+        if (
+          !result?.run?.id ||
+          result.status.startsWith("skipped_") ||
+          !projectSessionMatches(result.run, currentProjectSessionId)
+        ) {
+          return;
+        }
         setHydratedRun(result.run);
         upsertRunEnvelope(envelopeFromRun(result.run));
         if (!isBackgroundLinkedReviewRun(result.run)) {
@@ -2387,7 +2679,12 @@ export function AIChatPanelContent({
   });
 
   const handleRunUpdate = useEffectEvent((run: AIChatRun) => {
-    if (!run?.id) return;
+    if (
+      !run?.id ||
+      !recordMatchesCurrentProjectScope(run, { allowFresh: true })
+    ) {
+      return;
+    }
     clearHydrationFailuresForRunIds([run.id]);
     setHydratedRun(run);
     upsertRunEnvelope(envelopeFromRun(run));
@@ -2410,7 +2707,10 @@ export function AIChatPanelContent({
     }
     void AIGetChatRunEnvelope(run.id)
       .then((envelope) => {
-        if (envelope?.id) {
+        if (
+          envelope?.id &&
+          recordMatchesCurrentProjectScope(envelope, { allowFresh: true })
+        ) {
           upsertRunEnvelope(envelope);
           publishRunNotice(envelope);
         }
@@ -2435,7 +2735,12 @@ export function AIChatPanelContent({
 
   const handleRunEnvelopeUpdate = useEffectEvent(
     (envelope: AIChatRunEnvelope) => {
-      if (!envelope?.id) return;
+      if (
+        !envelope?.id ||
+        !recordMatchesCurrentProjectScope(envelope, { allowFresh: true })
+      ) {
+        return;
+      }
       clearHydrationFailuresForRunIds([envelope.id]);
       upsertRunEnvelope(envelope);
       publishRunNotice(envelope);
@@ -2457,6 +2762,7 @@ export function AIChatPanelContent({
   const handleRunToken = useEffectEvent(
     (payload: { runId?: string; token?: string }) => {
       if (!payload?.runId || !payload.token) return;
+      if (!currentProjectRunIdsRef.current.has(payload.runId.trim())) return;
       appendRunToken(payload.runId, payload.token);
     },
   );
@@ -2479,6 +2785,14 @@ export function AIChatPanelContent({
   );
 
   const handleEgressRecord = useEffectEvent((record: AIEgressRecord) => {
+    if (
+      !recordMatchesCurrentProjectScope(record, {
+        allowFresh: true,
+        allowRunless: true,
+      })
+    ) {
+      return;
+    }
     const source = record?.source ?? "";
     const chatSource =
       source === "" ||
@@ -2499,6 +2813,8 @@ export function AIChatPanelContent({
   const handleToolAuditRecord = useEffectEvent((result: unknown) => {
     const audit = (result as { audit?: AIToolAuditRecord })?.audit;
     if (!audit?.id) return;
+    if (audit.runId && !currentProjectRunIdsRef.current.has(audit.runId))
+      return;
     upsertToolAudit(audit);
     void refreshPendingApprovalsEvent();
     if (audit.runId) {
@@ -2507,7 +2823,14 @@ export function AIChatPanelContent({
   });
 
   const handleToolLifecycleArtifact = useEffectEvent((artifact: unknown) => {
-    const runId = (artifact as { runId?: string })?.runId;
+    const record = artifact as ProjectScopedRecord;
+    const runId = record?.runId?.trim();
+    if (
+      runId &&
+      !recordMatchesCurrentProjectScope(record, { allowFresh: true })
+    ) {
+      return;
+    }
     void refreshPendingApprovalsEvent();
     if (runId) {
       void refreshRunArtifactsEvent(runId);
@@ -2516,7 +2839,11 @@ export function AIChatPanelContent({
 
   const handleChatArtifactUpdated = useEffectEvent((artifact: unknown) => {
     const normalized = normalizeAIChatArtifacts([artifact]).at(0);
-    if (!normalized?.id || !normalized.runId) {
+    if (
+      !normalized?.id ||
+      !normalized.runId ||
+      !recordMatchesCurrentProjectScope(normalized, { allowFresh: true })
+    ) {
       return;
     }
     setArtifactsByRunId((current) => ({
@@ -2529,12 +2856,24 @@ export function AIChatPanelContent({
   });
 
   const handleRunTimelineEvent = useEffectEvent((event: AIRunTimelineEvent) => {
-    if (!event?.runId) return;
+    if (
+      !event?.runId ||
+      !recordMatchesCurrentProjectScope(event, { allowFresh: true })
+    ) {
+      return;
+    }
     appendRunTimelineEvent(event);
   });
 
   const handleChatToolResult = useEffectEvent((payload: unknown) => {
-    const runId = (payload as { runId?: string })?.runId;
+    const record = payload as ProjectScopedRecord;
+    const runId = record?.runId?.trim();
+    if (
+      runId &&
+      !recordMatchesCurrentProjectScope(record, { allowFresh: true })
+    ) {
+      return;
+    }
     void refreshPendingApprovalsEvent();
     if (runId) {
       void refreshRunArtifactsEvent(runId);
@@ -2542,7 +2881,14 @@ export function AIChatPanelContent({
   });
 
   const handlePatchArtifactAppliedEvent = useEffectEvent((payload: unknown) => {
-    const runId = (payload as { runId?: string })?.runId;
+    const record = payload as ProjectScopedRecord;
+    const runId = record?.runId?.trim();
+    if (
+      runId &&
+      !recordMatchesCurrentProjectScope(record, { allowFresh: true })
+    ) {
+      return;
+    }
     void refreshPendingApprovalsEvent();
     if (runId) {
       void refreshRunArtifactsEvent(runId);
@@ -2697,6 +3043,7 @@ export function AIChatPanelContent({
       if (!silent) {
         setRuntimeError(null);
       }
+      const requestScopeKey = currentChatProjectScopeKey;
       try {
         const preview = await AIGetContextPreview(
           buildContextRequest(
@@ -2717,9 +3064,12 @@ export function AIChatPanelContent({
             },
           ),
         );
+        if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+          return;
+        }
         setContextPreview(normalizeAIContextSnapshot(preview));
       } catch (error) {
-        if (!silent) {
+        if (!silent && chatProjectScopeKeyRef.current === requestScopeKey) {
           setRuntimeError(
             error instanceof Error ? error.message : String(error),
           );
@@ -2728,6 +3078,7 @@ export function AIChatPanelContent({
     },
     [
       activeSessionId,
+      currentChatProjectScopeKey,
       selectedContextWindowHint,
       selectedModel,
       selectedProvider?.id,
@@ -2746,6 +3097,7 @@ export function AIChatPanelContent({
   const refreshContinuityInspector = useCallback(async () => {
     const sessionId = chatSessionKey(activeSessionId);
     const requestSeq = ++continuityRequestSeqRef.current;
+    const requestScopeKey = currentChatProjectScopeKey;
     setContinuityBusy(true);
     setContinuityError("");
     try {
@@ -2755,23 +3107,32 @@ export function AIChatPanelContent({
       ]);
       if (
         requestSeq !== continuityRequestSeqRef.current ||
-        sessionId !== chatSessionKey(state.activeSessionId)
+        sessionId !== chatSessionKey(state.activeSessionId) ||
+        chatProjectScopeKeyRef.current !== requestScopeKey
       ) {
         return;
       }
       setContinuityPlan(plan ?? null);
       setContinuityCapsules(Array.isArray(capsules) ? capsules : []);
     } catch (error) {
-      if (requestSeq !== continuityRequestSeqRef.current) return;
+      if (
+        requestSeq !== continuityRequestSeqRef.current ||
+        chatProjectScopeKeyRef.current !== requestScopeKey
+      ) {
+        return;
+      }
       setContinuityError(
         error instanceof Error ? error.message : String(error),
       );
     } finally {
-      if (requestSeq === continuityRequestSeqRef.current) {
+      if (
+        requestSeq === continuityRequestSeqRef.current &&
+        chatProjectScopeKeyRef.current === requestScopeKey
+      ) {
         setContinuityBusy(false);
       }
     }
-  }, [activeSessionId, state.activeSessionId]);
+  }, [activeSessionId, currentChatProjectScopeKey, state.activeSessionId]);
 
   const handleToggleContinuityInspector = useCallback(() => {
     setContinuityInspectorOpen((open) => {
@@ -2911,13 +3272,14 @@ export function AIChatPanelContent({
       const workflowId = override?.workflowId ?? state.selectedWorkflowId;
       const mentions = override?.mentions ?? selectedMentionsForActiveSession;
       if (!prompt) return false;
+      if (!chatProjectScopeReady) return false;
       if (!selectedProvider || !selectedProviderReady) {
         setRuntimeError(
           providerDisabledReason || "AI provider is unavailable.",
         );
         return false;
       }
-      const targetSessionRunning = runs.some(
+      const targetSessionRunning = scopedRuns.some(
         (run) =>
           sessionIdOf(run) === sessionId &&
           (run.status === "running" || run.status === "queued"),
@@ -2947,10 +3309,14 @@ export function AIChatPanelContent({
           contextWindowHint: selectedContextWindowHint,
         },
       );
+      const requestScopeKey = currentChatProjectScopeKey;
       try {
         const preview = normalizeAIContextSnapshot(
           await AIGetContextPreview(request),
         );
+        if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+          return false;
+        }
         if (!preview) {
           throw new Error(
             "Context preview is unavailable; request was not sent.",
@@ -2977,6 +3343,12 @@ export function AIChatPanelContent({
           startRequest.reasoningEffort = selectedReasoningEffort;
         }
         const run = await AIStartChatRun(startRequest);
+        if (
+          chatProjectScopeKeyRef.current !== requestScopeKey ||
+          !projectSessionMatches(run, currentProjectSessionId)
+        ) {
+          return false;
+        }
         setHydratedRun(run);
         upsertRunEnvelope(envelopeFromRun(run));
         setActiveRunId(run.id);
@@ -2992,8 +3364,11 @@ export function AIChatPanelContent({
     },
     [
       activeSessionId,
+      chatProjectScopeReady,
+      currentChatProjectScopeKey,
+      currentProjectSessionId,
       providerDisabledReason,
-      runs,
+      scopedRuns,
       selectedContextWindowHint,
       selectedModel,
       selectedReasoningEffort,
@@ -3022,8 +3397,15 @@ export function AIChatPanelContent({
     async (provider: AIProviderDescriptor): Promise<AIChatRun | null> => {
       if (!provider?.id || activeRunRunning) return null;
       setRuntimeError(null);
+      const requestScopeKey = currentChatProjectScopeKey;
       try {
         const run = await AIStartAgentAuthRun(provider.id);
+        if (
+          chatProjectScopeKeyRef.current !== requestScopeKey ||
+          !projectSessionMatches(run, currentProjectSessionId)
+        ) {
+          return null;
+        }
         setHydratedRun(run);
         upsertRunEnvelope(envelopeFromRun(run));
         setActiveRunId(run.id);
@@ -3039,22 +3421,41 @@ export function AIChatPanelContent({
         return null;
       }
     },
-    [activeRunRunning, setActiveRunId, setHydratedRun, upsertRunEnvelope],
+    [
+      activeRunRunning,
+      currentChatProjectScopeKey,
+      currentProjectSessionId,
+      setActiveRunId,
+      setHydratedRun,
+      upsertRunEnvelope,
+    ],
   );
 
   const handleCancelAgentLogin = useCallback(
     async (runId: string) => {
       if (!runId) return;
       setRuntimeError(null);
+      const requestScopeKey = currentChatProjectScopeKey;
       try {
         const run = await AICancelChatRun(runId);
+        if (
+          chatProjectScopeKeyRef.current !== requestScopeKey ||
+          !projectSessionMatches(run, currentProjectSessionId)
+        ) {
+          return;
+        }
         upsertRunEnvelope(envelopeFromRun(run));
         setHydratedRun(run);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       }
     },
-    [setHydratedRun, upsertRunEnvelope],
+    [
+      currentChatProjectScopeKey,
+      currentProjectSessionId,
+      setHydratedRun,
+      upsertRunEnvelope,
+    ],
   );
 
   const handleStartProviderOAuth = useCallback(
@@ -3089,7 +3490,9 @@ export function AIChatPanelContent({
 
   const activateWorkflowRun = useCallback(
     (run: AIChatRun | null | undefined) => {
-      if (!run?.id) return;
+      if (!run?.id || !projectSessionMatches(run, currentProjectSessionId)) {
+        return;
+      }
       setHydratedRun(run);
       upsertRunEnvelope(envelopeFromRun(run));
       setActiveRunId(run.id);
@@ -3100,7 +3503,12 @@ export function AIChatPanelContent({
       });
       dispatch({ type: "setActiveRun", runId: run.id });
     },
-    [setActiveRunId, setHydratedRun, upsertRunEnvelope],
+    [
+      currentProjectSessionId,
+      setActiveRunId,
+      setHydratedRun,
+      upsertRunEnvelope,
+    ],
   );
 
   const handleSubmitQuestionAnswer = useCallback(
@@ -3365,15 +3773,20 @@ export function AIChatPanelContent({
   );
 
   const refreshMnemonicEntries = useCallback(async () => {
+    const requestScopeKey = currentChatProjectScopeKey;
     const entries = await AIListMnemonicEntries(24);
+    if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+      return;
+    }
     setMnemonicEntries(normalizeAIMnemonicEntries(entries));
-  }, [setMnemonicEntries]);
+  }, [currentChatProjectScopeKey, setMnemonicEntries]);
 
   const handleMnemonicSearch = useCallback(
     async (query: string) => {
       setMnemonicBusy(true);
       setMnemonicError("");
       try {
+        const requestScopeKey = currentChatProjectScopeKey;
         const trimmed = query.trim();
         const entries = trimmed
           ? await AISearchMnemonic({
@@ -3384,6 +3797,9 @@ export function AIChatPanelContent({
               includeUntrusted: true,
             })
           : await AIListMnemonicEntries(24);
+        if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+          return;
+        }
         setMnemonicEntries(normalizeAIMnemonicEntries(entries));
       } catch (error) {
         setMnemonicError(
@@ -3393,7 +3809,7 @@ export function AIChatPanelContent({
         setMnemonicBusy(false);
       }
     },
-    [setMnemonicEntries],
+    [currentChatProjectScopeKey, setMnemonicEntries],
   );
 
   useEffect(() => {
@@ -3716,7 +4132,9 @@ export function AIChatPanelContent({
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
-      const sessionRuns = runs.filter((run) => sessionIdOf(run) === sessionId);
+      const sessionRuns = scopedRuns.filter(
+        (run) => sessionIdOf(run) === sessionId,
+      );
       clearHydrationFailuresForRunIds(sessionRuns.map((run) => run.id));
       const nextRun = sessionRuns[0];
       setActiveRunId(nextRun?.id ?? null);
@@ -3726,7 +4144,7 @@ export function AIChatPanelContent({
         runId: nextRun?.id ?? "",
       });
     },
-    [clearHydrationFailuresForRunIds, runs, setActiveRunId],
+    [clearHydrationFailuresForRunIds, scopedRuns, setActiveRunId],
   );
 
   const handleDeleteSession = useCallback(
@@ -3735,10 +4153,10 @@ export function AIChatPanelContent({
       setRuntimeError(null);
       try {
         await AIDeleteChatSession(normalizedSessionId);
-        const remainingRuns = runs.filter(
+        const remainingRuns = scopedRuns.filter(
           (run) => sessionIdOf(run) !== normalizedSessionId,
         );
-        deleteSessionRuns(normalizedSessionId);
+        deleteSessionRuns(normalizedSessionId, currentProjectSessionId);
         if (normalizedSessionId === activeSessionId) {
           const nextRun = remainingRuns[0];
           if (nextRun) {
@@ -3759,7 +4177,14 @@ export function AIChatPanelContent({
         setRuntimeError(error instanceof Error ? error.message : String(error));
       }
     },
-    [activeSessionId, deleteSessionRuns, refreshRuntime, runs, setActiveRunId],
+    [
+      activeSessionId,
+      currentProjectSessionId,
+      deleteSessionRuns,
+      refreshRuntime,
+      scopedRuns,
+      setActiveRunId,
+    ],
   );
 
   const handleProviderSelect = useCallback((provider: AIProviderDescriptor) => {
@@ -4141,7 +4566,9 @@ export function AIChatPanelContent({
             activeEnvelope={activeEnvelope}
             activeRun={activeRun}
             activeRunText={
-              activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? ""
+              activeRun?.response ??
+              scopedStreamingTextByRunId[activeRunKey] ??
+              ""
             }
             activityPopoverOpen={state.activityPopoverOpen}
             agentProfiles={agentProfiles}
@@ -4153,7 +4580,7 @@ export function AIChatPanelContent({
             contextProviders={contextProviders}
             consentPolicy={consentPolicy}
             displayPrefs={state.displayPrefs}
-            egressRecords={egressRecords}
+            egressRecords={scopedEgressRecords}
             embeddingStatus={embeddingStatus}
             loading={loading}
             mnemonicEntries={mnemonicEntries}
@@ -4177,7 +4604,7 @@ export function AIChatPanelContent({
             settingsPopoverOpen={state.settingsPopoverOpen}
             status={status}
             tools={tools}
-            toolAudit={toolAudit}
+            toolAudit={scopedToolAudit}
             modelCapabilities={modelCapabilities}
             mnemonicBusy={mnemonicBusy}
             mnemonicError={mnemonicError}
@@ -4566,7 +4993,7 @@ export function AIChatPanelContent({
                     <div className="ai-chat-runtime-error">{runtimeError}</div>
                   ) : null}
                   <PendingApprovalCenter
-                    approvals={pendingApprovals}
+                    approvals={scopedPendingApprovals}
                     busyId={artifactBusyId}
                     onApprove={handleApprovePendingApproval}
                     onDeny={handleDenyPendingApproval}
@@ -4575,7 +5002,7 @@ export function AIChatPanelContent({
                       dispatchChrome({ type: "openDrawer", drawer: "review" });
                     }}
                     onSelectRun={(runId) => {
-                      const envelope = runs.find(
+                      const envelope = scopedRuns.find(
                         (candidate) => candidate.id === runId,
                       );
                       setActiveRunId(runId);
@@ -4610,10 +5037,10 @@ export function AIChatPanelContent({
                             artifactBusyId={artifactBusyId}
                             artifacts={artifactsByRunId[envelope.id] ?? []}
                             key={envelope.id}
-                            run={hydratedRuns[envelope.id] ?? null}
+                            run={scopedHydratedRuns[envelope.id] ?? null}
                             hydrationStatus={hydrationStatusForRun(envelope.id)}
                             streamingText={
-                              streamingTextByRunId[envelope.id] ?? ""
+                              scopedStreamingTextByRunId[envelope.id] ?? ""
                             }
                             searchQuery={
                               sessionSearchTerms.length > 0 ? sessionSearch : ""
@@ -4808,8 +5235,8 @@ export function AIChatPanelContent({
                   <ChatHistoryRail
                     activeSessionId={activeSessionId}
                     canMove={fullscreen}
-                    hydratedRuns={hydratedRuns}
-                    runs={runs}
+                    hydratedRuns={scopedHydratedRuns}
+                    runs={scopedRuns}
                     searchQuery={historySearch}
                     onClose={() =>
                       dispatchChrome({ type: "closeDrawer", drawer: "history" })

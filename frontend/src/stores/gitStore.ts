@@ -23,7 +23,10 @@ import {
   parseUnifiedDiffLineMarkers,
 } from "../utils/git";
 import { toErrorMessage } from "../utils/errorMessages";
-import { isSameOrChildPath } from "../utils/projectPaths";
+import {
+  isSameOrChildPath,
+  projectPathsEqualByIdentity,
+} from "../utils/projectPaths";
 import { usePerformanceStore } from "./performanceStore";
 import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
@@ -156,6 +159,11 @@ let gitMetadataCache: GitMetadataCache | null = null;
 const invalidateGitMetadataCache = (): void => {
   gitMetadataCache = null;
 };
+
+const isCurrentGitProject = (
+  get: () => GitStoreState,
+  projectPath: string,
+): boolean => projectPathsEqualByIdentity(get().projectPath, projectPath);
 
 const canUseFallbackStatus = (error: unknown): boolean => {
   const errorMessage = toErrorMessage(error).toLowerCase();
@@ -380,19 +388,30 @@ const executeGitAction = async (
   ) => void,
   action: () => Promise<void>,
 ): Promise<void> => {
+  const requestedProjectPath = get().projectPath;
+  if (!requestedProjectPath) {
+    throw new Error("No project open");
+  }
   set({ busy: true, error: null });
   try {
     await action();
+    if (!isCurrentGitProject(get, requestedProjectPath)) {
+      return;
+    }
     invalidateGitMetadataCache();
     await Promise.all([get().refresh(), get().loadStashes()]);
   } catch (error) {
-    set({
-      error: toErrorMessage(error),
-      isRepositoryMissing: isMissingRepositoryError(error),
-    });
+    if (isCurrentGitProject(get, requestedProjectPath)) {
+      set({
+        error: toErrorMessage(error),
+        isRepositoryMissing: isMissingRepositoryError(error),
+      });
+    }
     throw error;
   } finally {
-    set({ busy: false });
+    if (isCurrentGitProject(get, requestedProjectPath)) {
+      set({ busy: false });
+    }
   }
 };
 
@@ -431,6 +450,8 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
     set({
       projectPath: nextProjectPath,
+      loading: false,
+      busy: false,
       branch: emptyBranchInfo(),
       branches: [],
       remotes: [],
@@ -601,7 +622,8 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   },
 
   loadHistory: async (filePath = "") => {
-    if (!get().projectPath) {
+    const requestedProjectPath = get().projectPath;
+    if (!requestedProjectPath) {
       set({
         historyCommits: [],
         historyLoading: false,
@@ -613,14 +635,20 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     set({ historyLoading: true, historyFilePath: filePath });
     try {
       const commits = await GetGitLog(100, filePath);
+      if (!isCurrentGitProject(get, requestedProjectPath)) {
+        return;
+      }
       set({ historyCommits: commits ?? [], historyLoading: false });
     } catch (error) {
-      set({ historyLoading: false, error: toErrorMessage(error) });
+      if (isCurrentGitProject(get, requestedProjectPath)) {
+        set({ historyLoading: false, error: toErrorMessage(error) });
+      }
     }
   },
 
   loadStashes: async () => {
-    if (!get().projectPath) {
+    const requestedProjectPath = get().projectPath;
+    if (!requestedProjectPath) {
       set({ stashEntries: [], stashLoading: false });
       return;
     }
@@ -639,13 +667,18 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         throw error;
       });
 
+      if (!isCurrentGitProject(get, requestedProjectPath)) {
+        return;
+      }
       set({ stashEntries: parseStashEntries(output), stashLoading: false });
     } catch (error) {
-      set({
-        stashLoading: false,
-        error: toErrorMessage(error),
-        isRepositoryMissing: isMissingRepositoryError(error),
-      });
+      if (isCurrentGitProject(get, requestedProjectPath)) {
+        set({
+          stashLoading: false,
+          error: toErrorMessage(error),
+          isRepositoryMissing: isMissingRepositoryError(error),
+        });
+      }
     }
   },
 
@@ -904,14 +937,18 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   },
 
   getPullRequestUrl: async (baseBranch) => {
+    const requestedProjectPath = get().projectPath;
     const { branch, selectedRemote } = get();
-    if (!branch.current) {
+    if (!requestedProjectPath || !branch.current) {
       return null;
     }
 
     try {
       const remoteName = selectedRemote || "origin";
       const remoteUrl = await RunGitCommand(["remote", "get-url", remoteName]);
+      if (!isCurrentGitProject(get, requestedProjectPath)) {
+        return null;
+      }
       const webRoot = normalizeGitHubRemoteToWeb(remoteUrl);
       if (!webRoot) {
         return null;
@@ -934,8 +971,9 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   },
 
   openPullRequest: async (baseBranch) => {
+    const requestedProjectPath = get().projectPath;
     const url = await get().getPullRequestUrl(baseBranch);
-    if (!url) {
+    if (!url || !isCurrentGitProject(get, requestedProjectPath)) {
       return null;
     }
 

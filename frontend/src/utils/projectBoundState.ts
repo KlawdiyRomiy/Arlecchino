@@ -6,6 +6,7 @@ import {
   ensureDiagnosticsEventsBound,
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
+import { aiChatProjectScopeKey, useAIChatStore } from "../stores/aiChatStore";
 import { usePerformanceStore } from "../stores/performanceStore";
 import { useGitStore } from "../stores/gitStore";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
@@ -34,6 +35,13 @@ interface DiagnosticsPreloadState {
   totalLanguages: number;
   selectedLanguages: number;
   timedOut: boolean;
+  skippedCandidates: number;
+  oversizedCandidates: number;
+  unsafeCandidates: number;
+  unsupportedCandidates: number;
+  noServerCandidates: number;
+  openFailedCandidates: number;
+  publicationTimeoutCandidates: number;
   message: string;
 }
 
@@ -51,6 +59,13 @@ interface DiagnosticsPreloadEventPayload {
   totalLanguages?: number;
   selectedLanguages?: number;
   timedOut?: boolean;
+  skippedCandidates?: number;
+  oversizedCandidates?: number;
+  unsafeCandidates?: number;
+  unsupportedCandidates?: number;
+  noServerCandidates?: number;
+  openFailedCandidates?: number;
+  publicationTimeoutCandidates?: number;
   message?: string;
 }
 
@@ -77,6 +92,13 @@ let diagnosticsPreloadState: DiagnosticsPreloadState = {
   totalLanguages: 0,
   selectedLanguages: 0,
   timedOut: false,
+  skippedCandidates: 0,
+  oversizedCandidates: 0,
+  unsafeCandidates: 0,
+  unsupportedCandidates: 0,
+  noServerCandidates: 0,
+  openFailedCandidates: 0,
+  publicationTimeoutCandidates: 0,
   message: "",
 };
 let diagnosticsPreloadEventsBound = false;
@@ -124,6 +146,13 @@ const preloadStateIdle: DiagnosticsPreloadState = {
   totalLanguages: 0,
   selectedLanguages: 0,
   timedOut: false,
+  skippedCandidates: 0,
+  oversizedCandidates: 0,
+  unsafeCandidates: 0,
+  unsupportedCandidates: 0,
+  noServerCandidates: 0,
+  openFailedCandidates: 0,
+  publicationTimeoutCandidates: 0,
   message: "",
 };
 
@@ -133,6 +162,14 @@ const preloadStateIdleForProject = (
   ...preloadStateIdle,
   projectPath,
 });
+
+const syncAIChatProjectScope = (projectPath: string | null) => {
+  useAIChatStore
+    .getState()
+    .setProjectScopeKey(
+      aiChatProjectScopeKey(getCurrentProjectSessionId(), projectPath ?? ""),
+    );
+};
 
 const isProjectDiagnosticsPreloadEnabled = () => true;
 
@@ -223,6 +260,15 @@ const getPreloadMetadata = (payload: DiagnosticsPreloadEventPayload) => ({
   totalLanguages: normalizeCount(payload.totalLanguages),
   selectedLanguages: normalizeCount(payload.selectedLanguages),
   timedOut: Boolean(payload.timedOut),
+  skippedCandidates: normalizeCount(payload.skippedCandidates),
+  oversizedCandidates: normalizeCount(payload.oversizedCandidates),
+  unsafeCandidates: normalizeCount(payload.unsafeCandidates),
+  unsupportedCandidates: normalizeCount(payload.unsupportedCandidates),
+  noServerCandidates: normalizeCount(payload.noServerCandidates),
+  openFailedCandidates: normalizeCount(payload.openFailedCandidates),
+  publicationTimeoutCandidates: normalizeCount(
+    payload.publicationTimeoutCandidates,
+  ),
   coverageMode:
     typeof payload.coverageMode === "string" ? payload.coverageMode : "",
   message: typeof payload.message === "string" ? payload.message : "",
@@ -428,6 +474,9 @@ const bindDiagnosticsPreloadEvents = () => {
           : metadata.bounded ||
               metadata.selectedCandidates < metadata.totalCandidates ||
               metadata.failedCandidates > 0 ||
+              metadata.skippedCandidates > 0 ||
+              metadata.openFailedCandidates > 0 ||
+              metadata.publicationTimeoutCandidates > 0 ||
               metadata.timedOut
             ? "incomplete"
             : "complete";
@@ -488,6 +537,7 @@ export const resetProjectBoundStores = () => {
   resetIndexingProgressState();
   useDiagnosticsStore.getState().reset();
   useGitStore.getState().setProjectPath("");
+  syncAIChatProjectScope(null);
   usePerformanceStore.getState().resetTransientBudget();
 };
 
@@ -512,6 +562,7 @@ export const activateProjectScope = (projectPath: string | null) => {
   };
   syncProjectScopeToDiagnosticsStore();
   useGitStore.getState().setProjectPath(projectPath ?? "");
+  syncAIChatProjectScope(projectPath);
   setDiagnosticsPreloadState(
     {
       active: diagnosticsPreloadState.active && hasMatchingPreloadProject,
@@ -548,6 +599,27 @@ export const activateProjectScope = (projectPath: string | null) => {
         ? diagnosticsPreloadState.selectedLanguages
         : 0,
       timedOut: hasMatchingPreloadProject && diagnosticsPreloadState.timedOut,
+      skippedCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.skippedCandidates
+        : 0,
+      oversizedCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.oversizedCandidates
+        : 0,
+      unsafeCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.unsafeCandidates
+        : 0,
+      unsupportedCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.unsupportedCandidates
+        : 0,
+      noServerCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.noServerCandidates
+        : 0,
+      openFailedCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.openFailedCandidates
+        : 0,
+      publicationTimeoutCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.publicationTimeoutCandidates
+        : 0,
       message: hasMatchingPreloadProject ? diagnosticsPreloadState.message : "",
     },
     sessionId,

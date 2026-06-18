@@ -4,8 +4,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Info,
-  LoaderCircle,
   Layers3,
+  LoaderCircle,
+  Search,
 } from "lucide-react";
 
 import type { DiagnosticsSummary } from "../../stores/diagnosticsStore";
@@ -13,7 +14,13 @@ import type { DiagnosticsSummary } from "../../stores/diagnosticsStore";
 interface DiagnosticsCompactIndicatorProps {
   summary: DiagnosticsSummary;
   onClick: () => void;
-  state?: "default" | "scanning" | "partial" | "incomplete" | "unavailable";
+  state?:
+    | "default"
+    | "scanning"
+    | "partial"
+    | "incomplete"
+    | "unavailable"
+    | "scan";
 }
 
 const formatCount = (value: number, label: string) => `${value} ${label}`;
@@ -32,7 +39,9 @@ export const DiagnosticsCompactIndicator: React.FC<
           ? "Problems: workspace diagnostics incomplete"
           : state === "unavailable"
             ? "Problems: diagnostics unavailable"
-            : "Problems: no issues";
+            : state === "scan"
+              ? "Problems: scan project to check workspace diagnostics"
+              : "Problems: no issues";
 
   return (
     <button
@@ -76,6 +85,11 @@ export const DiagnosticsCompactIndicator: React.FC<
         <span className="flex items-center gap-1 text-[#F59E0B]">
           <AlertTriangle size={12} />
           <span className="font-semibold">Unavailable</span>
+        </span>
+      ) : state === "scan" ? (
+        <span className="flex items-center gap-1 text-[var(--text-primary)]">
+          <Search size={12} />
+          <span className="font-semibold">Scan</span>
         </span>
       ) : (
         <span className="flex items-center gap-1 text-[#22C55E]">

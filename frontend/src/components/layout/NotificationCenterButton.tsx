@@ -189,10 +189,15 @@ export const NotificationCenterButton: React.FC<
     (state) => state.restoreNotification,
   );
   const unreadCount = notifications.length;
-  const attentionCount = notifications.filter(
-    (notification) =>
-      notification.kind === "error" || notification.kind === "warning",
+  const errorCount = notifications.filter(
+    (notification) => notification.kind === "error",
   ).length;
+  const warningCount = notifications.filter(
+    (notification) => notification.kind === "warning",
+  ).length;
+  const attentionCount = errorCount + warningCount;
+  const attentionAccent =
+    errorCount > 0 ? kindAccent.error : kindAccent.warning;
 
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
@@ -232,9 +237,7 @@ export const NotificationCenterButton: React.FC<
               className="absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold leading-none text-white"
               style={{
                 background:
-                  attentionCount > 0
-                    ? "var(--status-error)"
-                    : "var(--status-info)",
+                  attentionCount > 0 ? attentionAccent : "var(--status-info)",
               }}
             >
               {unreadCount > 9 ? "9+" : unreadCount}
@@ -264,7 +267,13 @@ export const NotificationCenterButton: React.FC<
               ) : null}
             </div>
             {attentionCount > 0 ? (
-              <span className="rounded-full border border-[color:var(--status-error)]/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--status-error)]">
+              <span
+                className="rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
+                style={{
+                  borderColor: `color-mix(in srgb, ${attentionAccent} 30%, transparent)`,
+                  color: attentionAccent,
+                }}
+              >
                 {attentionCount} attention
               </span>
             ) : null}

@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,10 +38,11 @@ import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { GitStashEntry, useGitStore } from "../stores/gitStore";
 import { getThemeColors, transitions } from "../styles/colors";
 import { toErrorMessage } from "../utils/errorMessages";
-import type { GitFileEntry, GitFileStatus } from "../utils/git";
+import type { GitBranchInfo, GitFileEntry, GitFileStatus } from "../utils/git";
 import {
   getProjectPathDirname,
   normalizeProjectPath,
+  projectPathsEqualByIdentity,
 } from "../utils/projectPaths";
 import type { PanelPosition } from "./ui/FloatingPanel";
 import { GitDiffViewer } from "./GitDiffViewer";
@@ -61,6 +63,15 @@ interface GitPanelProps {
 }
 
 type DetailTab = "commit" | "history" | "pull_requests" | "stash" | "diff";
+
+const emptyPanelBranchInfo = (): GitBranchInfo => ({
+  current: "",
+  upstream: "",
+  ahead: 0,
+  behind: 0,
+  detached: false,
+  oid: "",
+});
 
 interface DiffState {
   title: string;
@@ -544,8 +555,9 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const theme = getThemeColors(isDark);
   const isExpanded = presentationMode === "expanded";
   const layoutMode = isExpanded ? "split" : "stacked";
-  const git = useGitStore(
+  const gitState = useGitStore(
     useShallow((state) => ({
+      projectPath: state.projectPath,
       loading: state.loading,
       busy: state.busy,
       error: state.error,
@@ -590,6 +602,38 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const setGitProjectPath = useGitStore((state) => state.setProjectPath);
   const refreshGit = useGitStore((state) => state.refresh);
   const loadGitStashes = useGitStore((state) => state.loadStashes);
+  const panelProjectPath = useMemo(
+    () => normalizeProjectPath(projectPath),
+    [projectPath],
+  );
+  const gitProjectReady = panelProjectPath
+    ? projectPathsEqualByIdentity(gitState.projectPath, panelProjectPath)
+    : gitState.projectPath.trim() === "";
+  const git = useMemo(
+    () =>
+      gitProjectReady
+        ? gitState
+        : {
+            ...gitState,
+            loading: Boolean(panelProjectPath),
+            busy: false,
+            error: null,
+            isRepositoryMissing: false,
+            branch: emptyPanelBranchInfo(),
+            branches: [],
+            remotes: [],
+            selectedRemote: "origin",
+            stagedFiles: [],
+            unstagedFiles: [],
+            conflictedFiles: [],
+            historyCommits: [],
+            historyLoading: false,
+            stashEntries: [],
+            stashLoading: false,
+          },
+    [gitState, gitProjectReady, panelProjectPath],
+  );
+  const canUseGitProject = Boolean(panelProjectPath) && gitProjectReady;
 
   const [commitMessage, setCommitMessage] = useState("");
   const [stashMessage, setStashMessage] = useState("");
@@ -611,10 +655,29 @@ export const GitPanel: React.FC<GitPanelProps> = ({
 
   useEffect(() => attachGitConsumer(), [attachGitConsumer]);
 
+  useLayoutEffect(() => {
+    setGitProjectPath(panelProjectPath);
+  }, [panelProjectPath, setGitProjectPath]);
+
   useEffect(() => {
-    setGitProjectPath(projectPath);
+    if (!panelProjectPath || !gitProjectReady) {
+      return;
+    }
     void Promise.all([refreshGit(), loadGitStashes()]);
-  }, [loadGitStashes, projectPath, refreshGit, setGitProjectPath]);
+  }, [gitProjectReady, loadGitStashes, panelProjectPath, refreshGit]);
+
+  useEffect(() => {
+    setCommitMessage("");
+    setStashMessage("");
+    setShowBranchDropdown(false);
+    setNewBranchName("");
+    setDiffState(null);
+    setDiffReturnTab(null);
+    setSelectedPath(null);
+    setPrBaseOverride("");
+    setPrUrl(null);
+    lastStoreErrorRef.current = null;
+  }, [panelProjectPath]);
 
   useEffect(() => {
     onDiffFocusChange?.(isDiffFocused);
@@ -739,13 +802,16 @@ export const GitPanel: React.FC<GitPanelProps> = ({
 
   const withErrorGuard = useCallback(
     async (action: () => Promise<void>) => {
+      if (!canUseGitProject) {
+        return;
+      }
       try {
         await action();
       } catch (error) {
         notifyGitError(error);
       }
     },
-    [notifyGitError],
+    [canUseGitProject, notifyGitError],
   );
 
   const runPanelAction = useCallback(
@@ -761,11 +827,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       if (presentationMode === "compact") {
         setDetailOpen(true);
       }
-      if (tab === "history") {
+      if (tab === "history" && canUseGitProject) {
         void git.loadHistory();
       }
     },
-    [git, presentationMode],
+    [canUseGitProject, git, presentationMode],
   );
 
   const handleCommit = useCallback(async () => {
@@ -808,9 +874,21 @@ export const GitPanel: React.FC<GitPanelProps> = ({
 
   const viewFileDiff = useCallback(
     async (file: GitFileEntry) => {
+      if (!canUseGitProject) {
+        return;
+      }
+      const requestedProjectPath = panelProjectPath;
       setSelectedPath(file.path);
       try {
         const diff = await AppFunctions.GetGitDiff(file.path, file.staged);
+        if (
+          !projectPathsEqualByIdentity(
+            useGitStore.getState().projectPath,
+            requestedProjectPath,
+          )
+        ) {
+          return;
+        }
         setDiffReturnTab(
           presentationMode === "expanded" || detailOpen ? detailTab : null,
         );
@@ -827,14 +905,33 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         notifyGitError(error);
       }
     },
-    [detailOpen, detailTab, notifyGitError, presentationMode],
+    [
+      canUseGitProject,
+      detailOpen,
+      detailTab,
+      notifyGitError,
+      panelProjectPath,
+      presentationMode,
+    ],
   );
 
   const viewCommitDiff = useCallback(
     async (hash: string) => {
+      if (!canUseGitProject) {
+        return;
+      }
+      const requestedProjectPath = panelProjectPath;
       setSelectedPath(null);
       try {
         const diff = await AppFunctions.GetGitCommitDiff(hash);
+        if (
+          !projectPathsEqualByIdentity(
+            useGitStore.getState().projectPath,
+            requestedProjectPath,
+          )
+        ) {
+          return;
+        }
         setDiffReturnTab(
           presentationMode === "expanded" || detailOpen ? detailTab : null,
         );
@@ -851,7 +948,14 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         notifyGitError(error);
       }
     },
-    [detailOpen, detailTab, notifyGitError, presentationMode],
+    [
+      canUseGitProject,
+      detailOpen,
+      detailTab,
+      notifyGitError,
+      panelProjectPath,
+      presentationMode,
+    ],
   );
 
   const buildFileContextMenuItems = useCallback(
@@ -971,6 +1075,9 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   );
 
   const previewPullRequestUrl = useCallback(async () => {
+    if (!canUseGitProject) {
+      return;
+    }
     const url = await git.getPullRequestUrl(effectivePrBase);
     if (!url) {
       notifyGitError(
@@ -979,9 +1086,12 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       return;
     }
     setPrUrl(url);
-  }, [effectivePrBase, git, notifyGitError]);
+  }, [canUseGitProject, effectivePrBase, git, notifyGitError]);
 
   const openPullRequestUrl = useCallback(async () => {
+    if (!canUseGitProject) {
+      return;
+    }
     const url = await git.openPullRequest(effectivePrBase);
     if (!url) {
       notifyGitError(
@@ -990,7 +1100,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       return;
     }
     setPrUrl(url);
-  }, [effectivePrBase, git, notifyGitError]);
+  }, [canUseGitProject, effectivePrBase, git, notifyGitError]);
 
   const selectedRemoteLabel =
     git.selectedRemote || git.remotes[0] || "no remote";
@@ -1611,7 +1721,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         <GitHistory
           commits={git.historyCommits}
           loading={git.historyLoading}
-          onRefresh={() => void git.loadHistory()}
+          onRefresh={() => {
+            if (canUseGitProject) {
+              void git.loadHistory();
+            }
+          }}
           onViewDiff={viewCommitDiff}
         />
       );

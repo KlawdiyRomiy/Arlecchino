@@ -216,6 +216,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const diagnosticsRuntimeStatus = useDiagnosticsStore(
     (state) => state.runtimeStatus,
   );
+  const diagnosticsStoreProjectPath = useDiagnosticsStore(
+    (state) => state.activeProjectPath,
+  );
   const statusFilePath = useEditorStore((state) => state.statusFile.path);
   const activeEditorFilePath = useEditorStore(
     (state) => state.getActiveTab(state.activePaneId)?.path ?? null,
@@ -223,7 +226,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const highlightedPath = useExplorerSelectionStore(
     (state) => state.highlightedPath,
   );
-  const activeProjectPath = useWorkspaceStore((state) =>
+  const workspaceProjectPath = useWorkspaceStore((state) =>
     resolveDiagnosticsProjectPath(
       state.projects,
       state.activeId,
@@ -231,6 +234,11 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
       state.switchSourceId,
     ),
   );
+  const activeProjectPath =
+    workspaceProjectPath ??
+    diagnosticsPreload.projectPath ??
+    diagnosticsRuntimeStatus.projectPath ??
+    diagnosticsStoreProjectPath;
   const activeCandidatePath =
     activeFilePath ?? statusFilePath ?? activeEditorFilePath ?? null;
   const activeDiagnosticsScanJob = useMemo(
@@ -258,19 +266,12 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     );
   }, [activeDiagnosticsScanJob, backgroundShell.actions]);
   const isBackgroundDiagnosticsScanActive = Boolean(activeDiagnosticsScanJob);
-  const handleRunProjectDiagnosticsScan = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      if (!event.nativeEvent.isTrusted || event.detail < 1) {
-        return;
-      }
-
-      if (!activeProjectPath || isBackgroundDiagnosticsScanActive) {
-        return;
-      }
-      void runProjectDiagnosticsScan(activeProjectPath);
-    },
-    [activeProjectPath, isBackgroundDiagnosticsScanActive],
-  );
+  const handleRunProjectDiagnosticsScan = useCallback(() => {
+    if (!activeProjectPath || isBackgroundDiagnosticsScanActive) {
+      return;
+    }
+    void runProjectDiagnosticsScan(activeProjectPath);
+  }, [activeProjectPath, isBackgroundDiagnosticsScanActive]);
   const handleCancelProjectDiagnosticsScan = useCallback(() => {
     if (!activeDiagnosticsScanCancelAction) {
       return;
@@ -398,7 +399,6 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const shouldShowCoverageEmptyState =
     displayedGroups.length === 0 && !hasUnfilteredProjectDiagnostics;
 
-  const isDiagnosticsPreloadActive = isBackgroundDiagnosticsScanActive;
   const isDiagnosticsPreloadComplete =
     diagnosticsPreload.projectPath === activeProjectPath &&
     diagnosticsPreload.completed;
@@ -421,6 +421,18 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     diagnosticsRuntimeStatus.projectPath === activeProjectPath &&
     (diagnosticsRuntimeStatus.state === "unavailable" ||
       diagnosticsRuntimeStatus.state === "error");
+  const hasIncompleteDiagnosticsCounters =
+    hasDiagnosticsPreloadForProject &&
+    (diagnosticsPreload.skippedCandidates > 0 ||
+      diagnosticsPreload.oversizedCandidates > 0 ||
+      diagnosticsPreload.unsafeCandidates > 0 ||
+      diagnosticsPreload.unsupportedCandidates > 0 ||
+      diagnosticsPreload.noServerCandidates > 0 ||
+      diagnosticsPreload.openFailedCandidates > 0 ||
+      diagnosticsPreload.publicationTimeoutCandidates > 0);
+  const isDiagnosticsPreloadActive =
+    isBackgroundDiagnosticsScanActive ||
+    (hasDiagnosticsPreloadForProject && diagnosticsPreload.active);
   const diagnosticsUnavailableMessage =
     isDiagnosticsRuntimeUnavailable && diagnosticsRuntimeStatus.message
       ? diagnosticsRuntimeStatus.message
@@ -439,6 +451,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     !diagnosticsPreload.active &&
     (diagnosticsCoverageState === "incomplete" ||
       diagnosticsCoverageState === "canceled" ||
+      hasIncompleteDiagnosticsCounters ||
       (isBoundedDiagnosticsProject &&
         diagnosticsPreload.totalCandidates >
           diagnosticsPreload.selectedCandidates));
@@ -447,6 +460,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     !diagnosticsPreload.active &&
     (diagnosticsCoverageState === "incomplete" ||
       diagnosticsCoverageState === "canceled" ||
+      hasIncompleteDiagnosticsCounters ||
       (isBoundedDiagnosticsProject &&
         diagnosticsPreload.totalCandidates >
           diagnosticsPreload.selectedCandidates));
@@ -455,15 +469,25 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     isDiagnosticsPreloadActive &&
     (!hasDiagnosticsPreloadForProject ||
       !hasDiagnosticsPreloadCheckedSelectedFiles ||
-      !diagnosticsPreload.completed);
+      diagnosticsCoverageState === "pending");
   const isProjectDiagnosticsScanRunning =
     !isWorkspaceDiagnosticsUnavailable &&
     !isWorkspaceDiagnosticsIncomplete &&
     isDiagnosticsPreloadPendingOrRunning;
   const showScanningState =
     shouldShowCoverageEmptyState && isProjectDiagnosticsScanRunning;
+  const showManualScanPrompt =
+    shouldShowCoverageEmptyState &&
+    !showScanningState &&
+    !isWorkspaceDiagnosticsUnavailable &&
+    !isWorkspaceDiagnosticsIncomplete &&
+    Boolean(activeProjectPath) &&
+    diagnosticsCoverageState === "pending";
   const showInlineScanningProgress =
-    !shouldShowCoverageEmptyState && isProjectDiagnosticsScanRunning;
+    !shouldShowCoverageEmptyState &&
+    isProjectDiagnosticsScanRunning &&
+    (isBackgroundDiagnosticsScanActive ||
+      (hasDiagnosticsPreloadForProject && diagnosticsPreload.active));
   const diagnosticsScanProgressLabel = activeDiagnosticsScanJob?.progress?.total
     ? `${Math.min(
         activeDiagnosticsScanJob.progress.current ?? 0,
@@ -592,7 +616,10 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     } ${disabled ? "cursor-not-allowed opacity-50 hover:border-[var(--problems-border)] hover:text-[var(--problems-text-secondary)]" : ""}`;
 
   const renderFilterCard = (): React.ReactNode => (
-    <section className={`${problemsSectionClass} p-4`}>
+    <section
+      className={`${problemsSectionClass} p-4`}
+      onPointerDownCapture={(event) => event.stopPropagation()}
+    >
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -601,6 +628,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
               setSeverityFilter("all");
               setCurrentFileOnly(false);
             }}
+            aria-pressed={severityFilter === "all" && !currentFileOnly}
             className={filterButtonClass(
               severityFilter === "all" && !currentFileOnly,
             )}
@@ -610,6 +638,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           <button
             type="button"
             onClick={() => setSeverityFilter("error")}
+            aria-pressed={severityFilter === "error"}
             className={filterButtonClass(severityFilter === "error")}
           >
             Errors
@@ -617,6 +646,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           <button
             type="button"
             onClick={() => setSeverityFilter("warning")}
+            aria-pressed={severityFilter === "warning"}
             className={filterButtonClass(severityFilter === "warning")}
           >
             Warnings
@@ -624,6 +654,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           <button
             type="button"
             onClick={() => setCurrentFileOnly((value) => !value)}
+            aria-pressed={currentFileOnly}
             className={filterButtonClass(
               currentFileOnly,
               !currentFileCandidatePath,
@@ -1006,6 +1037,23 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                   "Project-wide diagnostics could not verify every supported file yet."}
               </div>
             </motion.div>
+          ) : showManualScanPrompt ? (
+            <motion.div
+              key="manual-scan"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="max-w-[420px] text-center"
+            >
+              <div className="text-[14px] font-semibold text-[var(--problems-text)]">
+                Click Scan project to check workspace issues
+              </div>
+              <div className="mt-1 text-[12px] text-[var(--problems-text-secondary)]">
+                Diagnostics from open files and new edits still appear here
+                automatically.
+              </div>
+            </motion.div>
           ) : canShowCleanState ? (
             <motion.div
               key="empty"
@@ -1041,10 +1089,11 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
               </div>
               <div>
                 <div className="text-[14px] font-semibold text-[var(--problems-text)]">
-                  Scanning diagnostics
+                  Waiting for diagnostics
                 </div>
                 <div className="mt-1 text-[12px] text-[var(--problems-text-secondary)]">
-                  Waiting for project-wide diagnostics coverage.
+                  Open or edit a file to receive live diagnostics, or scan the
+                  project manually.
                 </div>
               </div>
             </motion.div>

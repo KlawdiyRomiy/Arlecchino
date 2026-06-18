@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -28,6 +34,7 @@ import { GetGitDiff } from "../../wails/app";
 import { useGitStore } from "../../stores/gitStore";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
 import { toErrorMessage } from "../../utils/errorMessages";
+import { projectPathsEqualByIdentity } from "../../utils/projectPaths";
 import type { GitFileEntry } from "../../utils/git";
 
 type ChatGitReviewMode = "drawer" | "overlay";
@@ -61,6 +68,24 @@ interface DiffStats {
   additions: number;
   deletions: number;
 }
+
+const emptyChatGitBranch = {
+  current: "",
+  upstream: "",
+  ahead: 0,
+  behind: 0,
+  detached: false,
+  oid: "",
+};
+
+const chatGitProjectPathsMatch = (left: string, right: string): boolean => {
+  const normalizedLeft = left.trim();
+  const normalizedRight = right.trim();
+  if (!normalizedLeft || !normalizedRight) {
+    return normalizedLeft === normalizedRight;
+  }
+  return projectPathsEqualByIdentity(normalizedLeft, normalizedRight);
+};
 
 const syntaxTokenPattern =
   /(\/\/.*|\/\*.*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:package|import|func|return|if|else|for|range|switch|case|default|const|var|type|struct|interface|go|defer|select|nil|true|false)\b|\b\d+(?:\.\d+)?\b)/g;
@@ -339,6 +364,25 @@ export function ChatGitReview({
   const pushRemote = useGitStore((state) => state.pushRemote);
   const openPullRequest = useGitStore((state) => state.openPullRequest);
   const switchBranch = useGitStore((state) => state.switchBranch);
+  const activeProjectPath = projectPath.trim();
+  const gitProjectReady = chatGitProjectPathsMatch(
+    storeProjectPath,
+    activeProjectPath,
+  );
+  const visibleLoading = gitProjectReady ? loading : Boolean(activeProjectPath);
+  const visibleBusy = gitProjectReady ? busy : false;
+  const visibleError = gitProjectReady ? error : null;
+  const visibleRepositoryMissing = gitProjectReady
+    ? isRepositoryMissing
+    : false;
+  const visibleBranch = gitProjectReady ? branch : emptyChatGitBranch;
+  const visibleBranches = gitProjectReady ? branches : [];
+  const visibleRemotes = gitProjectReady ? remotes : [];
+  const visibleSelectedRemote = gitProjectReady ? selectedRemote : "";
+  const visibleStagedFiles = gitProjectReady ? stagedFiles : [];
+  const visibleUnstagedFiles = gitProjectReady ? unstagedFiles : [];
+  const visibleConflictedFiles = gitProjectReady ? conflictedFiles : [];
+  const canUseGitProject = Boolean(activeProjectPath) && gitProjectReady;
   const [selectedKey, setSelectedKey] = useState("");
   const [diff, setDiff] = useState("");
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -347,19 +391,33 @@ export function ChatGitReview({
 
   useEffect(() => attachGitConsumer(), [attachGitConsumer]);
 
-  useEffect(() => {
-    const nextProjectPath = projectPath.trim();
-    if (nextProjectPath !== storeProjectPath) {
-      setProjectPath(nextProjectPath);
+  useLayoutEffect(() => {
+    if (!chatGitProjectPathsMatch(storeProjectPath, activeProjectPath)) {
+      setProjectPath(activeProjectPath);
     }
-    if (nextProjectPath) {
+  }, [activeProjectPath, setProjectPath, storeProjectPath]);
+
+  useEffect(() => {
+    if (activeProjectPath && gitProjectReady) {
       void refresh();
     }
-  }, [projectPath, refresh, setProjectPath, storeProjectPath]);
+  }, [activeProjectPath, gitProjectReady, refresh]);
+
+  useEffect(() => {
+    setSelectedKey("");
+    setDiff("");
+    setDiffError(null);
+    setDiffLoading(false);
+    setActionError(null);
+  }, [activeProjectPath]);
 
   const allFiles = useMemo(
-    () => [...conflictedFiles, ...stagedFiles, ...unstagedFiles],
-    [conflictedFiles, stagedFiles, unstagedFiles],
+    () => [
+      ...visibleConflictedFiles,
+      ...visibleStagedFiles,
+      ...visibleUnstagedFiles,
+    ],
+    [visibleConflictedFiles, visibleStagedFiles, visibleUnstagedFiles],
   );
   const filteredFiles = useMemo(
     () => filterFiles(allFiles, searchQuery),
@@ -378,12 +436,33 @@ export function ChatGitReview({
     : -1;
   const largeDiff = filteredFiles.length > 1 || diff.split("\n").length > 260;
   const canCommit =
-    commitMessage.trim().length > 0 && stagedFiles.length > 0 && !busy;
-  const canPush = Boolean(selectedRemote && branch.current && !busy);
-  const canPull = Boolean(selectedRemote && branch.current && !busy);
-  const canOpenPR = Boolean(selectedRemote && branch.current && !busy);
+    commitMessage.trim().length > 0 &&
+    visibleStagedFiles.length > 0 &&
+    !visibleBusy &&
+    canUseGitProject;
+  const canPush = Boolean(
+    visibleSelectedRemote &&
+    visibleBranch.current &&
+    !visibleBusy &&
+    canUseGitProject,
+  );
+  const canPull = Boolean(
+    visibleSelectedRemote &&
+    visibleBranch.current &&
+    !visibleBusy &&
+    canUseGitProject,
+  );
+  const canOpenPR = Boolean(
+    visibleSelectedRemote &&
+    visibleBranch.current &&
+    !visibleBusy &&
+    canUseGitProject,
+  );
   const canStageSelected = Boolean(
-    selectedFile && !busy && !isRepositoryMissing,
+    selectedFile &&
+    !visibleBusy &&
+    !visibleRepositoryMissing &&
+    canUseGitProject,
   );
   const diffMatchCount = useMemo(() => {
     const query = diffSearch.trim().toLowerCase();
@@ -407,7 +486,7 @@ export function ChatGitReview({
   }, [filteredFiles, selectedKey]);
 
   useEffect(() => {
-    if (!selectedFile) {
+    if (!selectedFile || !canUseGitProject) {
       setDiff("");
       setDiffError(null);
       setDiffLoading(false);
@@ -415,16 +494,29 @@ export function ChatGitReview({
     }
 
     let cancelled = false;
+    const requestedProjectPath = activeProjectPath;
     setDiffLoading(true);
     setDiffError(null);
     GetGitDiff(selectedFile.path, selectedFile.staged)
       .then((value) => {
-        if (!cancelled) {
+        if (
+          !cancelled &&
+          projectPathsEqualByIdentity(
+            useGitStore.getState().projectPath,
+            requestedProjectPath,
+          )
+        ) {
           setDiff(value || "");
         }
       })
       .catch((nextError) => {
-        if (!cancelled) {
+        if (
+          !cancelled &&
+          projectPathsEqualByIdentity(
+            useGitStore.getState().projectPath,
+            requestedProjectPath,
+          )
+        ) {
           setDiff("");
           setDiffError(
             nextError instanceof Error ? nextError.message : String(nextError),
@@ -432,7 +524,13 @@ export function ChatGitReview({
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (
+          !cancelled &&
+          projectPathsEqualByIdentity(
+            useGitStore.getState().projectPath,
+            requestedProjectPath,
+          )
+        ) {
           setDiffLoading(false);
         }
       });
@@ -440,19 +538,25 @@ export function ChatGitReview({
     return () => {
       cancelled = true;
     };
-  }, [selectedFile]);
+  }, [activeProjectPath, canUseGitProject, selectedFile]);
 
-  const runGitAction = useCallback(async (action: () => Promise<void>) => {
-    setActionError(null);
-    try {
-      await action();
-      return true;
-    } catch (nextError) {
-      setActionError(toErrorMessage(nextError));
-      // useGitStore owns the user-visible error string.
-      return false;
-    }
-  }, []);
+  const runGitAction = useCallback(
+    async (action: () => Promise<void>) => {
+      if (!canUseGitProject) {
+        return false;
+      }
+      setActionError(null);
+      try {
+        await action();
+        return true;
+      } catch (nextError) {
+        setActionError(toErrorMessage(nextError));
+        // useGitStore owns the user-visible error string.
+        return false;
+      }
+    },
+    [canUseGitProject],
+  );
 
   const handleCommit = useCallback(async () => {
     if (!canCommit) return;
@@ -493,16 +597,28 @@ export function ChatGitReview({
   }, [canStageSelected, runGitAction, selectedFile, stageFile, unstageFile]);
 
   const handleStageAll = useCallback(async () => {
-    if (busy || allFiles.length === 0) return;
+    if (visibleBusy || allFiles.length === 0 || !canUseGitProject) return;
     await runGitAction(() => stageAll());
-  }, [allFiles.length, busy, runGitAction, stageAll]);
+  }, [allFiles.length, canUseGitProject, runGitAction, stageAll, visibleBusy]);
 
   const handleBranchChange = useCallback(
     (value: string) => {
-      if (!value || value === branch.current || busy) return;
+      if (
+        !value ||
+        value === visibleBranch.current ||
+        visibleBusy ||
+        !canUseGitProject
+      )
+        return;
       void runGitAction(() => switchBranch(value));
     },
-    [branch.current, busy, runGitAction, switchBranch],
+    [
+      canUseGitProject,
+      runGitAction,
+      switchBranch,
+      visibleBranch.current,
+      visibleBusy,
+    ],
   );
 
   const handleCopyDiff = useCallback(() => {
@@ -522,17 +638,20 @@ export function ChatGitReview({
   );
 
   const renderUnavailable = () => {
-    if (!projectPath) {
+    if (!activeProjectPath) {
       return <div className="ai-chat-git-empty">No project open.</div>;
     }
-    if (isRepositoryMissing) {
+    if (!gitProjectReady || visibleLoading) {
+      return <div className="ai-chat-git-empty">Refreshing Git status...</div>;
+    }
+    if (visibleRepositoryMissing) {
       return <div className="ai-chat-git-empty">No Git repository.</div>;
     }
-    if (error) {
+    if (visibleError) {
       return (
         <div className="ai-chat-git-empty is-error">
           <AlertTriangle size={14} />
-          {error}
+          {visibleError}
         </div>
       );
     }
@@ -547,9 +666,9 @@ export function ChatGitReview({
 
   const unavailable = renderUnavailable();
   const branchTarget =
-    branch.upstream ||
-    (selectedRemote && branch.current
-      ? `${selectedRemote}/${branch.current}`
+    visibleBranch.upstream ||
+    (visibleSelectedRemote && visibleBranch.current
+      ? `${visibleSelectedRemote}/${visibleBranch.current}`
       : "");
 
   return (
@@ -576,15 +695,20 @@ export function ChatGitReview({
             <label className="ai-chat-branch-select">
               <GitBranch size={14} />
               <select
-                value={branches.includes(branch.current) ? branch.current : ""}
-                disabled={busy || branches.length === 0}
+                value={
+                  visibleBranches.includes(visibleBranch.current)
+                    ? visibleBranch.current
+                    : ""
+                }
+                disabled={visibleBusy || visibleBranches.length === 0}
                 onChange={(event) => handleBranchChange(event.target.value)}
                 title="Switch branch"
               >
-                {branch.current && !branches.includes(branch.current) ? (
-                  <option value="">{branch.current}</option>
+                {visibleBranch.current &&
+                !visibleBranches.includes(visibleBranch.current) ? (
+                  <option value="">{visibleBranch.current}</option>
                 ) : null}
-                {branches.map((candidate) => (
+                {visibleBranches.map((candidate) => (
                   <option key={candidate} value={candidate}>
                     {candidate}
                   </option>
@@ -611,10 +735,15 @@ export function ChatGitReview({
               className="ai-chat-icon-button"
               type="button"
               title="Refresh Git"
+              disabled={!canUseGitProject}
               onMouseDown={(event) => event.stopPropagation()}
-              onClick={() => void refresh()}
+              onClick={() => {
+                if (canUseGitProject) {
+                  void refresh();
+                }
+              }}
             >
-              <RefreshCw size={14} className={loading ? "spin" : ""} />
+              <RefreshCw size={14} className={visibleLoading ? "spin" : ""} />
             </button>
             <button
               className="ai-chat-icon-button"
@@ -656,7 +785,7 @@ export function ChatGitReview({
             className="ai-chat-git-tool-button"
             type="button"
             title="Stage all"
-            disabled={busy || allFiles.length === 0}
+            disabled={visibleBusy || allFiles.length === 0 || !canUseGitProject}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={() => void handleStageAll()}
           >
@@ -777,15 +906,15 @@ export function ChatGitReview({
       </div>
 
       <div className="ai-chat-git-commit">
-        {remotes.length > 1 ? (
+        {visibleRemotes.length > 1 ? (
           <select
             className="ai-chat-select"
-            value={selectedRemote}
-            disabled={busy}
+            value={visibleSelectedRemote}
+            disabled={visibleBusy || !canUseGitProject}
             onChange={(event) => setSelectedRemote(event.target.value)}
             title="Remote"
           >
-            {remotes.map((remote) => (
+            {visibleRemotes.map((remote) => (
               <option key={remote} value={remote}>
                 {remote}
               </option>
@@ -819,7 +948,7 @@ export function ChatGitReview({
             disabled={!canCommit}
             onClick={() => void handleCommit()}
             title={
-              stagedFiles.length === 0
+              visibleStagedFiles.length === 0
                 ? "Stage files before commit"
                 : "Commit staged files"
             }
@@ -832,7 +961,11 @@ export function ChatGitReview({
             type="button"
             disabled={!canPush}
             onClick={() => void handlePush()}
-            title={selectedRemote ? `Push to ${selectedRemote}` : "No remote"}
+            title={
+              visibleSelectedRemote
+                ? `Push to ${visibleSelectedRemote}`
+                : "No remote"
+            }
           >
             <Send size={14} />
             Push

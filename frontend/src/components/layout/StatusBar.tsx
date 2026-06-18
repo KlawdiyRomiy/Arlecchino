@@ -17,16 +17,22 @@ interface StatusBarProps {
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
-  const projectSummary = useDiagnosticsStore((state) => state.projectSummary);
+  const diagnosticsStoreProjectSummary = useDiagnosticsStore(
+    (state) => state.projectSummary,
+  );
+  const diagnosticsByFile = useDiagnosticsStore((state) => state.byFile);
   const diagnosticsRuntimeStatus = useDiagnosticsStore(
     (state) => state.runtimeStatus,
+  );
+  const diagnosticsStoreProjectPath = useDiagnosticsStore(
+    (state) => state.activeProjectPath,
   );
   const statusFile = useEditorStore((state) => state.statusFile);
   const cursorPosition = useEditorStore((state) => state.cursorPosition);
   const showCompactDiagnostics = useEditorSettingsStore(
     (state) => state.showCompactDiagnostics,
   );
-  const activeProjectPath = useWorkspaceStore((state) =>
+  const workspaceProjectPath = useWorkspaceStore((state) =>
     resolveDiagnosticsProjectPath(
       state.projects,
       state.activeId,
@@ -37,6 +43,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const backgroundShell = useBackgroundShellStatus();
   const projectSessionId = getCurrentProjectSessionId();
+  const activeProjectPath =
+    workspaceProjectPath ??
+    diagnosticsPreload.projectPath ??
+    diagnosticsRuntimeStatus.projectPath ??
+    diagnosticsStoreProjectPath;
+  const projectSummary = useMemo(
+    () =>
+      activeProjectPath
+        ? useDiagnosticsStore.getState().getProjectSummary(activeProjectPath)
+        : diagnosticsStoreProjectSummary,
+    [activeProjectPath, diagnosticsByFile, diagnosticsStoreProjectSummary],
+  );
   const statusTextClass = "text-[11px] text-[var(--text-secondary)]";
   const chipClass =
     "shell-cluster-soft flex min-h-[32px] items-center gap-1.5 px-3 transition-colors hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)]";
@@ -112,25 +130,33 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const diagnosticsIndicatorState = useMemo(() => {
     const preloadMatchesProject =
       diagnosticsPreload.projectPath === activeProjectPath;
+    const runtimeMatchesProject =
+      diagnosticsRuntimeStatus.projectPath === activeProjectPath;
     const coverageState = preloadMatchesProject
       ? diagnosticsPreload.coverageState
       : activeProjectPath
         ? "pending"
         : "complete";
+    const hasIncompleteCounters =
+      preloadMatchesProject &&
+      (diagnosticsPreload.skippedCandidates > 0 ||
+        diagnosticsPreload.oversizedCandidates > 0 ||
+        diagnosticsPreload.unsafeCandidates > 0 ||
+        diagnosticsPreload.unsupportedCandidates > 0 ||
+        diagnosticsPreload.noServerCandidates > 0 ||
+        diagnosticsPreload.openFailedCandidates > 0 ||
+        diagnosticsPreload.publicationTimeoutCandidates > 0);
 
     if (projectSummary.total > 0) {
       return "default" as const;
     }
     if (
       activeProjectPath &&
-      diagnosticsRuntimeStatus.projectPath === activeProjectPath &&
+      runtimeMatchesProject &&
       (diagnosticsRuntimeStatus.state === "unavailable" ||
         diagnosticsRuntimeStatus.state === "error")
     ) {
       return "unavailable" as const;
-    }
-    if (activeProjectPath && hasActiveDiagnosticsScan) {
-      return "scanning" as const;
     }
     if (
       activeProjectPath &&
@@ -144,11 +170,22 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       (coverageState === "incomplete" ||
         coverageState === "canceled" ||
         diagnosticsPreload.bounded ||
+        hasIncompleteCounters ||
         (diagnosticsPreload.totalCandidates > 0 &&
           diagnosticsPreload.selectedCandidates <
             diagnosticsPreload.totalCandidates))
     ) {
       return "incomplete" as const;
+    }
+    if (
+      activeProjectPath &&
+      (hasActiveDiagnosticsScan ||
+        (preloadMatchesProject && diagnosticsPreload.active))
+    ) {
+      return "scanning" as const;
+    }
+    if (activeProjectPath && coverageState === "pending") {
+      return "scan" as const;
     }
     return "default" as const;
   }, [

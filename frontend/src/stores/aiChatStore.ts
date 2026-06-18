@@ -27,8 +27,10 @@ import {
   type AICommandPaletteActionId,
   type AICommandPalettePayload,
 } from "../utils/commandPaletteAI";
+import { normalizeProjectPathIdentity } from "../utils/projectPaths";
 
 interface AIChatRuntimeState {
+  projectScopeKey: string;
   status: AIStatus | null;
   providers: AIProviderDescriptor[];
   actions: AIChatActionDescriptor[];
@@ -51,6 +53,7 @@ interface AIChatRuntimeState {
   contextPreview: AIContextSnapshot | null;
   loading: boolean;
   error: string | null;
+  setProjectScopeKey: (scopeKey: string) => void;
   setInitialData: (data: Partial<AIChatRuntimeState>) => void;
   setStatus: (status: AIStatus | null) => void;
   setProviders: (providers: AIProviderDescriptor[]) => void;
@@ -65,7 +68,8 @@ interface AIChatRuntimeState {
   setRuns: (runs: AIChatRunEnvelope[]) => void;
   upsertRunEnvelope: (run: AIChatRunEnvelope) => void;
   appendRunTimelineEvent: (event: AIRunTimelineEvent) => void;
-  deleteSessionRuns: (sessionId: string) => void;
+  deleteSessionRuns: (sessionId: string, projectSessionId?: string) => void;
+  clearProjectChatState: () => void;
   setHydratedRun: (run: AIChatRun) => void;
   upsertHydratedRun: (run: AIChatRun) => void;
   upsertHydratedRuns: (runs: AIChatRun[]) => void;
@@ -93,6 +97,18 @@ const AI_CHAT_MAX_RUNS = 80;
 const AI_CHAT_MAX_HYDRATED_RUNS = 20;
 const AI_CHAT_MAX_STREAMING_TEXT_CHARS = 96_000;
 const AI_CHAT_MAX_HYDRATED_RESPONSE_CHARS = 96_000;
+const DEFAULT_AI_CHAT_PROJECT_SESSION_ID = "main";
+
+export const aiChatProjectScopeKey = (
+  projectSessionId: string,
+  projectPath: string,
+): string => {
+  const sessionKey =
+    projectSessionId.trim() || DEFAULT_AI_CHAT_PROJECT_SESSION_ID;
+  const pathKey =
+    normalizeProjectPathIdentity(projectPath || "") || "no-project";
+  return `${sessionKey}\0${pathKey}`;
+};
 
 const sortRuns = (runs: AIChatRunEnvelope[]): AIChatRunEnvelope[] =>
   [...runs].sort((a, b) => {
@@ -108,6 +124,18 @@ const isTerminalRunStatus = (status?: string): boolean =>
 
 const sessionIdOf = (run: { sessionId?: string | null }): string =>
   run.sessionId?.trim() || "default";
+
+const projectSessionIdOf = (run: {
+  projectSessionId?: string | null;
+}): string => run.projectSessionId?.trim() || "main";
+
+const matchesProjectSession = (
+  run: { projectSessionId?: string | null },
+  projectSessionId?: string,
+): boolean => {
+  const normalized = projectSessionId?.trim();
+  return !normalized || projectSessionIdOf(run) === normalized;
+};
 
 const trimAIChatText = (text: string, maxChars: number): string =>
   text.length > maxChars ? text.slice(-maxChars) : text;
@@ -351,6 +379,7 @@ const pruneAIChatRetention = <State extends AIChatRetentionState>(
 };
 
 const initialRuntimeState = {
+  projectScopeKey: "",
   status: null,
   providers: [],
   actions: [],
@@ -377,6 +406,27 @@ const initialRuntimeState = {
 
 export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
   ...initialRuntimeState,
+  setProjectScopeKey: (scopeKey) =>
+    set((state) => {
+      const nextScopeKey = scopeKey.trim();
+      if (state.projectScopeKey === nextScopeKey) {
+        return state;
+      }
+      return {
+        ...state,
+        projectScopeKey: nextScopeKey,
+        runs: [],
+        hydratedRuns: {},
+        streamingTextByRunId: {},
+        egressRecords: [],
+        mnemonicEntries: [],
+        pendingApprovals: [],
+        toolAudit: [],
+        activeRunId: null,
+        contextPreview: null,
+        error: null,
+      };
+    }),
   setInitialData: (data) =>
     set((state) =>
       pruneAIChatRetention({
@@ -433,17 +483,23 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       });
       return changed ? pruneAIChatRetention({ ...state, runs }) : state;
     }),
-  deleteSessionRuns: (sessionId) =>
+  deleteSessionRuns: (sessionId, projectSessionId) =>
     set((state) => {
       const normalizedSessionId = sessionId.trim() || "default";
       const removedRunIds = new Set<string>();
       for (const run of state.runs) {
-        if (sessionIdOf(run) === normalizedSessionId) {
+        if (
+          sessionIdOf(run) === normalizedSessionId &&
+          matchesProjectSession(run, projectSessionId)
+        ) {
           removedRunIds.add(run.id);
         }
       }
       for (const [runId, run] of Object.entries(state.hydratedRuns)) {
-        if (sessionIdOf(run) === normalizedSessionId) {
+        if (
+          sessionIdOf(run) === normalizedSessionId &&
+          matchesProjectSession(run, projectSessionId)
+        ) {
           removedRunIds.add(runId);
         }
       }
@@ -454,9 +510,11 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
         const activeHydrated = state.hydratedRuns[state.activeRunId];
         if (
           (activeEnvelope &&
-            sessionIdOf(activeEnvelope) === normalizedSessionId) ||
+            sessionIdOf(activeEnvelope) === normalizedSessionId &&
+            matchesProjectSession(activeEnvelope, projectSessionId)) ||
           (activeHydrated &&
-            sessionIdOf(activeHydrated) === normalizedSessionId)
+            sessionIdOf(activeHydrated) === normalizedSessionId &&
+            matchesProjectSession(activeHydrated, projectSessionId))
         ) {
           removedRunIds.add(state.activeRunId);
         }
@@ -473,7 +531,9 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       return pruneAIChatRetention({
         ...state,
         runs: state.runs.filter(
-          (run) => sessionIdOf(run) !== normalizedSessionId,
+          (run) =>
+            sessionIdOf(run) !== normalizedSessionId ||
+            !matchesProjectSession(run, projectSessionId),
         ),
         hydratedRuns,
         streamingTextByRunId,
@@ -482,6 +542,18 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
             ? null
             : state.activeRunId,
       });
+    }),
+  clearProjectChatState: () =>
+    set({
+      runs: [],
+      hydratedRuns: {},
+      streamingTextByRunId: {},
+      egressRecords: [],
+      mnemonicEntries: [],
+      pendingApprovals: [],
+      toolAudit: [],
+      activeRunId: null,
+      contextPreview: null,
     }),
   setHydratedRun: (run) =>
     set((state) => {

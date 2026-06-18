@@ -309,7 +309,9 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   }
 
   if (previewWindow.surface === "chat") {
-    return <AIChatPanelContent presentation="preview" />;
+    return (
+      <AIChatPanelContent presentation="preview" projectPath={projectPath} />
+    );
   }
 
   if (previewWindow.surface === "terminal") {
