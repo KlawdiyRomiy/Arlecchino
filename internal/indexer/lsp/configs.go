@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	lspregistry "arlecchino/internal/lsp"
 )
@@ -63,6 +64,36 @@ func argsForServer(serverID string) []string {
 		return args
 	}
 	return nil
+}
+
+func NormalizeServerConfig(cfg ServerConfig) ServerConfig {
+	cfg.Language = lspregistry.NormalizeLanguageToken(cfg.Language)
+	serverID := ""
+	if info := lspregistry.GetLanguageByID(cfg.Language); info != nil {
+		serverID = info.LSPServerID
+	}
+	if strings.TrimSpace(cfg.ServerGroup) == "" {
+		cfg.ServerGroup = serverGroupForServer(cfg.Language, serverID, cfg.Command)
+	}
+	return cfg
+}
+
+func serverGroupForServer(language string, serverID string, command string) string {
+	serverID = strings.ToLower(strings.TrimSpace(serverID))
+	command = strings.ToLower(filepath.Base(strings.TrimSpace(command)))
+	language = lspregistry.NormalizeLanguageToken(language)
+	switch {
+	case serverID == "typescript-language-server" || command == "typescript-language-server":
+		return "tsserver"
+	case serverID == "clangd" || command == "clangd":
+		return "clangd"
+	case serverID == "vscode-css-language-server" || command == "vscode-css-language-server":
+		return "vscode-css"
+	case serverID == "vscode-html-language-server" || command == "vscode-html-language-server":
+		return "vscode-html"
+	default:
+		return ""
+	}
 }
 
 func initParamsForServer(rootPath, serverID string) map[string]any {
@@ -284,7 +315,7 @@ func ConfigsFromInstallerWithWorkDirs(rootPath string, workDirs []string, instal
 		if cmd == "" {
 			continue
 		}
-		configs = append(configs, ServerConfig{
+		configs = append(configs, NormalizeServerConfig(ServerConfig{
 			Language: lang.ID,
 			Command:  cmd,
 			Args:     argsForServer(lang.LSPServerID),
@@ -293,7 +324,7 @@ func ConfigsFromInstallerWithWorkDirs(rootPath string, workDirs []string, instal
 				rootPath,
 				lang.LSPServerID,
 			),
-		})
+		}))
 	}
 
 	if len(configs) > 0 {
@@ -309,9 +340,11 @@ func MergeConfigs(base, extra []ServerConfig) []ServerConfig {
 
 	byLang := make(map[string]ServerConfig, len(base)+len(extra))
 	for _, cfg := range base {
+		cfg = NormalizeServerConfig(cfg)
 		byLang[cfg.Language] = cfg
 	}
 	for _, cfg := range extra {
+		cfg = NormalizeServerConfig(cfg)
 		byLang[cfg.Language] = cfg
 	}
 
@@ -324,9 +357,10 @@ func MergeConfigs(base, extra []ServerConfig) []ServerConfig {
 		}
 	}
 	for _, cfg := range extra {
-		if !seen[cfg.Language] {
-			merged = append(merged, cfg)
-			seen[cfg.Language] = true
+		normalized := NormalizeServerConfig(cfg)
+		if !seen[normalized.Language] {
+			merged = append(merged, normalized)
+			seen[normalized.Language] = true
 		}
 	}
 

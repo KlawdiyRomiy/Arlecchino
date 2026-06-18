@@ -23,6 +23,7 @@ import (
 	"time"
 
 	lspregistry "arlecchino/internal/lsp"
+	"arlecchino/internal/processcontrol"
 )
 
 type Manager struct {
@@ -52,8 +53,9 @@ type Manager struct {
 	diagnostics          map[string]map[string][]Diagnostic
 	diagnosticSeq        uint64
 	diagnosticSeen       map[string]uint64
-	transientCloseClears map[string]time.Time
+	transientCloseClears map[string]struct{}
 	onDiagnostics        func(language, filePath string, diagnostics []Diagnostic)
+	processGovernor      processcontrol.Controller
 	rootPath             string
 }
 
@@ -392,19 +394,27 @@ func NewManager(rootPath string) *Manager {
 		completionWait:       500 * time.Millisecond,
 		diagnostics:          make(map[string]map[string][]Diagnostic),
 		diagnosticSeen:       make(map[string]uint64),
-		transientCloseClears: make(map[string]time.Time),
+		transientCloseClears: make(map[string]struct{}),
 		rootPath:             rootPath,
 	}
 }
 
 const diagnosticsPublishPollInterval = 25 * time.Millisecond
-const transientCloseDiagnosticsClearSuppressTTL = 2 * time.Second
 const transientCloseDiagnosticsClearMaxEntries = 2048
 
 func (m *Manager) SetDiagnosticsCallback(callback func(language, filePath string, diagnostics []Diagnostic)) {
 	m.diagnosticsMu.Lock()
 	m.onDiagnostics = callback
 	m.diagnosticsMu.Unlock()
+}
+
+func (m *Manager) SetProcessGovernor(governor processcontrol.Controller) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.processGovernor = governor
+	m.mu.Unlock()
 }
 
 func (m *Manager) resolveConfiguredLanguage(language string) (string, bool) {
@@ -482,16 +492,19 @@ func (m *Manager) endStart(language string, ch chan struct{}) {
 
 func (m *Manager) activeStartFailure(language string) (startFailure, bool) {
 	now := time.Now()
+	keys := m.startFailureKeys(language)
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
-	failure, ok := m.startFailures[language]
-	if !ok {
-		return startFailure{}, false
+	for _, key := range keys {
+		failure, ok := m.startFailures[key]
+		if !ok {
+			continue
+		}
+		if now.Before(failure.retryAt) {
+			return failure, true
+		}
+		delete(m.startFailures, key)
 	}
-	if now.Before(failure.retryAt) {
-		return failure, true
-	}
-	delete(m.startFailures, language)
 	return startFailure{}, false
 }
 
@@ -531,12 +544,132 @@ func startFailureError(language string, failure startFailure) error {
 }
 
 func (m *Manager) clearStartFailure(language string) {
+	keys := m.startFailureKeys(language)
 	m.startMu.Lock()
-	delete(m.startFailures, language)
-	m.startMu.Unlock()
+	defer m.startMu.Unlock()
+	for _, key := range keys {
+		delete(m.startFailures, key)
+	}
+}
+
+func (m *Manager) startFailureKeys(language string) []string {
+	keys := []string{language}
+	if startKey := m.startKeyForLanguage(language); startKey != "" && startKey != language {
+		keys = append(keys, startKey)
+	}
+	if !strings.HasPrefix(language, "language:") && !strings.HasPrefix(language, "group:") {
+		keys = append(keys, "language:"+language)
+	}
+	return keys
+}
+
+func serverGroupKey(cfg ServerConfig) string {
+	group := strings.TrimSpace(cfg.ServerGroup)
+	if group == "" {
+		return ""
+	}
+	return group
+}
+
+func (m *Manager) startKeyForLanguage(language string) string {
+	language = strings.TrimSpace(language)
+	if language == "" {
+		return ""
+	}
+	m.mu.RLock()
+	cfg, ok := m.configs[language]
+	m.mu.RUnlock()
+	if ok {
+		if group := serverGroupKey(cfg); group != "" {
+			return "group:" + group
+		}
+	}
+	return "language:" + language
+}
+
+func (m *Manager) sharedServerLanguagesLocked(language string, server *Server) []string {
+	if server == nil {
+		return []string{language}
+	}
+	cfg, ok := m.configs[language]
+	if !ok {
+		cfg = server.config
+	}
+	group := serverGroupKey(cfg)
+	languages := make([]string, 0, 4)
+	for candidate, candidateCfg := range m.configs {
+		if group == "" {
+			if candidate == language {
+				languages = append(languages, candidate)
+			}
+			continue
+		}
+		if serverGroupKey(candidateCfg) == group {
+			languages = append(languages, candidate)
+		}
+	}
+	if len(languages) == 0 {
+		languages = append(languages, language)
+	}
+	sort.Strings(languages)
+	return languages
+}
+
+func (m *Manager) publishServerAliasesLocked(language string, server *Server) []string {
+	languages := m.sharedServerLanguagesLocked(language, server)
+	for _, alias := range languages {
+		m.servers[alias] = server
+	}
+	return languages
+}
+
+func (m *Manager) removeServerAliasesLocked(language string, server *Server) []string {
+	languages := m.sharedServerLanguagesLocked(language, server)
+	removed := make([]string, 0, len(languages))
+	for _, alias := range languages {
+		if current, ok := m.servers[alias]; ok && current == server {
+			delete(m.servers, alias)
+			removed = append(removed, alias)
+		}
+		if timer, ok := m.idleTimers[alias]; ok {
+			timer.Stop()
+			delete(m.idleTimers, alias)
+		}
+	}
+	return removed
+}
+
+func (m *Manager) uniqueRunningServersLocked() []*Server {
+	seen := make(map[*Server]bool, len(m.servers))
+	servers := make([]*Server, 0, len(m.servers))
+	for _, server := range m.servers {
+		if server == nil || seen[server] || !server.running || !server.isProcessAlive() {
+			continue
+		}
+		seen[server] = true
+		servers = append(servers, server)
+	}
+	return servers
+}
+
+func uniqueServerPointers(servers []*Server) []*Server {
+	if len(servers) <= 1 {
+		return servers
+	}
+	seen := make(map[*Server]bool, len(servers))
+	unique := make([]*Server, 0, len(servers))
+	for _, server := range servers {
+		if server == nil || seen[server] {
+			continue
+		}
+		seen[server] = true
+		unique = append(unique, server)
+	}
+	return unique
 }
 
 func (m *Manager) RegisterServer(cfg ServerConfig) {
+	cfg = NormalizeServerConfig(cfg)
 	cfg.Language = lspregistry.NormalizeLanguageToken(cfg.Language)
 	if cfg.Language == "" {
 		return
@@ -558,6 +691,7 @@ func (m *Manager) RegisterServer(cfg ServerConfig) {
 func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 	next := make(map[string]ServerConfig, len(configs))
 	for _, cfg := range configs {
+		cfg = NormalizeServerConfig(cfg)
 		cfg.Language = lspregistry.NormalizeLanguageToken(cfg.Language)
 		if cfg.Language == "" {
 			continue
@@ -597,7 +731,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 		}
 		if server, ok := m.servers[language]; ok {
 			serversToStop = append(serversToStop, server)
-			delete(m.servers, language)
+			m.removeServerAliasesLocked(language, server)
 		}
 	}
 	for language, cfg := range next {
@@ -611,7 +745,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 			resetLanguages[language] = struct{}{}
 			if server, ok := m.servers[language]; ok {
 				serversToStop = append(serversToStop, server)
-				delete(m.servers, language)
+				m.removeServerAliasesLocked(language, server)
 			}
 			if timer, ok := m.idleTimers[language]; ok {
 				timer.Stop()
@@ -630,6 +764,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 		resetDiagnosticsLanguages = append(resetDiagnosticsLanguages, language)
 	}
 	m.mu.Unlock()
+	serversToStop = uniqueServerPointers(serversToStop)
 
 	if len(removed) > 0 || len(added) > 0 {
 		m.startMu.Lock()
@@ -743,18 +878,19 @@ func (m *Manager) ensureStartedWithContext(ctx context.Context, language string)
 	m.mu.RUnlock()
 
 	if ok && server.running && server.isProcessAlive() {
-		m.clearStartFailure(language)
+		m.clearStartFailure(m.startKeyForLanguage(language))
 		return server, nil
 	}
 	if ok && (!server.running || !server.isProcessAlive()) {
 		m.cleanupServer(language, server)
 	}
 
-	if failure, ok := m.activeStartFailure(language); ok {
+	startKey := m.startKeyForLanguage(language)
+	if failure, ok := m.activeStartFailure(startKey); ok {
 		return nil, startFailureError(language, failure)
 	}
 
-	ch, shouldStart := m.beginStart(language)
+	ch, shouldStart := m.beginStart(startKey)
 	if !shouldStart {
 		select {
 		case <-ch:
@@ -767,12 +903,12 @@ func (m *Manager) ensureStartedWithContext(ctx context.Context, language string)
 		if server != nil && server.running && server.isProcessAlive() {
 			return server, nil
 		}
-		if failure, ok := m.activeStartFailure(language); ok {
+		if failure, ok := m.activeStartFailure(startKey); ok {
 			return nil, startFailureError(language, failure)
 		}
 		return nil, fmt.Errorf("server not started for language: %s", language)
 	}
-	defer m.endStart(language, ch)
+	defer m.endStart(startKey, ch)
 
 	if err := m.StartWithContext(ctx, language); err != nil {
 		return nil, err
@@ -812,7 +948,7 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 	server, ok := m.servers[language]
 	if ok && server.running && server.isProcessAlive() {
 		m.mu.RUnlock()
-		m.clearStartFailure(language)
+		m.clearStartFailure(m.startKeyForLanguage(language))
 		return nil
 	}
 	m.mu.RUnlock()
@@ -827,27 +963,18 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 		return fmt.Errorf("no config for language: %s", language)
 	}
 
-	server, err := m.startServer(cfg, startReason)
+	startKey := m.startKeyForLanguage(language)
+	server, err := m.startServer(ctx, cfg, startReason)
 	if err != nil {
-		m.recordStartFailure(language, err)
+		m.recordStartFailure(startKey, err)
 		return err
 	}
-
-	m.mu.Lock()
-	m.servers[language] = server
-	m.mu.Unlock()
 
 	initStartedAt := time.Now()
 	if err := server.initializeWithContext(ctx); err != nil {
 		server.lastError = err.Error()
-		m.mu.Lock()
-		current, ok := m.servers[language]
-		if ok && current == server {
-			delete(m.servers, language)
-		}
-		m.mu.Unlock()
 		_ = server.abortStartup()
-		m.recordStartFailure(language, err)
+		m.recordStartFailure(startKey, err)
 		log.Printf("[LSP-MGR] initialized language=%s command=%s pid=%d reason=%s initDurationMs=%d status=failed error=%v",
 			language,
 			cfg.Command,
@@ -858,9 +985,12 @@ func (m *Manager) StartWithContext(ctx context.Context, language string) error {
 		)
 		return err
 	}
+	m.mu.Lock()
+	m.publishServerAliasesLocked(language, server)
+	m.mu.Unlock()
 	logLSPProcessPriority("initialized", cfg, lspProcessID(server), startReason, applyLSPProcessPriority(server.cmd))
 
-	m.clearStartFailure(language)
+	m.clearStartFailure(startKey)
 	log.Printf("[LSP-MGR] initialized language=%s command=%s pid=%d root=%s reason=%s initDurationMs=%d status=initialized",
 		language,
 		cfg.Command,
@@ -883,19 +1013,17 @@ func (m *Manager) Stop(language string) error {
 	defer m.documentMu.Unlock()
 
 	m.mu.Lock()
-	if timer, ok := m.idleTimers[language]; ok {
-		timer.Stop()
-		delete(m.idleTimers, language)
-	}
 	server, ok := m.servers[language]
 	if !ok {
 		m.mu.Unlock()
 		return nil
 	}
-	delete(m.servers, language)
+	closedLanguages := m.removeServerAliasesLocked(language, server)
 	m.mu.Unlock()
-	m.forceMarkLanguageClosed(language)
-	m.clearCompletionCacheForLanguage(language)
+	for _, closedLanguage := range closedLanguages {
+		m.forceMarkLanguageClosed(closedLanguage)
+		m.clearCompletionCacheForLanguage(closedLanguage)
+	}
 
 	return server.shutdown()
 }
@@ -905,20 +1033,21 @@ func (m *Manager) cleanupServer(language string, server *Server) {
 		return
 	}
 	shouldShutdown := false
-	closeLang := ""
+	closedLanguages := []string(nil)
 	m.mu.Lock()
 	current, ok := m.servers[language]
 	if ok && current == server {
-		delete(m.servers, language)
-		closeLang = language
+		closedLanguages = m.removeServerAliasesLocked(language, server)
 		shouldShutdown = true
 	}
 	m.mu.Unlock()
 	if shouldShutdown {
-		m.forceMarkLanguageClosed(closeLang)
-		m.clearCompletionCacheForLanguage(closeLang)
+		for _, closedLanguage := range closedLanguages {
+			m.forceMarkLanguageClosed(closedLanguage)
+			m.clearCompletionCacheForLanguage(closedLanguage)
+		}
 		if err := server.shutdown(); err != nil {
-			log.Printf("[LSP-MGR] shutdown failed lang=%s err=%v", closeLang, err)
+			log.Printf("[LSP-MGR] shutdown failed languages=%s err=%v", strings.Join(closedLanguages, ","), err)
 		}
 	}
 }
@@ -929,8 +1058,12 @@ func (m *Manager) StopAll() {
 
 	m.mu.Lock()
 	servers := make([]*Server, 0, len(m.servers))
+	seen := make(map[*Server]bool, len(m.servers))
 	for _, s := range m.servers {
-		servers = append(servers, s)
+		if s != nil && !seen[s] {
+			servers = append(servers, s)
+			seen[s] = true
+		}
 	}
 	for _, timer := range m.idleTimers {
 		timer.Stop()
@@ -945,7 +1078,7 @@ func (m *Manager) StopAll() {
 	m.diagnostics = make(map[string]map[string][]Diagnostic)
 	m.diagnosticSeq = 0
 	m.diagnosticSeen = make(map[string]uint64)
-	m.transientCloseClears = make(map[string]time.Time)
+	m.transientCloseClears = make(map[string]struct{})
 	m.onDiagnostics = nil
 	m.diagnosticsMu.Unlock()
 
@@ -1031,7 +1164,8 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	if !hasConfig {
 		return false, fmt.Errorf("no config for language: %s", language)
 	}
-	m.clearStartFailure(language)
+	startKey := m.startKeyForLanguage(language)
+	m.clearStartFailure(startKey)
 	m.clearCompletionCacheForLanguage(language)
 
 	// Server not started, process died, or explicit force restart.
@@ -1045,13 +1179,20 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	if hasServer {
 		restartCount = server.restarts + 1
 		server.shutdown()
-		m.forceMarkLanguageClosed(language)
+		m.mu.Lock()
+		closedLanguages := m.removeServerAliasesLocked(language, server)
+		m.mu.Unlock()
+		for _, closedLanguage := range closedLanguages {
+			m.forceMarkLanguageClosed(closedLanguage)
+			m.clearCompletionCacheForLanguage(closedLanguage)
+		}
 	}
 
 	// Start new server
-	newServer, err := m.startServer(cfg, "restart")
+	restartCtx := WithStartReason(context.Background(), "restart")
+	newServer, err := m.startServer(restartCtx, cfg, "restart")
 	if err != nil {
-		m.recordStartFailure(language, err)
+		m.recordStartFailure(startKey, err)
 		return false, err
 	}
 	newServer.restarts = restartCount
@@ -1059,14 +1200,14 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	if err := newServer.initialize(); err != nil {
 		newServer.lastError = err.Error()
 		_ = newServer.shutdown()
-		m.recordStartFailure(language, err)
+		m.recordStartFailure(startKey, err)
 		return false, err
 	}
 
 	m.mu.Lock()
-	m.servers[language] = newServer
+	m.publishServerAliasesLocked(language, newServer)
 	m.mu.Unlock()
-	m.clearStartFailure(language)
+	m.clearStartFailure(startKey)
 
 	return true, nil
 }
@@ -1646,12 +1787,7 @@ func (m *Manager) WillRenameFiles(ctx context.Context, files []FileRename) (*Wor
 	}
 
 	m.mu.RLock()
-	servers := make([]*Server, 0, len(m.servers))
-	for _, server := range m.servers {
-		if server != nil && server.running && server.isProcessAlive() {
-			servers = append(servers, server)
-		}
-	}
+	servers := m.uniqueRunningServersLocked()
 	m.mu.RUnlock()
 
 	var merged *WorkspaceEdit
@@ -1693,12 +1829,7 @@ func (m *Manager) DidRenameFiles(files []FileRename) {
 	m.clearCompletionCache()
 
 	m.mu.RLock()
-	servers := make([]*Server, 0, len(m.servers))
-	for _, server := range m.servers {
-		if server != nil && server.running && server.isProcessAlive() {
-			servers = append(servers, server)
-		}
-	}
+	servers := m.uniqueRunningServersLocked()
 	m.mu.RUnlock()
 
 	for _, server := range servers {
@@ -1796,11 +1927,11 @@ func (m *Manager) remapDiagnosticsForRenames(files []FileRename) {
 	m.diagnosticSeen = nextSeen
 
 	if len(m.transientCloseClears) > 0 {
-		nextSuppressions := make(map[string]time.Time, len(m.transientCloseClears))
-		for key, until := range m.transientCloseClears {
+		nextSuppressions := make(map[string]struct{}, len(m.transientCloseClears))
+		for key := range m.transientCloseClears {
 			language, filePath, ok := splitDiagnosticsPublicationKey(key)
 			if !ok {
-				nextSuppressions[key] = until
+				nextSuppressions[key] = struct{}{}
 				continue
 			}
 			nextPath := filepath.Clean(filePath)
@@ -1809,7 +1940,7 @@ func (m *Manager) remapDiagnosticsForRenames(files []FileRename) {
 					nextPath = remapped
 				}
 			}
-			nextSuppressions[DiagnosticsPublicationKey(language, nextPath)] = until
+			nextSuppressions[DiagnosticsPublicationKey(language, nextPath)] = struct{}{}
 		}
 		m.transientCloseClears = nextSuppressions
 	}
@@ -1867,14 +1998,30 @@ func (m *Manager) handleNotification(language, method string, params json.RawMes
 		return
 	}
 
-	m.setDiagnostics(language, filePath, payload.Diagnostics)
+	m.setDiagnostics(m.languageForDiagnostics(language, filePath), filePath, payload.Diagnostics)
+}
+
+func (m *Manager) languageForDiagnostics(defaultLanguage string, filePath string) string {
+	defaultLanguage = lspregistry.NormalizeLanguageToken(defaultLanguage)
+	filePath = filepath.Clean(strings.TrimSpace(filePath))
+	if filePath == "" {
+		return defaultLanguage
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for language, docs := range m.openDocsByLang {
+		if _, ok := docs[filePath]; ok {
+			return language
+		}
+	}
+	return defaultLanguage
 }
 
 func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagnostic) {
 	cloned := cloneDiagnostics(diagnostics)
 
 	m.diagnosticsMu.Lock()
-	if len(cloned) == 0 && m.shouldSuppressTransientCloseDiagnosticsClearLocked(language, filePath, time.Now()) {
+	if len(cloned) == 0 && m.shouldSuppressTransientCloseDiagnosticsClearLocked(language, filePath) {
 		m.diagnosticsMu.Unlock()
 		return
 	}
@@ -1956,29 +2103,20 @@ func remapPathPrefix(path, oldPrefix, newPrefix string) (string, bool) {
 func (m *Manager) suppressTransientCloseDiagnosticsClear(language, filePath string) {
 	m.diagnosticsMu.Lock()
 	if m.transientCloseClears == nil {
-		m.transientCloseClears = make(map[string]time.Time)
+		m.transientCloseClears = make(map[string]struct{})
 	}
-	now := time.Now()
-	m.sweepTransientCloseDiagnosticsClearsLocked(now)
-	m.transientCloseClears[transientDiagnosticsClearKey(language, filePath)] = now.Add(transientCloseDiagnosticsClearSuppressTTL)
+	m.transientCloseClears[transientDiagnosticsClearKey(language, filePath)] = struct{}{}
 	m.trimTransientCloseDiagnosticsClearsLocked()
 	m.diagnosticsMu.Unlock()
 }
 
-func (m *Manager) shouldSuppressTransientCloseDiagnosticsClearLocked(language, filePath string, now time.Time) bool {
+func (m *Manager) shouldSuppressTransientCloseDiagnosticsClearLocked(language, filePath string) bool {
 	if len(m.transientCloseClears) == 0 {
 		return false
 	}
 	key := transientDiagnosticsClearKey(language, filePath)
-	until, ok := m.transientCloseClears[key]
-	if !ok {
-		return false
-	}
-	if now.After(until) {
-		delete(m.transientCloseClears, key)
-		return false
-	}
-	return true
+	_, ok := m.transientCloseClears[key]
+	return ok
 }
 
 func (m *Manager) clearTransientCloseDiagnosticsClear(language, filePath string) {
@@ -1989,7 +2127,7 @@ func (m *Manager) clearTransientCloseDiagnosticsClear(language, filePath string)
 
 func (m *Manager) clearAllTransientCloseDiagnosticsClears() {
 	m.diagnosticsMu.Lock()
-	m.transientCloseClears = make(map[string]time.Time)
+	m.transientCloseClears = make(map[string]struct{})
 	m.diagnosticsMu.Unlock()
 }
 
@@ -2012,31 +2150,15 @@ func (m *Manager) clearTransientCloseDiagnosticsClearsForLanguagesLocked(languag
 	}
 }
 
-func (m *Manager) sweepTransientCloseDiagnosticsClearsLocked(now time.Time) {
-	if len(m.transientCloseClears) == 0 {
-		return
-	}
-	for key, until := range m.transientCloseClears {
-		if now.After(until) {
-			delete(m.transientCloseClears, key)
-		}
-	}
-}
-
 func (m *Manager) trimTransientCloseDiagnosticsClearsLocked() {
 	if len(m.transientCloseClears) <= transientCloseDiagnosticsClearMaxEntries {
 		return
 	}
-	oldestKey := ""
-	var oldestUntil time.Time
-	for key, until := range m.transientCloseClears {
-		if oldestKey == "" || until.Before(oldestUntil) {
-			oldestKey = key
-			oldestUntil = until
+	for key := range m.transientCloseClears {
+		delete(m.transientCloseClears, key)
+		if len(m.transientCloseClears) <= transientCloseDiagnosticsClearMaxEntries {
+			return
 		}
-	}
-	if oldestKey != "" {
-		delete(m.transientCloseClears, oldestKey)
 	}
 }
 
@@ -2445,10 +2567,18 @@ func (m *Manager) forceMarkLanguageClosed(language string) {
 
 func (m *Manager) hasOpenDocs(language string) bool {
 	m.mu.RLock()
-	openDocs := m.openDocsByLang[language]
-	open := len(openDocs) > 0
+	languages := m.sharedServerLanguagesLocked(language, m.servers[language])
+	if len(languages) == 0 {
+		languages = []string{language}
+	}
+	for _, candidate := range languages {
+		if len(m.openDocsByLang[candidate]) > 0 {
+			m.mu.RUnlock()
+			return true
+		}
+	}
 	m.mu.RUnlock()
-	return open
+	return false
 }
 
 func (m *Manager) scheduleIdleStop(language string) {
@@ -2685,11 +2815,45 @@ func (m *Manager) SignatureHelpWithContext(ctx context.Context, language, filePa
 	return server.SignatureHelpWithContext(ctx, filePath, line, column)
 }
 
-func (m *Manager) startServer(cfg ServerConfig, reason string) (*Server, error) {
+func (m *Manager) startServer(ctx context.Context, cfg ServerConfig, reason string) (*Server, error) {
 	startedAt := time.Now()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "unspecified"
+	}
+	var governor processcontrol.Controller
+	m.mu.RLock()
+	governor = m.processGovernor
+	m.mu.RUnlock()
+	var lease *processcontrol.Lease
+	if governor != nil {
+		var err error
+		lease, err = governor.Acquire(ctx, processcontrol.Request{
+			Kind:     processcontrol.KindLSPServer,
+			Project:  m.rootPath,
+			Root:     cfg.RootURI,
+			Language: cfg.Language,
+			Group:    cfg.ServerGroup,
+			Reason:   reason,
+			Command:  cfg.Command,
+			Args:     cfg.Args,
+		})
+		if err != nil {
+			log.Printf("[LSP-MGR] start queued canceled language=%s group=%s command=%s root=%s reason=%s durationMs=%d error=%v",
+				cfg.Language,
+				cfg.ServerGroup,
+				cfg.Command,
+				cfg.RootURI,
+				reason,
+				time.Since(startedAt).Milliseconds(),
+				err,
+			)
+			return nil, err
+		}
+		defer lease.Release("startup-complete")
 	}
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = lspProcessEnv(cfg.Command)
@@ -2725,7 +2889,13 @@ func (m *Manager) startServer(cfg ServerConfig, reason string) (*Server, error) 
 			time.Since(startedAt).Milliseconds(),
 			err,
 		)
+		if lease != nil {
+			lease.Release("start-failed")
+		}
 		return nil, err
+	}
+	if lease != nil {
+		lease.RegisterStarted(cmd.Process.Pid)
 	}
 	logLSPProcessPriority("start", cfg, cmd.Process.Pid, reason, applyLSPProcessPriority(cmd))
 	log.Printf("[LSP-MGR] started language=%s command=%s args=%v pid=%d root=%s reason=%s durationMs=%d status=started",

@@ -103,20 +103,27 @@ type LSPDiagnosticsStatusEvent struct {
 }
 
 type LSPDiagnosticsPreloadEvent struct {
-	ProjectPath        string `json:"projectPath"`
-	SessionID          string `json:"sessionId,omitempty"`
-	Generation         uint64 `json:"generation"`
-	Bounded            bool   `json:"bounded"`
-	CoverageState      string `json:"coverageState,omitempty"`
-	CoverageMode       string `json:"coverageMode,omitempty"`
-	TotalCandidates    int    `json:"totalCandidates"`
-	SelectedCandidates int    `json:"selectedCandidates"`
-	CheckedCandidates  int    `json:"checkedCandidates"`
-	FailedCandidates   int    `json:"failedCandidates"`
-	TotalLanguages     int    `json:"totalLanguages"`
-	SelectedLanguages  int    `json:"selectedLanguages"`
-	TimedOut           bool   `json:"timedOut"`
-	Message            string `json:"message,omitempty"`
+	ProjectPath                  string `json:"projectPath"`
+	SessionID                    string `json:"sessionId,omitempty"`
+	Generation                   uint64 `json:"generation"`
+	Bounded                      bool   `json:"bounded"`
+	CoverageState                string `json:"coverageState,omitempty"`
+	CoverageMode                 string `json:"coverageMode,omitempty"`
+	TotalCandidates              int    `json:"totalCandidates"`
+	SelectedCandidates           int    `json:"selectedCandidates"`
+	CheckedCandidates            int    `json:"checkedCandidates"`
+	FailedCandidates             int    `json:"failedCandidates"`
+	TotalLanguages               int    `json:"totalLanguages"`
+	SelectedLanguages            int    `json:"selectedLanguages"`
+	TimedOut                     bool   `json:"timedOut"`
+	SkippedCandidates            int    `json:"skippedCandidates,omitempty"`
+	OversizedCandidates          int    `json:"oversizedCandidates,omitempty"`
+	UnsafeCandidates             int    `json:"unsafeCandidates,omitempty"`
+	UnsupportedCandidates        int    `json:"unsupportedCandidates,omitempty"`
+	NoServerCandidates           int    `json:"noServerCandidates,omitempty"`
+	OpenFailedCandidates         int    `json:"openFailedCandidates,omitempty"`
+	PublicationTimeoutCandidates int    `json:"publicationTimeoutCandidates,omitempty"`
+	Message                      string `json:"message,omitempty"`
 }
 
 type LSPCodeAction struct {
@@ -265,7 +272,12 @@ func (a *App) LSPPreloadProjectDiagnostics(projectPath string) bool {
 	if session != nil {
 		a.logInfof("[Activation] subsystem=diagnostics reason=%s session=%s project=%s generation=%d", activationManualProjectScan, session.ID, filepath.Base(projectPath), session.projectGeneration.Load())
 	}
-	return a.lspPreloadProjectDiagnosticsForSession(session, projectPath, a.activeProjectGeneration())
+	return a.lspPreloadProjectDiagnosticsForSessionWithOptions(
+		session,
+		projectPath,
+		a.activeProjectGeneration(),
+		diagnosticsPreloadRunOptions{Mode: diagnosticsPreloadModeManualFull},
+	)
 }
 
 // LSPGoToDefinition finds definition using unified LSP manager

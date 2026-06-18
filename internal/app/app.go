@@ -23,6 +23,7 @@ import (
 	"arlecchino/internal/mcp"
 	"arlecchino/internal/plugins"
 	"arlecchino/internal/plugins/laravel"
+	"arlecchino/internal/processcontrol"
 	"arlecchino/internal/project"
 	"arlecchino/internal/system"
 	"arlecchino/internal/terminal"
@@ -63,6 +64,7 @@ type App struct {
 	mcpBridgeServer          *mcp.IDEBridgeServer
 	mcpBridgeMu              sync.Mutex
 	backgroundShell          *BackgroundShellStatusService
+	processGovernor          *processcontrol.Governor
 	backgroundCancelMu       sync.Mutex
 	backgroundCancelers      map[string]context.CancelFunc
 	indexerProgressMu        sync.Mutex
@@ -160,6 +162,7 @@ func NewApp() *App {
 		plugins:                  pluginRegistry,
 		executionService:         execution.NewService(pluginRegistry),
 		backgroundShell:          NewBackgroundShellStatusService(),
+		processGovernor:          processcontrol.NewGovernor(),
 		backgroundCancelers:      make(map[string]context.CancelFunc),
 		indexerProgress:          make(map[string]indexerProgressState),
 		windowLeases:             NewWindowLeaseRegistry(),
@@ -338,6 +341,7 @@ func (a *App) InspectProjectAccess(path string) ProjectAccessInspection {
 
 func (a *App) initProjectLSPManagerForSession(session *ProjectRuntimeSession, path string, projectGeneration uint64, installer *lspinstaller.Installer) *lsp.Manager {
 	manager := lsp.NewManager(path)
+	manager.SetProcessGovernor(a.processGovernor)
 	manager.SetDiagnosticsCallback(func(language, filePath string, diagnostics []lsp.Diagnostic) {
 		if session != nil && session.projectGeneration.Load() != projectGeneration {
 			return
@@ -415,11 +419,18 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 	lspManager = a.initProjectLSPManagerForSession(session, path, projectGeneration, lspInstaller)
 
 	// Initialize core engine and prediction brain
+	indexerWorkers := core.RecommendedWorkerCount()
+	if a.processGovernor != nil {
+		indexerWorkers = a.processGovernor.PolicyFor(processcontrol.KindIndexing, 0, 0).WorkerCount
+		if indexerWorkers <= 0 {
+			indexerWorkers = core.RecommendedWorkerCount()
+		}
+	}
 	coreEngine, err := newCoreEngine(core.EngineConfig{
 		ProjectID:   path,
 		ProjectRoot: path,
 		DBPath:      filepath.Join(path, ".arlecchino", "brain.db"),
-		Workers:     core.RecommendedWorkerCount(),
+		Workers:     indexerWorkers,
 	})
 	if err != nil {
 		a.logWarning(fmt.Sprintf("core engine init failed: %v", err))

@@ -302,7 +302,10 @@ func (a *App) recordBackgroundDiagnosticsScan(
 		Cancelable:      status == BackgroundShellJobRunning || status == BackgroundShellJobQueued,
 		NotifyOnFailure: true,
 	}
-	if total > 0 || checked > 0 {
+	if plan.CoverageState == diagnosticsPreloadCoverageIncomplete {
+		job.Severity = BackgroundShellSeverityWarning
+	}
+	if total > 0 || checked > 0 || status == BackgroundShellJobRunning {
 		job.Progress = &BackgroundShellProgress{
 			Percent: percentFromCounts(checked, total),
 			Current: int64(maxInt(0, checked)),
