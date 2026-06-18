@@ -305,6 +305,18 @@ func (s *Service) HasProject(projectID string) bool {
 	return s.project(projectID) != nil
 }
 
+func (s *Service) HasProjectRoot(projectID string, projectRoot string) bool {
+	if s == nil {
+		return false
+	}
+	projectRoot, err := canonicalProjectRoot(projectRoot)
+	if err != nil {
+		return false
+	}
+	project := s.project(projectID)
+	return project != nil && project.ProjectRoot == projectRoot
+}
+
 func (p *ProjectSession) Close() error {
 	if p == nil {
 		return nil

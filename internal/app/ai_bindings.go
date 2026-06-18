@@ -51,7 +51,7 @@ func (a *App) ensureAIProjectSessionOpen(session *ProjectRuntimeSession) error {
 		return fmt.Errorf("AI project session has no open project")
 	}
 	service := a.ensureAIService()
-	if service.HasProject(session.ID) {
+	if session.aiSession != nil && service.HasProjectRoot(session.ID, projectPath) {
 		return nil
 	}
 	aiSession, err := service.OpenProject(session.ID, projectPath)

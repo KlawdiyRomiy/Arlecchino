@@ -25,9 +25,7 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 	if project == nil {
 		return []AIChatRunEnvelope{}, nil
 	}
-	if limit <= 0 {
-		limit = 50
-	}
+	unbounded := limit <= 0
 	if limit > 200 {
 		limit = 200
 	}
@@ -54,7 +52,7 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 		runs = append(runs, run)
 	}
 	sortRunsNewestFirst(runs)
-	if len(runs) > limit {
+	if !unbounded && len(runs) > limit {
 		runs = runs[:limit]
 	}
 	runIDs := make([]string, 0, len(runs))
