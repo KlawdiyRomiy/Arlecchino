@@ -579,6 +579,11 @@ const flushDeferredDiagnosticsEvents = () => {
   }
 };
 
+const clearDeferredDiagnosticsQueues = () => {
+  pendingDiagnosticsEvents.clear();
+  pendingDiagnosticsStatusEvent = null;
+};
+
 const ensureDiagnosticsMotionSubscription = () => {
   if (diagnosticsMotionSubscriptionStarted) {
     return;
@@ -654,17 +659,34 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
     runtimeStatus: emptyRuntimeStatus(),
 
     setProjectScope: (projectPath, generation = 0) => {
-      set((state) => ({
-        activeProjectPath: projectPath,
-        currentGeneration: normalizeGeneration(generation),
-        projectSummary: summarizeByFile(state.byFile, projectPath),
-        runtimeStatus:
-          !projectPath ||
-          (state.runtimeStatus.projectPath &&
-            state.runtimeStatus.projectPath !== projectPath)
-            ? emptyRuntimeStatus()
-            : state.runtimeStatus,
-      }));
+      const nextGeneration = normalizeGeneration(generation);
+      set((state) => {
+        const generationChanged =
+          Boolean(projectPath) &&
+          state.activeProjectPath === projectPath &&
+          state.currentGeneration !== nextGeneration;
+        const nextByFile = generationChanged ? new Map() : state.byFile;
+        const nextByFileLanguage = generationChanged
+          ? new Map()
+          : state.byFileLanguage;
+
+        return {
+          byFile: nextByFile,
+          byFileLanguage: nextByFileLanguage,
+          activeProjectPath: projectPath,
+          currentGeneration: nextGeneration,
+          projectSummary: generationChanged
+            ? emptySummary()
+            : summarizeByFile(nextByFile, projectPath),
+          runtimeStatus:
+            !projectPath ||
+            generationChanged ||
+            (state.runtimeStatus.projectPath &&
+              state.runtimeStatus.projectPath !== projectPath)
+              ? emptyRuntimeStatus()
+              : state.runtimeStatus,
+        };
+      });
     },
 
     ingestDiagnosticsEvent: (event) => {
@@ -744,8 +766,22 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
             ? eventGeneration
             : state.currentGeneration;
         const projectPath = eventProjectPath ?? state.activeProjectPath;
+        const generationChanged =
+          Boolean(projectPath) &&
+          state.activeProjectPath === projectPath &&
+          eventGeneration > 0 &&
+          eventGeneration !== state.currentGeneration;
+        const nextByFile = generationChanged ? new Map() : state.byFile;
+        const nextByFileLanguage = generationChanged
+          ? new Map()
+          : state.byFileLanguage;
 
         return {
+          byFile: nextByFile,
+          byFileLanguage: nextByFileLanguage,
+          projectSummary: generationChanged
+            ? emptySummary()
+            : state.projectSummary,
           currentGeneration: nextGeneration,
           runtimeStatus: {
             state: nextRuntimeState,
@@ -901,7 +937,8 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       });
     },
 
-    reset: () =>
+    reset: () => {
+      clearDeferredDiagnosticsQueues();
       set({
         byFile: new Map(),
         byFileLanguage: new Map(),
@@ -909,7 +946,8 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
         activeProjectPath: null,
         currentGeneration: 0,
         runtimeStatus: emptyRuntimeStatus(),
-      }),
+      });
+    },
 
     getProjectSummary: (projectPath = null) => {
       const state = get();

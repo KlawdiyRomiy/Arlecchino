@@ -375,6 +375,31 @@ const getProblemsSignature = (
     ? "empty"
     : problems.map(getProblemSignature).join("\u0000");
 
+const getInlineDiagnosticsSignature = (
+  diagnostics: readonly InlineDiagnosticsLine[],
+): string =>
+  diagnostics.length === 0
+    ? "empty"
+    : diagnostics
+        .map((diagnostic) =>
+          [
+            diagnostic.from,
+            diagnostic.to,
+            diagnostic.point ? 1 : 0,
+            diagnostic.severity,
+            diagnostic.message,
+            diagnostic.source,
+            diagnostic.code,
+            diagnostic.line,
+            diagnostic.column,
+            diagnostic.count,
+            diagnostic.fragments
+              .map((fragment) => `${fragment.from}:${fragment.to}`)
+              .join(","),
+          ].join("\u0001"),
+        )
+        .join("\u0000");
+
 export const buildInlineDiagnosticsSnapshot = (
   doc: CodeMirrorDocLike,
   problems: readonly DiagnosticsProblem[],
@@ -1446,6 +1471,9 @@ class DiagnosticsBridge {
   private pendingProblems: readonly DiagnosticsProblem[] = EMPTY_PROBLEMS;
   private pendingSignature = "";
   private appliedSignature = "";
+  private appliedInlineSignature = getInlineDiagnosticsSignature(
+    EMPTY_INLINE_SNAPSHOT,
+  );
   private scheduled = false;
   private destroyed = false;
   private awaitingInitialPull = false;
@@ -1735,7 +1763,13 @@ class DiagnosticsBridge {
         this.view.state.doc,
         problems,
       );
+      const inlineSignature = getInlineDiagnosticsSignature(inlineSnapshot);
+      const shouldUpdateInlineDiagnostics = !Object.is(
+        inlineSignature,
+        this.appliedInlineSignature,
+      );
       this.appliedSignature = this.pendingSignature;
+      this.appliedInlineSignature = inlineSignature;
       if (problems.length > 0) {
         lastVisibleProblemsByView.set(this.view, problems);
       } else {
@@ -1745,13 +1779,20 @@ class DiagnosticsBridge {
         this.tooltipArmed &&
         Boolean(this.lastPointer) &&
         this.activeTooltipSignature !== "";
-      this.activeTooltipSignature = "";
-      this.view.dispatch({
-        effects: [
-          ...buildInlineDiagnosticsEffects(inlineSnapshot),
-          setDiagnosticTooltipEffect.of(null),
-        ],
-      });
+      const shouldClearTooltip = this.activeTooltipSignature !== "";
+      if (!shouldUpdateInlineDiagnostics && !shouldClearTooltip) {
+        return;
+      }
+
+      const effects: StateEffect<unknown>[] = [];
+      if (shouldUpdateInlineDiagnostics) {
+        effects.push(...buildInlineDiagnosticsEffects(inlineSnapshot));
+      }
+      if (shouldClearTooltip) {
+        this.activeTooltipSignature = "";
+        effects.push(setDiagnosticTooltipEffect.of(null));
+      }
+      this.view.dispatch({ effects });
       if (shouldReanchorTooltip) {
         this.scheduleTooltipReanchor();
       }

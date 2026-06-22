@@ -2356,6 +2356,28 @@ func (m *Manager) IsDocOpen(language, filePath string) bool {
 	return false
 }
 
+// IsPathOpen reports whether any language bucket currently owns the file path.
+func (m *Manager) IsPathOpen(filePath string) bool {
+	if strings.TrimSpace(filePath) == "" {
+		return false
+	}
+	cleanPath := filepath.Clean(filePath)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, openDocs := range m.openDocsByLang {
+		if _, ok := openDocs[filePath]; ok {
+			return true
+		}
+		if cleanPath != filePath {
+			if _, ok := openDocs[cleanPath]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (m *Manager) isDocOpen(language, filePath string) bool {
 	m.mu.RLock()
 	openDocs := m.openDocsByLang[language]

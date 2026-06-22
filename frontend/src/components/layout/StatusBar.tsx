@@ -8,7 +8,10 @@ import {
   resolveDiagnosticsProjectPath,
   useWorkspaceStore,
 } from "../../stores/workspaceStore";
-import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
+import {
+  resolveActiveDiagnosticsProjectPath,
+  useProjectDiagnosticsPreload,
+} from "../../utils/projectBoundState";
 import { useBackgroundShellStatus } from "../../shell/backgroundShellStatus";
 import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 
@@ -43,11 +46,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const backgroundShell = useBackgroundShellStatus();
   const projectSessionId = getCurrentProjectSessionId();
-  const activeProjectPath =
-    workspaceProjectPath ??
-    diagnosticsPreload.projectPath ??
-    diagnosticsRuntimeStatus.projectPath ??
-    diagnosticsStoreProjectPath;
+  const activeProjectPath = resolveActiveDiagnosticsProjectPath({
+    workspaceProjectPath,
+    diagnosticsPreloadProjectPath: diagnosticsPreload.projectPath,
+    diagnosticsRuntimeProjectPath: diagnosticsRuntimeStatus.projectPath,
+    diagnosticsStoreProjectPath,
+  });
   const projectSummary = useMemo(
     () =>
       activeProjectPath
@@ -169,9 +173,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       activeProjectPath &&
       (coverageState === "incomplete" ||
         coverageState === "canceled" ||
-        diagnosticsPreload.bounded ||
+        (preloadMatchesProject && diagnosticsPreload.bounded) ||
         hasIncompleteCounters ||
-        (diagnosticsPreload.totalCandidates > 0 &&
+        (preloadMatchesProject &&
+          diagnosticsPreload.totalCandidates > 0 &&
           diagnosticsPreload.selectedCandidates <
             diagnosticsPreload.totalCandidates))
     ) {

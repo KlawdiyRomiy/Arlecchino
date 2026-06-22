@@ -77,6 +77,13 @@ interface ProjectScopeState {
   sessionId: string;
 }
 
+interface ActiveDiagnosticsProjectPathInput {
+  workspaceProjectPath?: string | null;
+  diagnosticsPreloadProjectPath?: string | null;
+  diagnosticsRuntimeProjectPath?: string | null;
+  diagnosticsStoreProjectPath?: string | null;
+}
+
 let diagnosticsPreloadState: DiagnosticsPreloadState = {
   active: false,
   completed: false,
@@ -117,6 +124,7 @@ let currentProjectScope: ProjectScopeState = {
   projectPath: null,
   sessionId: "main",
 };
+let currentProjectScopeEpoch = 0;
 const diagnosticsPreloadListeners = new Set<() => void>();
 
 const emitDiagnosticsPreloadState = (next: DiagnosticsPreloadState) => {
@@ -162,6 +170,22 @@ const preloadStateIdleForProject = (
   ...preloadStateIdle,
   projectPath,
 });
+
+const normalizeActiveDiagnosticsProjectPath = (projectPath?: string | null) =>
+  typeof projectPath === "string" && projectPath.trim().length > 0
+    ? projectPath
+    : null;
+
+export const resolveActiveDiagnosticsProjectPath = ({
+  workspaceProjectPath,
+  diagnosticsPreloadProjectPath,
+  diagnosticsRuntimeProjectPath,
+  diagnosticsStoreProjectPath,
+}: ActiveDiagnosticsProjectPathInput) =>
+  normalizeActiveDiagnosticsProjectPath(workspaceProjectPath) ??
+  normalizeActiveDiagnosticsProjectPath(diagnosticsPreloadProjectPath) ??
+  normalizeActiveDiagnosticsProjectPath(diagnosticsRuntimeProjectPath) ??
+  normalizeActiveDiagnosticsProjectPath(diagnosticsStoreProjectPath);
 
 const syncAIChatProjectScope = (projectPath: string | null) => {
   useAIChatStore
@@ -232,6 +256,24 @@ const syncProjectScopeToDiagnosticsStore = () => {
       currentProjectScope.generation,
     );
 };
+
+const setCurrentProjectScope = (next: ProjectScopeState) => {
+  if (
+    currentProjectScope.generation !== next.generation ||
+    currentProjectScope.projectPath !== next.projectPath ||
+    currentProjectScope.sessionId !== next.sessionId
+  ) {
+    currentProjectScopeEpoch += 1;
+  }
+  currentProjectScope = next;
+};
+
+const diagnosticsScanScopeStillCurrent = (
+  projectPath: string,
+  scopeEpoch: number,
+) =>
+  currentProjectScopeEpoch === scopeEpoch &&
+  currentProjectScope.projectPath === projectPath;
 
 const setDiagnosticsPreloadState = (
   next: DiagnosticsPreloadState,
@@ -357,7 +399,7 @@ const bindDiagnosticsPreloadEvents = () => {
       return;
     }
 
-    currentProjectScope = { generation, projectPath, sessionId };
+    setCurrentProjectScope({ generation, projectPath, sessionId });
     syncProjectScopeToDiagnosticsStore();
     if (
       diagnosticsPreloadState.projectPath === projectPath &&
@@ -407,23 +449,9 @@ const bindDiagnosticsPreloadEvents = () => {
       }
 
       latestProjectRuntime = matchingScope;
-      currentProjectScope = matchingScope;
+      setCurrentProjectScope(matchingScope);
       syncProjectScopeToDiagnosticsStore();
       const metadata = getPreloadMetadata(payload);
-      const previousCheckedCandidates =
-        diagnosticsPreloadState.projectPath === projectPath &&
-        diagnosticsPreloadSessionId === sessionId &&
-        diagnosticsPreloadState.generation === matchingScope.generation
-          ? diagnosticsPreloadState.checkedCandidates
-          : 0;
-      const checkedCandidateDelta = Math.max(
-        1,
-        metadata.checkedCandidates - previousCheckedCandidates,
-      );
-      usePerformanceStore
-        .getState()
-        .recordEventPressure("lsp", checkedCandidateDelta);
-
       setDiagnosticsPreloadState(
         {
           active: true,
@@ -465,12 +493,12 @@ const bindDiagnosticsPreloadEvents = () => {
         return;
       }
 
-      currentProjectScope = matchingScope;
+      setCurrentProjectScope(matchingScope);
       syncProjectScopeToDiagnosticsStore();
       const metadata = getPreloadMetadata(payload);
       const fallbackCoverageState: DiagnosticsCoverageState =
         metadata.totalCandidates === 0
-          ? "unavailable"
+          ? "complete"
           : metadata.bounded ||
               metadata.selectedCandidates < metadata.totalCandidates ||
               metadata.failedCandidates > 0 ||
@@ -532,7 +560,7 @@ const waitForDiagnosticsBindingsReady = async () => {
 export const resetProjectBoundStores = () => {
   const sessionId = getCurrentProjectSessionId();
   latestProjectRuntime = { generation: 0, projectPath: null, sessionId };
-  currentProjectScope = { generation: 0, projectPath: null, sessionId };
+  setCurrentProjectScope({ generation: 0, projectPath: null, sessionId });
   setDiagnosticsPreloadState(preloadStateIdle, sessionId);
   resetIndexingProgressState();
   useDiagnosticsStore.getState().reset();
@@ -555,11 +583,11 @@ export const activateProjectScope = (projectPath: string | null) => {
     (generation === 0 ||
       diagnosticsPreloadState.generation === 0 ||
       diagnosticsPreloadState.generation === generation);
-  currentProjectScope = {
+  setCurrentProjectScope({
     projectPath,
     generation,
     sessionId,
-  };
+  });
   syncProjectScopeToDiagnosticsStore();
   useGitStore.getState().setProjectPath(projectPath ?? "");
   syncAIChatProjectScope(projectPath);
@@ -651,12 +679,38 @@ export const runProjectDiagnosticsScan = async (projectPath: string) => {
     return false;
   }
 
+  const scopeEpoch = currentProjectScopeEpoch;
   try {
     await waitForDiagnosticsBindingsReady();
-    await LSPPreloadProjectDiagnostics(projectPath);
-    return true;
+    if (!diagnosticsScanScopeStillCurrent(projectPath, scopeEpoch)) {
+      return false;
+    }
+    const started = await LSPPreloadProjectDiagnostics(projectPath);
+    if (!started) {
+      if (!diagnosticsScanScopeStillCurrent(projectPath, scopeEpoch)) {
+        return false;
+      }
+      const snapshot = getDiagnosticsPreloadSnapshot();
+      const eventHandled =
+        snapshot.projectPath === projectPath &&
+        (snapshot.active ||
+          snapshot.completed ||
+          snapshot.coverageState !== "pending");
+      if (!eventHandled) {
+        setDiagnosticsPreloadState({
+          ...preloadStateIdleForProject(projectPath),
+          completed: true,
+          coverageState: "unavailable",
+          message: "Project diagnostics scan did not start for this project.",
+        });
+      }
+    }
+    return started;
   } catch (error) {
     console.debug("[diagnostics] project diagnostics scan failed", error);
+    if (!diagnosticsScanScopeStillCurrent(projectPath, scopeEpoch)) {
+      return false;
+    }
     setDiagnosticsPreloadState({
       ...preloadStateIdleForProject(projectPath),
       completed: true,

@@ -40,6 +40,7 @@ import {
   type ContextActionMenuItem,
 } from "../ui/ContextActionMenu";
 import {
+  resolveActiveDiagnosticsProjectPath,
   runProjectDiagnosticsScan,
   useProjectDiagnosticsPreload,
 } from "../../utils/projectBoundState";
@@ -216,6 +217,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const diagnosticsRuntimeStatus = useDiagnosticsStore(
     (state) => state.runtimeStatus,
   );
+  const diagnosticsCurrentGeneration = useDiagnosticsStore(
+    (state) => state.currentGeneration,
+  );
   const diagnosticsStoreProjectPath = useDiagnosticsStore(
     (state) => state.activeProjectPath,
   );
@@ -234,11 +238,12 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
       state.switchSourceId,
     ),
   );
-  const activeProjectPath =
-    workspaceProjectPath ??
-    diagnosticsPreload.projectPath ??
-    diagnosticsRuntimeStatus.projectPath ??
-    diagnosticsStoreProjectPath;
+  const activeProjectPath = resolveActiveDiagnosticsProjectPath({
+    workspaceProjectPath,
+    diagnosticsPreloadProjectPath: diagnosticsPreload.projectPath,
+    diagnosticsRuntimeProjectPath: diagnosticsRuntimeStatus.projectPath,
+    diagnosticsStoreProjectPath,
+  });
   const activeCandidatePath =
     activeFilePath ?? statusFilePath ?? activeEditorFilePath ?? null;
   const activeDiagnosticsScanJob = useMemo(
@@ -340,6 +345,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
 
   const groupsQueryKey = [
     activeProjectPath ?? "",
+    String(diagnosticsCurrentGeneration),
     severityFilter,
     currentFileOnly ? (resolvedActiveFilePath ?? "") : "*",
   ].join("\u0000");

@@ -847,6 +847,17 @@ func candidateTargetsForDiagnosticsPreload(candidates []diagnosticsPreloadCandid
 	return targets
 }
 
+func diagnosticsPreloadCandidateAlreadyOpen(mgr *indexerlsp.Manager, candidate diagnosticsPreloadCandidate) bool {
+	if mgr == nil {
+		return false
+	}
+	return mgr.IsPathOpen(candidate.Path) || mgr.IsDocOpen(candidate.Language, candidate.Path)
+}
+
+func shouldTrackDiagnosticsPreloadCandidate(hasBaseline bool, alreadyOpen bool) bool {
+	return hasBaseline && !alreadyOpen
+}
+
 func filterDiagnosticsPreloadPlanForManager(
 	plan diagnosticsPreloadPlan,
 	mgr *indexerlsp.Manager,
@@ -1133,10 +1144,7 @@ func (a *App) runDiagnosticsPreloadScanForSessionWithOptions(
 		for _, candidate := range batch {
 			targetKey := indexerlsp.DiagnosticsPublicationKey(candidate.Language, candidate.Path)
 			version, ok := baseline[targetKey]
-			if !ok {
-				continue
-			}
-			if mgr.IsDocOpen(candidate.Language, candidate.Path) && version > 0 {
+			if !shouldTrackDiagnosticsPreloadCandidate(ok, diagnosticsPreloadCandidateAlreadyOpen(mgr, candidate)) {
 				continue
 			}
 			tracked[targetKey] = version
@@ -1157,7 +1165,7 @@ func (a *App) runDiagnosticsPreloadScanForSessionWithOptions(
 				return result
 			}
 
-			if mgr.IsDocOpen(candidate.Language, candidate.Path) {
+			if diagnosticsPreloadCandidateAlreadyOpen(mgr, candidate) {
 				markCandidateProcessed()
 				continue
 			}
@@ -1266,8 +1274,8 @@ func completeDiagnosticsPreloadPlan(
 		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
 		plan.Message = diagnosticsPreloadIncompleteMessage(plan)
 	case plan.TotalCandidates == 0:
-		plan.CoverageState = diagnosticsPreloadCoverageUnavailable
-		plan.Message = "Workspace diagnostics are not available for the detected files in this project yet."
+		plan.CoverageState = diagnosticsPreloadCoverageComplete
+		plan.Message = ""
 	case plan.Bounded || plan.SelectedCandidates < plan.TotalCandidates:
 		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
 		plan.Message = "Diagnostics scan checked a bounded subset of this project."
@@ -1484,6 +1492,9 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 	if session == nil {
 		session = defaultProjectSessionFromApp(a)
 	}
+	if mode == diagnosticsPreloadModeManualFull {
+		a.refreshLSPConfigsFromInstallerForSession(session)
+	}
 	a.managerMu.Lock()
 	mgr := session.lspManager
 	engine := session.coreEngine
@@ -1507,6 +1518,15 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 			generation,
 			session.projectGeneration.Load(),
 		)
+		if mode == diagnosticsPreloadModeManualFull {
+			canceledPlan := diagnosticsPreloadPlan{
+				CoverageState: diagnosticsPreloadCoverageCanceled,
+				CoverageMode:  diagnosticsPreloadCoverageModeSyntheticOpen,
+				Message:       "Project diagnostics scan did not start because the active project changed.",
+			}
+			a.recordBackgroundDiagnosticsScan(session.ID, root, generation, canceledPlan, 0, 0, BackgroundShellJobCanceled, canceledPlan.Message)
+			a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, canceledPlan))
+		}
 		return false
 	}
 	if mgr == nil {
