@@ -20,6 +20,7 @@ type EventKind string
 const (
 	EventCreated EventKind = "created"
 	EventChanged EventKind = "changed"
+	EventDeleted EventKind = "deleted"
 )
 
 const (
@@ -153,12 +154,29 @@ func (w *ProjectWatcher) runFSNotify(ctx context.Context, root string, initial S
 
 func (w *ProjectWatcher) eventsFromFSNotify(root string, event fsnotify.Event, known map[string]Snapshot, addWatch func(string)) []Event {
 	if w.shouldSkipPath(root, event.Name) {
-		delete(known, event.Name)
+		deleteKnownPath(known, event.Name)
 		return nil
 	}
+
+	if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+		previous, existed := deleteKnownPath(known, event.Name)
+		return []Event{{
+			Kind:        EventDeleted,
+			Path:        event.Name,
+			IsDirectory: existed && previous.IsDirectory,
+		}}
+	}
+
 	info, statErr := os.Stat(event.Name)
 	if statErr != nil {
-		delete(known, event.Name)
+		previous, existed := deleteKnownPath(known, event.Name)
+		if os.IsNotExist(statErr) && existed {
+			return []Event{{
+				Kind:        EventDeleted,
+				Path:        event.Name,
+				IsDirectory: previous.IsDirectory,
+			}}
+		}
 		return nil
 	}
 	snapshot := Snapshot{IsDirectory: info.IsDir(), Size: info.Size(), ModifiedAt: info.ModTime()}
@@ -217,10 +235,8 @@ func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial Sc
 			timer.Reset(w.options.MaxPollInterval)
 			continue
 		}
-		created := DiffCreated(known, current.Entries)
-		changed := DiffChangedFiles(known, current.Entries)
+		events := eventsFromPollingDiff(known, current)
 		known = current.Entries
-		events := append(created, changed...)
 		if current.Bounded {
 			if len(events) > 0 {
 				emit(limitEvents(events, w.options.MaxEvents))
@@ -237,6 +253,20 @@ func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial Sc
 		}
 		timer.Reset(interval)
 	}
+}
+
+func eventsFromPollingDiff(previous map[string]Snapshot, current ScanResult) []Event {
+	created := DiffCreated(previous, current.Entries)
+	changed := DiffChangedFiles(previous, current.Entries)
+	if current.Bounded {
+		return append(created, changed...)
+	}
+	deleted := DiffDeleted(previous, current.Entries)
+	events := make([]Event, 0, len(deleted)+len(created)+len(changed))
+	events = append(events, deleted...)
+	events = append(events, created...)
+	events = append(events, changed...)
+	return events
 }
 
 func (w *ProjectWatcher) initialPollingInterval(initial ScanResult) time.Duration {
@@ -323,6 +353,63 @@ func DiffChangedFiles(previous, current map[string]Snapshot) []Event {
 		return events[i].Path < events[j].Path
 	})
 	return events
+}
+
+func DiffDeleted(previous, current map[string]Snapshot) []Event {
+	deletedPaths := make([]string, 0)
+	for path := range previous {
+		if _, ok := current[path]; ok {
+			continue
+		}
+		deletedPaths = append(deletedPaths, path)
+	}
+	sort.Strings(deletedPaths)
+
+	events := make([]Event, 0, len(deletedPaths))
+	deletedDirs := make([]string, 0)
+	for _, path := range deletedPaths {
+		if hasDeletedAncestor(path, deletedDirs) {
+			continue
+		}
+		snapshot := previous[path]
+		events = append(events, Event{
+			Kind:        EventDeleted,
+			Path:        path,
+			IsDirectory: snapshot.IsDirectory,
+		})
+		if snapshot.IsDirectory {
+			deletedDirs = append(deletedDirs, filepath.Clean(path))
+		}
+	}
+	return events
+}
+
+func deleteKnownPath(known map[string]Snapshot, path string) (Snapshot, bool) {
+	previous, existed := known[path]
+	delete(known, path)
+
+	cleanPath := filepath.Clean(path)
+	prefix := cleanPath + string(os.PathSeparator)
+	for knownPath := range known {
+		cleanKnownPath := filepath.Clean(knownPath)
+		if strings.HasPrefix(cleanKnownPath, prefix) {
+			delete(known, knownPath)
+		}
+	}
+	return previous, existed
+}
+
+func hasDeletedAncestor(path string, deletedDirs []string) bool {
+	cleanPath := filepath.Clean(path)
+	for _, dir := range deletedDirs {
+		if cleanPath == dir {
+			return true
+		}
+		if strings.HasPrefix(cleanPath, dir+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func limitEvents(events []Event, limit int) []Event {

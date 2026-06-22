@@ -74,15 +74,7 @@ func (a *App) startProjectFilesystemWatcherForSession(session *ProjectRuntimeSes
 				return
 			}
 			for _, event := range events {
-				switch event.Kind {
-				case watcher.EventCreated:
-					a.emitEvent("project:entry:created", projectEntryCreatedEvent{
-						Path:        event.Path,
-						IsDirectory: event.IsDirectory,
-					})
-				case watcher.EventChanged:
-					a.emitEvent("file:changed", event.Path)
-				}
+				a.handleProjectWatcherEvent(session, event)
 			}
 		})
 		if err != nil {
@@ -91,6 +83,32 @@ func (a *App) startProjectFilesystemWatcherForSession(session *ProjectRuntimeSes
 		}
 		<-ctx.Done()
 	}()
+}
+
+func (a *App) handleProjectWatcherEvent(session *ProjectRuntimeSession, event watcher.Event) {
+	switch event.Kind {
+	case watcher.EventCreated:
+		a.emitEvent("project:entry:created", projectEntryCreatedEvent{
+			Path:        event.Path,
+			IsDirectory: event.IsDirectory,
+		})
+	case watcher.EventChanged:
+		a.emitEvent("file:changed", event.Path)
+	case watcher.EventDeleted:
+		a.pruneProjectWatcherDiagnostics(session, event.Path)
+		a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{
+			Path:        event.Path,
+			IsDirectory: event.IsDirectory,
+		})
+	}
+}
+
+func (a *App) pruneProjectWatcherDiagnostics(session *ProjectRuntimeSession, path string) {
+	if session != nil && session.lspManager != nil {
+		session.lspManager.PruneDiagnosticsForPath(path)
+		return
+	}
+	a.pruneLSPDiagnosticsForProjectEntry(path)
 }
 
 func scanProjectEntries(projectPath string) (map[string]projectEntrySnapshot, error) {
