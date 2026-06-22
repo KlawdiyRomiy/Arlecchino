@@ -335,8 +335,8 @@ export const FloatingPanel = React.forwardRef<
     const effectiveUiScale = getEffectiveUiScale(uiScale);
     const prefersReducedMotion = useReducedMotion();
     const reduceMotion = prefersReducedMotion;
-    const storeMotionPressureActive = usePerformanceStore(
-      (state) => state.panelMotionActive || state.mode !== "normal",
+    const adaptivePerformancePaintConstrained = usePerformanceStore(
+      (state) => state.mode !== "normal",
     );
     const isPresent = useIsPresent();
     const [isResizing, setIsResizing] = useState(false);
@@ -1346,12 +1346,22 @@ export const FloatingPanel = React.forwardRef<
       isSlotExiting &&
       !isDragging &&
       !isResizing;
+    const panelMotionAffected =
+      isDropTarget ||
+      activeDropTargetPosition !== null ||
+      fullscreenMotionActive ||
+      flowSlotExitActive ||
+      (!isPresent && mode === "snapped") ||
+      (isPresent && mode === "snapped" && !hasEntered && !reduceMotion);
+    // The parent pressure prop is broad while any panel is moving; only use it
+    // for the panel that is actually participating in that motion.
     const motionPaintConstrained =
-      motionPressureActive ||
-      storeMotionPressureActive ||
+      adaptivePerformancePaintConstrained ||
       isDragging ||
       isResizing ||
-      isRelocating;
+      isRelocating ||
+      fullscreenMotionActive ||
+      (motionPressureActive && panelMotionAffected);
     const contentVisibilityStyle: React.CSSProperties =
       mode === "floating" || isDragging || isResizing || isRelocating
         ? {}
