@@ -275,6 +275,9 @@ func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
 
 	result := make([]FileEntry, 0, len(entries))
 	for _, entry := range entries {
+		if shouldHideProjectExplorerEntry(entry.Name()) {
+			continue
+		}
 		fullPath := filepath.Join(dirPath, entry.Name())
 		result = append(result, FileEntry{
 			Name:        entry.Name(),
@@ -284,6 +287,10 @@ func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
 	}
 
 	return result, nil
+}
+
+func shouldHideProjectExplorerEntry(name string) bool {
+	return name == ".arlecchino"
 }
 
 func (a *App) InspectEditorFile(filePath string) (EditorFileInspection, error) {

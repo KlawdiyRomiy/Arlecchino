@@ -246,6 +246,7 @@ func shouldSkipPreloadDir(name string) bool {
 	switch name {
 	case "vendor",
 		"node_modules",
+		".arlecchino",
 		".git",
 		"storage",
 		".build",
