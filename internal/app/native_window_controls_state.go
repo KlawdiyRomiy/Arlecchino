@@ -21,6 +21,10 @@ type nativeWindowControlsInset struct {
 	buttonCenterY float64
 }
 
+func nativeWindowControlsVisible(state nativeWindowControlsState) bool {
+	return !state.visibleSet || state.visible
+}
+
 func nativeWindowControlsStateKey(window application.Window) string {
 	if window == nil {
 		return ""
@@ -81,6 +85,14 @@ func (a *App) nativeWindowControlsState(window application.Window) (nativeWindow
 	defer a.nativeControlsMu.Unlock()
 	state, ok := a.nativeControlsByWindow[key]
 	return state, ok
+}
+
+func (a *App) nativeWindowControlsVisible(window application.Window) bool {
+	state, ok := a.nativeWindowControlsState(window)
+	if !ok {
+		return true
+	}
+	return nativeWindowControlsVisible(state)
 }
 
 func (a *App) registerNativeWindowControlsLifecycle(window application.Window) {

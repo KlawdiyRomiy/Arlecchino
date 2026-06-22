@@ -64,6 +64,7 @@ import {
 } from "./utils/editorFileLoader";
 import { createSystemFontSizeScaler } from "./utils/systemFontSizeScaling";
 
+const PROJECT_SWITCH_VISUAL_SETTLE_MS = 180;
 const OPEN_TARGET_EVENT = "arlecchino:open";
 const APP_CLOSE_REQUESTED_EVENT = "app:close-requested";
 const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
@@ -83,6 +84,13 @@ interface ApplicationCloseRequestPayload {
 
 const toErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+const waitForProjectSwitchVisualSettle = () =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => resolve());
+    }, PROJECT_SWITCH_VISUAL_SETTLE_MS);
+  });
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -243,12 +251,15 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const finishProjectSwitchNow = useCallback(
+  const confirmProjectSwitchNow = useCallback((projectId: string) => {
+    useWorkspaceStore.getState().confirmProjectSwitch(projectId);
+    setFileToOpen(null);
+  }, []);
+
+  const completeProjectSwitchNow = useCallback(
     (projectId: string, projectPath: string | null) => {
-      const workspace = useWorkspaceStore.getState();
-      workspace.confirmProjectSwitch(projectId);
-      workspace.completeProjectSwitch(projectId);
       useTerminalStore.getState().setActiveProject(projectPath);
+      useWorkspaceStore.getState().completeProjectSwitch(projectId);
       setFileToOpen(null);
     },
     [],
@@ -484,9 +495,12 @@ const App: React.FC = () => {
           project.path,
           operationId,
         );
-        finishProjectSwitchNow(id, project.path);
+        confirmProjectSwitchNow(id);
         useWorkspaceStore.getState().setActiveFramework(null);
-        const isCurrentOperation = await openProjectPromise;
+        const [isCurrentOperation] = await Promise.all([
+          openProjectPromise,
+          waitForProjectSwitchVisualSettle(),
+        ]);
         if (!isCurrentOperation) {
           return;
         }
@@ -494,6 +508,7 @@ const App: React.FC = () => {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
         }
+        completeProjectSwitchNow(id, project.path);
       } catch (error) {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
@@ -505,7 +520,8 @@ const App: React.FC = () => {
     },
     [
       beginProjectBackendOperation,
-      finishProjectSwitchNow,
+      completeProjectSwitchNow,
+      confirmProjectSwitchNow,
       isProjectBackendOperationCurrent,
       restoreProjectSelection,
       runLatestProjectOpen,
@@ -565,9 +581,12 @@ const App: React.FC = () => {
           projectPath,
           operationId,
         );
-        finishProjectSwitchNow(openedProjectId, projectPath);
+        confirmProjectSwitchNow(openedProjectId);
         useWorkspaceStore.getState().setActiveFramework(null);
-        const isCurrentOperation = await openProjectPromise;
+        const [isCurrentOperation] = await Promise.all([
+          openProjectPromise,
+          waitForProjectSwitchVisualSettle(),
+        ]);
         if (!isCurrentOperation) {
           return;
         }
@@ -575,6 +594,7 @@ const App: React.FC = () => {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
         }
+        completeProjectSwitchNow(openedProjectId, projectPath);
       } catch (error) {
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
@@ -590,7 +610,8 @@ const App: React.FC = () => {
     },
     [
       beginProjectBackendOperation,
-      finishProjectSwitchNow,
+      completeProjectSwitchNow,
+      confirmProjectSwitchNow,
       handleSwitchProject,
       isProjectBackendOperationCurrent,
       restoreProjectSelection,
@@ -745,9 +766,12 @@ const App: React.FC = () => {
         nextProject.path,
         operationId,
       );
-      finishProjectSwitchNow(nextProject.id, nextProject.path);
+      confirmProjectSwitchNow(nextProject.id);
       useWorkspaceStore.getState().setActiveFramework(null);
-      const isCurrentOperation = await openProjectPromise;
+      const [isCurrentOperation] = await Promise.all([
+        openProjectPromise,
+        waitForProjectSwitchVisualSettle(),
+      ]);
       if (!isCurrentOperation) {
         return;
       }
@@ -755,6 +779,7 @@ const App: React.FC = () => {
       if (!isProjectBackendOperationCurrent(operationId)) {
         return;
       }
+      completeProjectSwitchNow(nextProject.id, nextProject.path);
       if (shouldForgetProjectWindowRestore) {
         forgetProjectWindowRestorePath(id);
       }

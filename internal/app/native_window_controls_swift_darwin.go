@@ -11,7 +11,8 @@ bool ArleNativePositionWindowControls(
 	double minimiseX,
 	double minimiseY,
 	double maximiseX,
-	double maximiseY
+	double maximiseY,
+	bool visible
 );
 */
 import "C"
@@ -62,7 +63,7 @@ func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, 
 		controlsState.inset = inset
 	})
 
-	return a.positionNativeWindowControls(window, inset)
+	return a.positionNativeWindowControls(window, inset, a.nativeWindowControlsVisible(window))
 }
 
 func (a *App) RefreshNativeWindowControls(ctx context.Context) bool {
@@ -74,10 +75,10 @@ func (a *App) refreshNativeWindowControlsForWindow(window application.Window) bo
 	if !ok || !state.insetSet {
 		return false
 	}
-	return a.positionNativeWindowControls(window, state.inset)
+	return a.positionNativeWindowControls(window, state.inset, nativeWindowControlsVisible(state))
 }
 
-func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset) bool {
+func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset, visible bool) bool {
 	var nativeWindow unsafe.Pointer
 	if window != nil {
 		nativeWindow = window.NativeWindow()
@@ -90,5 +91,6 @@ func (a *App) positionNativeWindowControls(window application.Window, inset nati
 		C.double(inset.buttonCenterY),
 		C.double(inset.closeCenterX),
 		C.double(inset.buttonCenterY),
+		C.bool(visible),
 	))
 }

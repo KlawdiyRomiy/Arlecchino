@@ -22,7 +22,8 @@ bool ArleNativePositionWindowControls(
 	double minimiseX,
 	double minimiseY,
 	double maximiseX,
-	double maximiseY
+	double maximiseY,
+	bool visible
 );
 
 extern void arleNativeBridgeCallback(char* event, char* json);

@@ -1,4 +1,10 @@
-import React, { useRef } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+} from "react";
 import { useTransition, animated } from "@react-spring/web";
 import { useIndexingPhase } from "../../hooks/useIndexingProgress";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
@@ -9,6 +15,23 @@ interface Props {
   direction: number;
   children: React.ReactNode;
 }
+
+interface ProjectSwitchFrameMotion {
+  active: boolean;
+  moving: boolean;
+}
+
+const defaultProjectSwitchFrameMotion: ProjectSwitchFrameMotion = {
+  active: true,
+  moving: false,
+};
+
+const ProjectSwitchFrameMotionContext = createContext<ProjectSwitchFrameMotion>(
+  defaultProjectSwitchFrameMotion,
+);
+
+export const useProjectSwitchFrameMotion = (): ProjectSwitchFrameMotion =>
+  useContext(ProjectSwitchFrameMotionContext);
 
 export const ProjectSwitchTransition: React.FC<Props> = ({
   layoutKey,
@@ -26,6 +49,27 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
 
   const dirRef = useRef(direction);
   dirRef.current = direction;
+  const activeMotionItemsRef = useRef<Set<string>>(new Set());
+  const [activeMotionItems, setActiveMotionItems] = useState<
+    Record<string, true>
+  >({});
+
+  const setItemMotion = useCallback((item: string, moving: boolean) => {
+    const next = new Set(activeMotionItemsRef.current);
+    if (moving) {
+      next.add(item);
+    } else {
+      next.delete(item);
+    }
+
+    activeMotionItemsRef.current = next;
+    setActiveMotionItems(
+      Array.from(next).reduce<Record<string, true>>((acc, key) => {
+        acc[key] = true;
+        return acc;
+      }, {}),
+    );
+  }, []);
 
   const transitions = useTransition(layoutKey, {
     keys: (item) => item,
@@ -45,6 +89,20 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
       clamp: true,
     },
     immediate: reduceMotion,
+    onStart: (_result, _ctrl, item) => {
+      if (item && !reduceMotion && direction !== 0) {
+        setItemMotion(item, true);
+      }
+    },
+    onRest: (_result, _ctrl, item) => {
+      if (item) {
+        setItemMotion(item, false);
+      }
+    },
+    onDestroyed: (item) => {
+      setItemMotion(item, false);
+      delete childrenMap.current[item];
+    },
   });
 
   return (
@@ -64,11 +122,24 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
       {transitions((style, item) => {
         const renderedChildren = childrenMap.current[item] ?? null;
         const { x, ...restStyle } = style;
+        const frameMoving =
+          !reduceMotion &&
+          direction !== 0 &&
+          (Boolean(activeMotionItems[item]) ||
+            (switchPending && item !== layoutKey));
+        const frameMotion = {
+          active: item === layoutKey,
+          moving: frameMoving,
+        };
 
         return (
           <animated.div
             key={item}
             data-project-switch-frame="true"
+            data-project-switch-frame-moving={frameMoving ? "true" : "false"}
+            data-project-switch-frame-active={
+              frameMotion.active ? "true" : "false"
+            }
             style={{
               ...restStyle,
               transform: x.to((v) => `translate3d(${v}%, 0, 0)`),
@@ -87,7 +158,9 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
               overscrollBehavior: "none",
             }}
           >
-            {renderedChildren}
+            <ProjectSwitchFrameMotionContext.Provider value={frameMotion}>
+              {renderedChildren}
+            </ProjectSwitchFrameMotionContext.Provider>
           </animated.div>
         );
       })}

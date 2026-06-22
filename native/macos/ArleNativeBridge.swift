@@ -351,7 +351,8 @@ public func ArleNativePositionWindowControls(
     _ minimiseX: Double,
     _ minimiseY: Double,
     _ maximiseX: Double,
-    _ maximiseY: Double
+    _ maximiseY: Double,
+    _ visible: Bool
 ) -> Bool {
     var didPosition = false
     syncMain {
@@ -362,7 +363,8 @@ public func ArleNativePositionWindowControls(
             minimiseX,
             minimiseY,
             maximiseX,
-            maximiseY
+            maximiseY,
+            visible
         )
     }
     return didPosition
@@ -700,7 +702,7 @@ private func originalButtonsSuperview(_ buttonSuperview: NSView) -> NSView? {
     return view
 }
 
-private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: NSView?) -> Bool {
+private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: NSView?, visible: Bool) -> Bool {
     guard let buttonSuperview, let parentView else { return false }
 
     let retainedSuperview = Unmanaged.passRetained(buttonSuperview)
@@ -708,7 +710,7 @@ private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: N
     parentView.addSubview(buttonSuperview, positioned: .above, relativeTo: nil)
     retainedSuperview.release()
 
-    buttonSuperview.isHidden = false
+    buttonSuperview.isHidden = !visible
     buttonSuperview.needsDisplay = true
     buttonSuperview.updateTrackingAreas()
     parentView.needsDisplay = true
@@ -720,23 +722,23 @@ private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: N
     return true
 }
 
-private func raiseButtonsSuperview(_ buttonSuperview: NSView?) -> Bool {
-    attachButtonsSuperview(buttonSuperview, to: buttonSuperview?.superview)
+private func raiseButtonsSuperview(_ buttonSuperview: NSView?, visible: Bool) -> Bool {
+    attachButtonsSuperview(buttonSuperview, to: buttonSuperview?.superview, visible: visible)
 }
 
-private func moveButtonsSuperviewToContentView(_ buttonSuperview: NSView?, window: NSWindow?) -> Bool {
-    attachButtonsSuperview(buttonSuperview, to: window?.contentView)
+private func moveButtonsSuperviewToContentView(_ buttonSuperview: NSView?, window: NSWindow?, visible: Bool) -> Bool {
+    attachButtonsSuperview(buttonSuperview, to: window?.contentView, visible: visible)
 }
 
-private func restoreButtonsSuperview(_ close: NSButton?, _ minimise: NSButton?, _ maximise: NSButton?) -> Bool {
+private func restoreButtonsSuperview(_ close: NSButton?, _ minimise: NSButton?, _ maximise: NSButton?, visible: Bool) -> Bool {
     guard let buttonSuperview = windowButtonsSuperview(close, minimise, maximise) else { return false }
     if let originalSuperview = originalButtonsSuperview(buttonSuperview), buttonSuperview.superview !== originalSuperview {
-        _ = attachButtonsSuperview(buttonSuperview, to: originalSuperview)
+        _ = attachButtonsSuperview(buttonSuperview, to: originalSuperview, visible: visible)
     }
     if let originalFrame = objc_getAssociatedObject(buttonSuperview, &originalButtonsSuperviewFrameKey) as? NSValue {
         buttonSuperview.frame = originalFrame.rectValue
     }
-    _ = raiseButtonsSuperview(buttonSuperview)
+    _ = raiseButtonsSuperview(buttonSuperview, visible: visible)
     refreshWindowButtons(close, minimise, maximise)
     return true
 }
@@ -748,7 +750,8 @@ private func moveButtonsSuperview(
     closeX: CGFloat,
     closeY: CGFloat,
     minimiseY: CGFloat,
-    maximiseY: CGFloat
+    maximiseY: CGFloat,
+    visible: Bool
 ) -> Bool {
     guard
         let close,
@@ -761,8 +764,8 @@ private func moveButtonsSuperview(
 
     rememberButtonsSuperviewFrame(buttonSuperview)
     let window = buttonSuperview.window
-    if !moveButtonsSuperviewToContentView(buttonSuperview, window: window) {
-        _ = raiseButtonsSuperview(buttonSuperview)
+    if !moveButtonsSuperviewToContentView(buttonSuperview, window: window, visible: visible) {
+        _ = raiseButtonsSuperview(buttonSuperview, visible: visible)
     }
     guard let parentView = buttonSuperview.superview else { return false }
 
@@ -784,7 +787,8 @@ private func positionNativeWindowControlsOnMainThread(
     _ minimiseX: Double,
     _ minimiseY: Double,
     _ maximiseX: Double,
-    _ maximiseY: Double
+    _ maximiseY: Double,
+    _ visible: Bool
 ) -> Bool {
     guard let window = controlsWindow(preferredWindow) else { return false }
     let close = window.standardWindowButton(.closeButton)
@@ -793,7 +797,7 @@ private func positionNativeWindowControlsOnMainThread(
     installWindowButtonEventForwarder(window)
 
     if window.styleMask.contains(.fullScreen) {
-        return restoreButtonsSuperview(close, minimise, maximise)
+        return restoreButtonsSuperview(close, minimise, maximise, visible: visible)
     }
 
     return moveButtonsSuperview(
@@ -803,7 +807,8 @@ private func positionNativeWindowControlsOnMainThread(
         closeX: CGFloat(closeX),
         closeY: CGFloat(closeY),
         minimiseY: CGFloat(minimiseY),
-        maximiseY: CGFloat(maximiseY)
+        maximiseY: CGFloat(maximiseY),
+        visible: visible
     )
 }
 
