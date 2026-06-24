@@ -119,6 +119,7 @@ func (a *App) attachMainWindow(window *application.WebviewWindow) {
 	a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
 	a.registerWindowRole(window, WindowRoleMain)
 	a.registerWindowFileDropIntents(window)
+	installNativeWebviewCursorPassthrough(window)
 	registerNativeFullscreenEvents(window)
 	a.registerNativeWindowControlsLifecycle(window)
 	a.registerMainWindowCloseConfirmation(window)

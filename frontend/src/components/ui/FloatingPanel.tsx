@@ -103,7 +103,6 @@ const FLOATING_PANEL_DROP_HIT_HEIGHT =
   FLOATING_PANEL_DROP_PREVIEW_HEIGHT + FLOATING_PANEL_DROP_HIT_EXPANSION;
 const WAILS_NO_DRAG_STYLE = {
   "--wails-draggable": "no-drag",
-  WebkitAppRegion: "no-drag",
 } as React.CSSProperties;
 const PANEL_HEADER_NO_DRAG_SELECTOR =
   'button,input,textarea,select,[data-panel-controls="true"],[data-panel-no-drag="true"],[data-panel-resize-handle="true"]';

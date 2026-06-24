@@ -468,7 +468,6 @@ body > [data-radix-portal] > * {
 
 .shell-menu-content {
   --wails-draggable: no-drag;
-  -webkit-app-region: no-drag;
   z-index: 100;
   overflow: hidden;
   border-radius: var(--radius-panel);
@@ -505,7 +504,6 @@ body > [data-radix-portal] > * {
 .shell-context-menu-content {
   --shell-context-menu-scale: 1;
   --wails-draggable: no-drag;
-  -webkit-app-region: no-drag;
   z-index: 120;
   width: min(
     calc(224px * var(--shell-context-menu-scale)),

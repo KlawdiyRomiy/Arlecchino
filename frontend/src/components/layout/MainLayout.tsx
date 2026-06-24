@@ -6037,7 +6037,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const topChromeDragStyle = {
     "--wails-draggable": zenTopChromeVisible ? "drag" : "no-drag",
-    WebkitAppRegion: zenTopChromeVisible ? "drag" : "no-drag",
   } as React.CSSProperties;
 
   const topChromeStyle: React.CSSProperties = {

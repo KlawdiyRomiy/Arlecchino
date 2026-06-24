@@ -477,7 +477,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   const menuIconSize = 16;
   const topBarItemNoDragStyle = {
     "--wails-draggable": "no-drag",
-    WebkitAppRegion: "no-drag",
   } as React.CSSProperties;
   const topbarReorderLayoutTransition = {
     type: "spring",
@@ -491,7 +490,6 @@ export const TopBar: React.FC<TopBarProps> = ({
     }`;
   const topBarDragStyle = {
     "--wails-draggable": windowDragEnabled ? "drag" : "no-drag",
-    WebkitAppRegion: windowDragEnabled ? "drag" : "no-drag",
   } as React.CSSProperties;
 
   const getTopbarItemClassName = (itemId: VisibleTopbarItemId) => {

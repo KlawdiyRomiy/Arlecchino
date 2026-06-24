@@ -106,6 +106,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	a.registerWindowFileDropIntents(window)
 	if roleWindow, ok := window.(application.Window); ok {
 		a.registerWindowRole(roleWindow, WindowRoleProject)
+		installNativeWebviewCursorPassthrough(roleWindow)
 		a.registerNativeWindowControlsLifecycle(roleWindow)
 	}
 	registerNativeFullscreenEvents(window)
