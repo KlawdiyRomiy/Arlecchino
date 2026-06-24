@@ -255,11 +255,6 @@ static bool arlecchinoAttachButtonsSuperviewToParent(NSView *buttonSuperview, NS
         [buttonSuperview removeFromSuperviewWithoutNeedingDisplay];
         [parentView addSubview:buttonSuperview positioned:NSWindowAbove relativeTo:nil];
         [buttonSuperview release];
-    } else {
-        [buttonSuperview retain];
-        [buttonSuperview removeFromSuperviewWithoutNeedingDisplay];
-        [parentView addSubview:buttonSuperview positioned:NSWindowAbove relativeTo:nil];
-        [buttonSuperview release];
     }
 
     [buttonSuperview setHidden:visible ? NO : YES];

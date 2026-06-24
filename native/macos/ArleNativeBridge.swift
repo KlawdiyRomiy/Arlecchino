@@ -705,10 +705,12 @@ private func originalButtonsSuperview(_ buttonSuperview: NSView) -> NSView? {
 private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: NSView?, visible: Bool) -> Bool {
     guard let buttonSuperview, let parentView else { return false }
 
-    let retainedSuperview = Unmanaged.passRetained(buttonSuperview)
-    buttonSuperview.removeFromSuperviewWithoutNeedingDisplay()
-    parentView.addSubview(buttonSuperview, positioned: .above, relativeTo: nil)
-    retainedSuperview.release()
+    if buttonSuperview.superview !== parentView {
+        let retainedSuperview = Unmanaged.passRetained(buttonSuperview)
+        buttonSuperview.removeFromSuperviewWithoutNeedingDisplay()
+        parentView.addSubview(buttonSuperview, positioned: .above, relativeTo: nil)
+        retainedSuperview.release()
+    }
 
     buttonSuperview.isHidden = !visible
     buttonSuperview.needsDisplay = true

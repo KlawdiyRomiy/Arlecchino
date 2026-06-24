@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef } from "react";
 import { useProjectSwitchFrameMotion } from "../layout/ProjectSwitchTransition";
 import {
   PositionNativeWindowControls,
@@ -26,11 +26,6 @@ interface WindowControlsProps {
   visible?: boolean;
   backdropVisible?: boolean;
   nativeEnabled?: boolean;
-}
-
-interface NativeControlAccentSnapshot {
-  graphite: boolean;
-  color: string | null;
 }
 
 const MAC_CONTROLS_WIDTH = 84;
@@ -100,11 +95,6 @@ const nativeButtonTargetStyle: React.CSSProperties = {
   opacity: 0,
 };
 
-const nativeSlideVisualButtonTargetsStyle: React.CSSProperties = {
-  ...nativeButtonTargetsStyle,
-  pointerEvents: "none",
-};
-
 const fallbackBubbleStyle: React.CSSProperties = {
   ...macControlsBubbleStyle,
   display: "inline-flex",
@@ -119,49 +109,6 @@ const fallbackButtonStyle: React.CSSProperties = {
   width: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
   height: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
 };
-
-const nativeSlideVisualBubbleStyle: React.CSSProperties = {
-  ...fallbackBubbleStyle,
-  position: "absolute",
-  left: 0,
-  top: "50%",
-  transform: `translate(calc(${MAC_BUBBLE_X_OFFSET}px * var(--ui-inverse-scale)), calc(-50% + (${MAC_BUBBLE_Y_OFFSET}px * var(--ui-inverse-scale))))`,
-  pointerEvents: "none",
-};
-
-const nativeSlideVisualButtonBaseStyle: React.CSSProperties = {
-  ...fallbackButtonStyle,
-  display: "block",
-  borderRadius: "9999px",
-  boxShadow:
-    "inset 0 0.5px 0 rgba(255,255,255,0.42), 0 0.5px 1px rgba(0,0,0,0.2)",
-};
-
-const nativeSlideVisualCloseButtonStyle: React.CSSProperties = {
-  ...nativeSlideVisualButtonBaseStyle,
-  border: "1px solid #e0443e",
-  backgroundColor: "#ff5f57",
-};
-
-const nativeSlideVisualMinimizeButtonStyle: React.CSSProperties = {
-  ...nativeSlideVisualButtonBaseStyle,
-  border: "1px solid #dea123",
-  backgroundColor: "#febc2e",
-};
-
-const nativeSlideVisualFullscreenButtonStyle: React.CSSProperties = {
-  ...nativeSlideVisualButtonBaseStyle,
-  border: "1px solid #20aa35",
-  backgroundColor: "#28c840",
-};
-
-const buildNativeSlideVisualGraphiteButtonStyle = (
-  color: string,
-): React.CSSProperties => ({
-  ...nativeSlideVisualButtonBaseStyle,
-  border: `1px solid ${color}`,
-  backgroundColor: color,
-});
 
 const isMacPlatform = (): boolean => {
   if (typeof navigator === "undefined") {
@@ -191,63 +138,6 @@ const shouldRenderMacControls = (): boolean => {
   }
 
   return isMacPlatform();
-};
-
-const parseRgbComponents = (color: string): [number, number, number] | null => {
-  const match = color.match(
-    /rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)/i,
-  );
-  if (!match) {
-    return null;
-  }
-
-  const red = Number.parseFloat(match[1]);
-  const green = Number.parseFloat(match[2]);
-  const blue = Number.parseFloat(match[3]);
-  if (
-    !Number.isFinite(red) ||
-    !Number.isFinite(green) ||
-    !Number.isFinite(blue)
-  ) {
-    return null;
-  }
-
-  return [red, green, blue];
-};
-
-const isLowSaturationRgb = ([red, green, blue]: [
-  number,
-  number,
-  number,
-]): boolean => Math.max(red, green, blue) - Math.min(red, green, blue) < 24;
-
-const readNativeControlAccentSnapshot = (): NativeControlAccentSnapshot => {
-  if (
-    typeof window === "undefined" ||
-    typeof document === "undefined" ||
-    !document.body
-  ) {
-    return { graphite: false, color: null };
-  }
-
-  const probe = document.createElement("span");
-  probe.style.color = "AccentColor";
-  probe.style.position = "fixed";
-  probe.style.pointerEvents = "none";
-  probe.style.opacity = "0";
-  document.body.appendChild(probe);
-  const color = window.getComputedStyle(probe).color;
-  probe.remove();
-
-  const components = parseRgbComponents(color);
-  if (!components) {
-    return { graphite: false, color: null };
-  }
-
-  return {
-    graphite: isLowSaturationRgb(components),
-    color,
-  };
 };
 
 type NativeWindowControlsInset = [
@@ -335,38 +225,9 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   const minimizeRef = useRef<HTMLSpanElement>(null);
   const fullscreenRef = useRef<HTMLSpanElement>(null);
   const nativePositionInFlightRef = useRef(false);
-  const [nativeControlAccentSnapshot, setNativeControlAccentSnapshot] =
-    useState<NativeControlAccentSnapshot>({
-      graphite: false,
-      color: null,
-    });
   const controlsVisible = visible && backdropVisible;
   const nativeControlsEnabled = nativeEnabled ?? controlsVisible;
-  const nativeSlideVisualActive =
-    useNativeMacControls &&
-    nativeControlsEnabled &&
-    controlsVisible &&
-    !projectSwitchFrameMotion.active;
-  const nativeMotionButtonOverlayActive =
-    useNativeMacControls &&
-    nativeControlsEnabled &&
-    controlsVisible &&
-    projectSwitchFrameMotion.active &&
-    projectSwitchFrameMotion.moving;
-  const nativeSlideVisualGraphiteButtonStyle =
-    nativeControlAccentSnapshot.graphite && nativeControlAccentSnapshot.color
-      ? buildNativeSlideVisualGraphiteButtonStyle(
-          nativeControlAccentSnapshot.color,
-        )
-      : null;
-  const nativeSlideVisualCloseStyle =
-    nativeSlideVisualGraphiteButtonStyle ?? nativeSlideVisualCloseButtonStyle;
-  const nativeSlideVisualMinimizeStyle =
-    nativeSlideVisualGraphiteButtonStyle ??
-    nativeSlideVisualMinimizeButtonStyle;
-  const nativeSlideVisualFullscreenStyle =
-    nativeSlideVisualGraphiteButtonStyle ??
-    nativeSlideVisualFullscreenButtonStyle;
+  const nativeBackdropHidden = !projectSwitchFrameMotion.active;
 
   const handleClose = useCallback(() => {
     window.dispatchEvent(new Event(APP_CLOSE_REQUEST_EVENT));
@@ -422,36 +283,6 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
     },
     [controlsVisible, projectSwitchFrameMotion.active],
   );
-
-  useLayoutEffect(() => {
-    if (!useNativeMacControls) {
-      return;
-    }
-
-    const refreshNativeControlAccentSnapshot = () => {
-      const nextSnapshot = readNativeControlAccentSnapshot();
-      setNativeControlAccentSnapshot((current) =>
-        current.graphite === nextSnapshot.graphite &&
-        current.color === nextSnapshot.color
-          ? current
-          : nextSnapshot,
-      );
-    };
-
-    refreshNativeControlAccentSnapshot();
-    window.addEventListener("focus", refreshNativeControlAccentSnapshot);
-    document.addEventListener(
-      "visibilitychange",
-      refreshNativeControlAccentSnapshot,
-    );
-    return () => {
-      window.removeEventListener("focus", refreshNativeControlAccentSnapshot);
-      document.removeEventListener(
-        "visibilitychange",
-        refreshNativeControlAccentSnapshot,
-      );
-    };
-  }, [useNativeMacControls]);
 
   useLayoutEffect(() => {
     if (!useNativeMacControls || !projectSwitchFrameMotion.active) {
@@ -511,6 +342,7 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
         void positionNativeControls();
       }
     };
+
     const schedulePosition = () => {
       cancelAnimationFrame(animationFrame);
       animationFrame = requestAnimationFrame(runPosition);
@@ -586,7 +418,7 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
           className="shell-cluster"
           aria-hidden="true"
           style={
-            nativeSlideVisualActive
+            nativeBackdropHidden
               ? macControlsMeasurementBubbleStyle
               : nativeBackdropBubbleStyle
           }
@@ -609,30 +441,7 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
               data-native-window-control-target="fullscreen"
             />
           </div>
-          {nativeMotionButtonOverlayActive ? (
-            <div
-              aria-hidden="true"
-              style={nativeSlideVisualButtonTargetsStyle}
-              data-testid="window-controls-native-motion-buttons"
-            >
-              <span style={nativeSlideVisualCloseStyle} />
-              <span style={nativeSlideVisualMinimizeStyle} />
-              <span style={nativeSlideVisualFullscreenStyle} />
-            </div>
-          ) : null}
         </div>
-        {nativeSlideVisualActive ? (
-          <div
-            className="shell-cluster"
-            aria-hidden="true"
-            style={nativeSlideVisualBubbleStyle}
-            data-testid="window-controls-native-slide-bubble"
-          >
-            <span style={nativeSlideVisualCloseStyle} />
-            <span style={nativeSlideVisualMinimizeStyle} />
-            <span style={nativeSlideVisualFullscreenStyle} />
-          </div>
-        ) : null}
       </div>
     );
   }
