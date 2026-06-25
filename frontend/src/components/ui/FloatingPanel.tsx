@@ -43,6 +43,7 @@ import {
   beginInteractiveSurfaceMotionSession,
   markInteractiveSurfaceMotion,
 } from "./interactiveSurfaceMotion";
+import { useProjectSwitchFrameMotion } from "../layout/ProjectSwitchTransition";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -334,6 +335,7 @@ export const FloatingPanel = React.forwardRef<
     const effectiveUiScale = getEffectiveUiScale(uiScale);
     const prefersReducedMotion = useReducedMotion();
     const reduceMotion = prefersReducedMotion;
+    const projectSwitchFrameMotion = useProjectSwitchFrameMotion();
     const adaptivePerformancePaintConstrained = usePerformanceStore(
       (state) => state.mode !== "normal",
     );
@@ -1362,7 +1364,11 @@ export const FloatingPanel = React.forwardRef<
       fullscreenMotionActive ||
       (motionPressureActive && panelMotionAffected);
     const contentVisibilityStyle: React.CSSProperties =
-      mode === "floating" || isDragging || isResizing || isRelocating
+      mode === "floating" ||
+      isDragging ||
+      isResizing ||
+      isRelocating ||
+      projectSwitchFrameMotion.moving
         ? {}
         : {
             contentVisibility: "auto",

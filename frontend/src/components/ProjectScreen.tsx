@@ -29,7 +29,7 @@ import { ImageEditorPreview } from "./ImageEditorPreview";
 import * as AppFunctions from "../wails/app";
 import { EventsOn } from "../wails/runtime";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
-import { radius, transitions } from "../styles/colors";
+import { radius } from "../styles/colors";
 import { shortcuts } from "../utils/keyboard";
 import {
   PROJECT_SWITCH_BLOCKERS,
@@ -44,7 +44,10 @@ import {
   type AIInlinePatchPreview,
 } from "../stores/aiInlinePatchStore";
 import { useAppNotificationStore } from "../stores/appNotificationStore";
-import { editorCanvasBackground } from "../utils/codeMirrorTheme";
+import {
+  codeEditorChromeStyle,
+  editorCanvasBackground,
+} from "../utils/codeMirrorTheme";
 import { openEditorFileSearch } from "../utils/codeMirrorFileSearch";
 import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
@@ -55,6 +58,7 @@ import {
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
 import {
+  EDITOR_FILE_LOADING_DELAY_MS,
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
   createEditorNavigationTarget,
@@ -480,8 +484,6 @@ const EditorSplitDropZone: React.FC<{
       ? "inset 0 0 0 1px var(--shell-border-strong), var(--shell-shadow)"
       : "none",
     opacity: isActive ? 1 : 0.52,
-    transform: isActive ? "scale(1)" : "scale(0.985)",
-    transition: `opacity ${transitions.fast}, transform ${transitions.fast}, background ${transitions.fast}, border-color ${transitions.fast}, box-shadow ${transitions.fast}`,
     pointerEvents: "none",
   };
 
@@ -677,6 +679,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
   const fileLoadStatesRef = useRef<Record<string, EditorFileLoadState>>({});
+  const tabFileLoadRequestsRef = useRef<
+    Record<string, { path: string; requestId: number }>
+  >({});
+  const tabLoadingRevealTimerRefs = useRef<
+    Record<string, ReturnType<typeof setTimeout>>
+  >({});
   const editorSurfaceRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<string | null>(activeTab);
   const splitDirectionRef = useRef<SplitDirection>(splitDirection);
@@ -715,6 +723,29 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       setEditorHistoryAvailability(EMPTY_EDITOR_HISTORY_AVAILABILITY);
     }
   }, []);
+
+  const clearTabLoadingRevealTimer = useCallback((tabId: string) => {
+    const timer = tabLoadingRevealTimerRefs.current[tabId];
+    if (timer === undefined) {
+      return;
+    }
+
+    clearTimeout(timer);
+    delete tabLoadingRevealTimerRefs.current[tabId];
+  }, []);
+
+  const clearAllTabLoadingRevealTimers = useCallback(() => {
+    Object.values(tabLoadingRevealTimerRefs.current).forEach(clearTimeout);
+    tabLoadingRevealTimerRefs.current = {};
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearAllTabLoadingRevealTimers();
+      tabFileLoadRequestsRef.current = {};
+    },
+    [clearAllTabLoadingRevealTimers],
+  );
 
   const handleEditorViewReadyForTab = useCallback(
     (tabId: string, view: EditorView | null) => {
@@ -850,6 +881,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const storeFileLoadState = useCallback(
     (tabId: string, file: EditorFileLoadState) => {
+      clearTabLoadingRevealTimer(tabId);
       fileLoadStatesRef.current[tabId] = file;
       setFileLoadStates((previous) => ({ ...previous, [tabId]: file }));
       if (file.kind === "editable") {
@@ -864,7 +896,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return remaining;
       });
     },
-    [],
+    [clearTabLoadingRevealTimer],
   );
 
   const ensureTabFileLoaded = useCallback(
@@ -876,18 +908,59 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       ) {
         return;
       }
+      const currentRequest = tabFileLoadRequestsRef.current[tab.id];
+      if (currentRequest?.path === tab.path) {
+        return;
+      }
 
-      fileLoadStatesRef.current[tab.id] = createEditorFileLoadingLoad(
-        tab.path,
-        tab.label,
-      );
-      setFileLoadStates((previous) => ({
-        ...previous,
-        [tab.id]: fileLoadStatesRef.current[tab.id],
-      }));
+      clearTabLoadingRevealTimer(tab.id);
+      const requestId = (currentRequest?.requestId ?? 0) + 1;
+      tabFileLoadRequestsRef.current[tab.id] = {
+        path: tab.path,
+        requestId,
+      };
+      tabLoadingRevealTimerRefs.current[tab.id] = setTimeout(() => {
+        delete tabLoadingRevealTimerRefs.current[tab.id];
+        const pendingRequest = tabFileLoadRequestsRef.current[tab.id];
+        if (
+          !pendingRequest ||
+          pendingRequest.path !== tab.path ||
+          pendingRequest.requestId !== requestId
+        ) {
+          return;
+        }
+
+        const currentTab = tabsRef.current.find(
+          (candidate) => candidate.id === tab.id,
+        );
+        if (!currentTab || currentTab.path !== tab.path) {
+          return;
+        }
+        if (
+          fileLoadStatesRef.current[tab.id] ||
+          fileContentsRef.current[tab.id] !== undefined
+        ) {
+          return;
+        }
+
+        storeFileLoadState(
+          tab.id,
+          createEditorFileLoadingLoad(tab.path, tab.label),
+        );
+      }, EDITOR_FILE_LOADING_DELAY_MS);
 
       loadEditorFile(tab.path)
         .then((file) => {
+          const pendingRequest = tabFileLoadRequestsRef.current[tab.id];
+          if (
+            !pendingRequest ||
+            pendingRequest.path !== tab.path ||
+            pendingRequest.requestId !== requestId
+          ) {
+            return;
+          }
+          clearTabLoadingRevealTimer(tab.id);
+          delete tabFileLoadRequestsRef.current[tab.id];
           const currentTab = tabsRef.current.find(
             (candidate) => candidate.id === tab.id,
           );
@@ -897,6 +970,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           storeFileLoadState(tab.id, file);
         })
         .catch(() => {
+          const pendingRequest = tabFileLoadRequestsRef.current[tab.id];
+          if (
+            !pendingRequest ||
+            pendingRequest.path !== tab.path ||
+            pendingRequest.requestId !== requestId
+          ) {
+            return;
+          }
+          clearTabLoadingRevealTimer(tab.id);
+          delete tabFileLoadRequestsRef.current[tab.id];
           delete fileLoadStatesRef.current[tab.id];
           setFileLoadStates((previous) => {
             const { [tab.id]: _removed, ...remaining } = previous;
@@ -904,7 +987,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           });
         });
     },
-    [storeFileLoadState],
+    [clearTabLoadingRevealTimer, storeFileLoadState],
   );
 
   const closeTabSwitcher = useCallback(() => {
@@ -1695,40 +1778,45 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     tabs,
   ]);
 
-  const removeStaleLoadingTabs = useCallback((activePath: string) => {
-    const staleLoadingTabIds = new Set<string>();
-    Object.entries(fileLoadStatesRef.current).forEach(([tabId, file]) => {
-      if (file.kind === "loading" && file.path !== activePath) {
-        staleLoadingTabIds.add(tabId);
-      }
-    });
-
-    if (staleLoadingTabIds.size === 0) {
-      return;
-    }
-
-    const nextLoadStates = { ...fileLoadStatesRef.current };
-    staleLoadingTabIds.forEach((tabId) => {
-      delete nextLoadStates[tabId];
-      delete fileContentsRef.current[tabId];
-    });
-    fileLoadStatesRef.current = nextLoadStates;
-    setFileLoadStates(nextLoadStates);
-    setFileContents((previous) => {
-      const nextContents = { ...previous };
-      staleLoadingTabIds.forEach((tabId) => {
-        delete nextContents[tabId];
+  const removeStaleLoadingTabs = useCallback(
+    (activePath: string) => {
+      const staleLoadingTabIds = new Set<string>();
+      Object.entries(fileLoadStatesRef.current).forEach(([tabId, file]) => {
+        if (file.kind === "loading" && file.path !== activePath) {
+          staleLoadingTabIds.add(tabId);
+        }
       });
-      return nextContents;
-    });
 
-    tabsRef.current = tabsRef.current.filter(
-      (tab) => !staleLoadingTabIds.has(tab.id),
-    );
-    setTabs((previous) =>
-      previous.filter((tab) => !staleLoadingTabIds.has(tab.id)),
-    );
-  }, []);
+      if (staleLoadingTabIds.size === 0) {
+        return;
+      }
+
+      const nextLoadStates = { ...fileLoadStatesRef.current };
+      staleLoadingTabIds.forEach((tabId) => {
+        clearTabLoadingRevealTimer(tabId);
+        delete nextLoadStates[tabId];
+        delete fileContentsRef.current[tabId];
+        delete tabFileLoadRequestsRef.current[tabId];
+      });
+      fileLoadStatesRef.current = nextLoadStates;
+      setFileLoadStates(nextLoadStates);
+      setFileContents((previous) => {
+        const nextContents = { ...previous };
+        staleLoadingTabIds.forEach((tabId) => {
+          delete nextContents[tabId];
+        });
+        return nextContents;
+      });
+
+      tabsRef.current = tabsRef.current.filter(
+        (tab) => !staleLoadingTabIds.has(tab.id),
+      );
+      setTabs((previous) =>
+        previous.filter((tab) => !staleLoadingTabIds.has(tab.id)),
+      );
+    },
+    [clearTabLoadingRevealTimer],
+  );
 
   const commitEditorSplitSlots = useCallback((nextSlots: EditorSplitSlots) => {
     const normalizedSlots = normalizeEditorSplitSlots(
@@ -1840,15 +1928,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     [addTabToEditorSplitSide, removeStaleLoadingTabs, storeFileLoadState],
   );
 
-  const clearFileOpenLoadingTimer = useCallback(() => {
-    if (fileOpenLoadingTimerRef.current === null) {
-      return;
-    }
-
-    clearTimeout(fileOpenLoadingTimerRef.current);
-    fileOpenLoadingTimerRef.current = null;
-  }, []);
-
   const scheduleFileOpenLoading = useCallback(
     (
       requestId: number,
@@ -1857,7 +1936,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       navigationTarget?: EditorNavigationTarget,
       policy?: EditorFileLoadState["policy"],
     ) => {
-      clearFileOpenLoadingTimer();
+      if (fileOpenLoadingTimerRef.current !== null) {
+        clearTimeout(fileOpenLoadingTimerRef.current);
+        fileOpenLoadingTimerRef.current = null;
+      }
+      if (openFileRequestRef.current !== requestId) {
+        return;
+      }
+
       fileOpenLoadingTimerRef.current = setTimeout(() => {
         fileOpenLoadingTimerRef.current = null;
         if (openFileRequestRef.current !== requestId) {
@@ -1869,10 +1955,19 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           line,
           navigationTarget,
         });
-      }, 140);
+      }, EDITOR_FILE_LOADING_DELAY_MS);
     },
-    [clearFileOpenLoadingTimer, handleFileOpen],
+    [handleFileOpen],
   );
+
+  const clearFileOpenLoadingTimer = useCallback(() => {
+    if (fileOpenLoadingTimerRef.current === null) {
+      return;
+    }
+
+    clearTimeout(fileOpenLoadingTimerRef.current);
+    fileOpenLoadingTimerRef.current = null;
+  }, []);
 
   useEffect(() => clearFileOpenLoadingTimer, [clearFileOpenLoadingTimer]);
 
@@ -1916,8 +2011,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       const { [tabId]: _removed, ...remaining } = previous;
       return remaining;
     });
+    clearTabLoadingRevealTimer(tabId);
     delete fileContentsRef.current[tabId];
     delete fileLoadStatesRef.current[tabId];
+    delete tabFileLoadRequestsRef.current[tabId];
 
     if (activeTab === tabId) {
       setActiveTab(
@@ -2014,6 +2111,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
       tabsRef.current = [retainedTab];
       setTabs([retainedTab]);
+      Object.keys(tabFileLoadRequestsRef.current).forEach((pendingTabId) => {
+        if (pendingTabId === tabId) {
+          return;
+        }
+        clearTabLoadingRevealTimer(pendingTabId);
+        delete tabFileLoadRequestsRef.current[pendingTabId];
+      });
       setFileContents((previous) =>
         previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
       );
@@ -2029,17 +2133,20 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       setEditorSplitSlots(null);
       focusEditorSplitSide("left");
     },
-    [focusEditorSplitSide],
+    [clearTabLoadingRevealTimer, focusEditorSplitSide],
   );
 
   const handleCloseAllTabs = useCallback(() => {
     openFileRequestRef.current += 1;
+    clearFileOpenLoadingTimer();
     tabsRef.current.forEach((tab) => closeEditorStoreTabPath(tab.path));
     setTabs([]);
     setFileContents({});
     setFileLoadStates({});
     fileContentsRef.current = {};
     fileLoadStatesRef.current = {};
+    tabFileLoadRequestsRef.current = {};
+    clearAllTabLoadingRevealTimers();
     activeTabRef.current = null;
     setActiveTab(null);
     setSecondaryActiveTab(null);
@@ -2049,7 +2156,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setEditorSplitSlots(null);
     focusEditorSplitSide("left");
     resetActiveEditorBudget();
-  }, [closeEditorStoreTabPath, focusEditorSplitSide, resetActiveEditorBudget]);
+  }, [
+    clearAllTabLoadingRevealTimers,
+    clearFileOpenLoadingTimer,
+    closeEditorStoreTabPath,
+    focusEditorSplitSide,
+    resetActiveEditorBudget,
+  ]);
 
   const handleReopenClosedTab = async () => {
     if (closedTabs.length === 0) return;
@@ -3170,10 +3283,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
       const currentLoadState = fileLoadStatesRef.current[tab.id];
       if (!currentLoadState) {
-        storeFileLoadState(
-          tab.id,
-          createEditorFileLoadingLoad(tab.path, tab.label),
-        );
+        const requestId = openFileRequestRef.current + 1;
+        openFileRequestRef.current = requestId;
+        scheduleFileOpenLoading(requestId, tab.path);
       }
 
       if (openingFirstEditorTab) {
@@ -3200,8 +3312,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
       try {
         const file = await loadEditorFile(tab.path);
+        clearFileOpenLoadingTimer();
         storeFileLoadState(tab.id, file);
       } catch (error) {
+        clearFileOpenLoadingTimer();
         useAppNotificationStore.getState().addNotification({
           id: `editor-split-drop:${tab.path}`,
           kind: "error",
@@ -3212,7 +3326,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         });
       }
     },
-    [applyEditorSplitForTab, focusEditorSplitSide, storeFileLoadState],
+    [
+      applyEditorSplitForTab,
+      clearFileOpenLoadingTimer,
+      focusEditorSplitSide,
+      scheduleFileOpenLoading,
+      storeFileLoadState,
+    ],
   );
 
   const handleEditorTabClick = useCallback(
@@ -3702,8 +3822,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     const loadState = fileLoadStates[tabData.id];
     if (!loadState && fileContents[tabData.id] === undefined) {
       return (
-        <EditorFileLoadingView
-          file={createEditorFileLoadingLoad(tabData.path, tabData.label)}
+        <div
+          className="relative h-full min-h-0 w-full overflow-hidden"
+          style={codeEditorChromeStyle}
+          aria-hidden="true"
         />
       );
     }

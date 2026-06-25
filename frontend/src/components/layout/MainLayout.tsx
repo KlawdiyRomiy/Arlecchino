@@ -124,6 +124,7 @@ import {
   resolveExecutionProfiles,
 } from "../../utils/executionProfiles";
 import {
+  EDITOR_FILE_LOADING_DELAY_MS,
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
   coerceEditorNavigationTarget,
@@ -915,6 +916,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       policy?: EditorFileAccessPolicy,
     ) => {
       clearEditorFileOpenLoadingTimer();
+      if (openFileFromPathRequestRef.current !== requestId) {
+        return;
+      }
+
       editorFileOpenLoadingTimerRef.current = setTimeout(() => {
         editorFileOpenLoadingTimerRef.current = null;
         if (openFileFromPathRequestRef.current !== requestId) {
@@ -925,7 +930,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           createEditorFileLoadingLoad(path, name, policy),
           navigationTarget,
         );
-      }, 140);
+      }, EDITOR_FILE_LOADING_DELAY_MS);
     },
     [clearEditorFileOpenLoadingTimer, openFileInMainEditor],
   );

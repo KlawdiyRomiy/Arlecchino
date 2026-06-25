@@ -1147,7 +1147,6 @@ body > [data-radix-portal] > * {
 
 .file-explorer-chevron {
   transform: rotate(-90deg);
-  transition: transform 150ms ease-out;
 }
 
 .file-explorer-chevron-expanded {

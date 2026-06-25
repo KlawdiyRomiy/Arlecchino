@@ -794,7 +794,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
-      !editorFeatureBudget.runtimeDiagnostics
+      !active || !editorFeatureBudget.runtimeDiagnostics
         ? []
         : createDiagnosticsExtension({
             filePath,
@@ -804,6 +804,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               : undefined,
           }),
     [
+      active,
       editorFeatureBudget.runtimeDiagnostics,
       filePath,
       language,
@@ -861,7 +862,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   useEffect(() => {
-    if (!filePath || !language) return;
+    if (!filePath || !language || !active) {
+      signatureRequestGuardRef.current.next();
+      closeEditorDocument(documentSurfaceIdRef.current);
+      return;
+    }
 
     documentVersionRef.current = 1;
     lastContentPropRef.current = content;
@@ -878,7 +883,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return () => {
       closeEditorDocument(documentSurfaceIdRef.current);
     };
-  }, [filePath, language, largeDocumentMode]);
+  }, [active, filePath, language, largeDocumentMode]);
 
   useEffect(() => {
     if (lastContentPropRef.current === content) {
@@ -891,10 +896,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       lastUserChangeContentRef.current = null;
       return;
     }
-    if (!largeDocumentMode) {
+    if (active && !largeDocumentMode) {
       replaceEditorDocumentFromDisk(filePath, language, content);
     }
-  }, [content, filePath, language, largeDocumentMode]);
+  }, [active, content, filePath, language, largeDocumentMode]);
 
   useEffect(() => {
     const view = editorRef.current?.view;
@@ -1032,8 +1037,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const completionProvider = useCodeMirrorCompletionProvider({
     enabled:
-      editorFeatureBudget.runtimeCompletions ||
-      editorFeatureBudget.runtimeGhostText,
+      active &&
+      (editorFeatureBudget.runtimeCompletions ||
+        editorFeatureBudget.runtimeGhostText),
     filePath,
     language,
     content,
@@ -1757,7 +1763,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   const definitionLinkExtension = useMemo<Extension[]>(() => {
-    if (!editorFeatureBudget.hover) {
+    if (!active || !editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1858,6 +1864,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }),
     ];
   }, [
+    active,
     editorFeatureBudget.hover,
     filePath,
     language,
@@ -1866,7 +1873,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   ]);
 
   const hoverExtension = useMemo<Extension[]>(() => {
-    if (!editorFeatureBudget.hover) {
+    if (!active || !editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1910,10 +1917,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }
       }),
     ];
-  }, [editorFeatureBudget.hover, filePath, language]);
+  }, [active, editorFeatureBudget.hover, filePath, language]);
 
   const signatureHelpExtension = useMemo<Extension[]>(() => {
-    if (!editorFeatureBudget.hover) {
+    if (!active || !editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1944,7 +1951,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }
       }),
     ];
-  }, [requestSignatureHelp, clearSignatureHelp, editorFeatureBudget.hover]);
+  }, [
+    active,
+    requestSignatureHelp,
+    clearSignatureHelp,
+    editorFeatureBudget.hover,
+  ]);
 
   const languageExtension = useCodeMirrorLanguageExtension(language);
   const foldControlsEnabled =

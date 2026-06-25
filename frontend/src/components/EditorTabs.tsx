@@ -235,7 +235,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
 
       const dx = pointerEvent.clientX - startX;
       const dy = pointerEvent.clientY - startY;
-      if (Math.hypot(dx, dy) > 8) {
+      if (Math.hypot(dx, dy) > 4) {
         moved = true;
         const container = scrollContainerRef.current;
         const rect = container?.getBoundingClientRect();

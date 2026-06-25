@@ -201,6 +201,8 @@ export const coerceEditorNavigationTarget = (
 export const getEditorFileName = (path: string): string =>
   path.split("/").pop() || path;
 
+export const EDITOR_FILE_LOADING_DELAY_MS = 240;
+
 export const isEditorVisualFilePath = (path: string): boolean => {
   const ext = path.split(".").pop()?.toLowerCase();
   return Boolean(

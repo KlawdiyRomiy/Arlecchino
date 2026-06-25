@@ -10,22 +10,18 @@ interface EditorFileLoadingViewProps {
 export const EditorFileLoadingView: React.FC<EditorFileLoadingViewProps> = ({
   file,
 }) => (
-  <div
-    className="flex h-full min-h-0 w-full items-center justify-center"
+  <output
+    className="flex h-full min-h-0 w-full items-start"
     style={codeEditorChromeStyle}
+    aria-label={`Opening ${file.name}`}
     data-testid="editor-file-loading"
   >
-    <div className="flex items-center gap-3 rounded-lg border border-[var(--editor-border)] bg-[var(--editor-surface)] px-4 py-3 text-[var(--editor-text)] shadow-[var(--shadow-overlay)]">
+    <div className="flex h-9 w-full min-w-0 items-center gap-2 border-b border-[var(--editor-border)] bg-[var(--editor-surface)] px-3 text-[var(--editor-text-muted)]">
       <Loader2
-        size={16}
+        size={13}
         className="shrink-0 animate-spin text-[var(--editor-text-soft)]"
       />
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium">{file.name}</div>
-        <div className="truncate text-xs text-[var(--editor-text-muted)]">
-          Opening file...
-        </div>
-      </div>
+      <span className="truncate text-xs">{file.name}</span>
     </div>
-  </div>
+  </output>
 );

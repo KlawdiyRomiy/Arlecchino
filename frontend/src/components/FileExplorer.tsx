@@ -28,7 +28,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useFileRelations } from "../hooks/useFileRelations";
 import { QuickRelationsMenu } from "./QuickRelationsMenu";
 import { DependencyTree } from "./DependencyTree";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import {
   useExplorerSelectionStore,
   useExplorerStore,
@@ -71,6 +71,7 @@ interface FileNode {
   children?: FileNode[];
   isExpanded?: boolean;
   isLoaded?: boolean;
+  isLoading?: boolean;
 }
 
 interface Breadcrumb {
@@ -225,6 +226,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const anchorPathRef = useRef(anchorPath);
   const latestFileOpenRequestRef = useRef(0);
   const latestProjectLoadRef = useRef(0);
+  const folderLoadRequestRef = useRef<Map<string, number>>(new Map());
   const suppressNodeClickRef = useRef(false);
   const relations = useFileRelations(perspectiveTarget || "");
   filesRef.current = files;
@@ -418,8 +420,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
     for (const path of pathsToExpand) {
       await expandNodeByPath(path);
-      // Give React a tiny window to flush the folder expansion before the next step.
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
     }
   };
 
@@ -462,9 +462,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     scrollTimerRef.current = setTimeout(() => {
       const element = document.querySelector(`[data-file-path="${path}"]`);
       if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        element.scrollIntoView({ behavior: "auto", block: "center" });
       }
-    }, 300);
+    }, 0);
 
     highlightTimerRef.current = setTimeout(() => {
       setHighlightedPath(null);
@@ -665,6 +665,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             return {
               ...node,
               isLoaded: true,
+              isLoading: false,
               isExpanded: options.preserveExpansion
                 ? getIsExpanded(node.path)
                 : true,
@@ -1777,7 +1778,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
       const dx = pointerEvent.clientX - startX;
       const dy = pointerEvent.clientY - startY;
-      if (!activeDrag && Math.hypot(dx, dy) > 7) {
+      if (!activeDrag && Math.hypot(dx, dy) > 4) {
         activeDrag = true;
         suppressNodeClickRef.current = true;
       }
@@ -2131,7 +2132,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         const entries: FileEntry[] = await App.ReadDirectory(node.path);
         const childNodes: FileNode[] = buildFileNodes(entries);
 
-        const updatedNode = { ...node, isLoaded: true, children: childNodes };
+        const updatedNode = {
+          ...node,
+          isLoaded: true,
+          isLoading: false,
+          children: childNodes,
+        };
 
         const updateNode = (nodes: FileNode[]): FileNode[] => {
           return nodes.map((n) => {
@@ -2163,17 +2169,57 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       const isCurrentlyExpanded = getIsExpanded(node.path);
 
       if (!node.isLoaded && !isCurrentlyExpanded) {
+        const requestId =
+          (folderLoadRequestRef.current.get(node.path) ?? 0) + 1;
+        folderLoadRequestRef.current.set(node.path, requestId);
+        const nextExpandedPaths = new Set(expandedPathsRef.current);
+        nextExpandedPaths.add(node.path);
+        expandedPathsRef.current = nextExpandedPaths;
+        setExpanded(node.path, true);
+
+        const markNodeLoading = (nodes: FileNode[]): FileNode[] => {
+          return nodes.map((n) => {
+            if (n.path === node.path) {
+              return {
+                ...n,
+                isExpanded: true,
+                isLoading: true,
+                children: n.children ?? [],
+              };
+            }
+            if (n.children) {
+              return { ...n, children: markNodeLoading(n.children) };
+            }
+            return n;
+          });
+        };
+
+        setFiles((currentFiles) => {
+          const updatedFiles = markNodeLoading(currentFiles);
+          filesRef.current = updatedFiles;
+          return updatedFiles;
+        });
+
         try {
           const entries: FileEntry[] = await App.ReadDirectory(node.path);
-          const childNodes: FileNode[] = buildFileNodes(entries, expandedPaths);
+          if (folderLoadRequestRef.current.get(node.path) !== requestId) {
+            return;
+          }
+
+          const childNodes: FileNode[] = buildFileNodes(
+            entries,
+            expandedPathsRef.current,
+          );
+          const shouldRemainExpanded = expandedPathsRef.current.has(node.path);
 
           const updateNode = (nodes: FileNode[]): FileNode[] => {
             return nodes.map((n) => {
               if (n.path === node.path) {
                 return {
                   ...n,
-                  isExpanded: true,
+                  isExpanded: shouldRemainExpanded,
                   isLoaded: true,
+                  isLoading: false,
                   children: childNodes,
                 };
               }
@@ -2189,13 +2235,45 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             filesRef.current = updatedFiles;
             return updatedFiles;
           });
-          setExpanded(node.path, true);
+          folderLoadRequestRef.current.delete(node.path);
         } catch (error) {
-          console.error("Error loading directory:", error);
+          if (folderLoadRequestRef.current.get(node.path) === requestId) {
+            folderLoadRequestRef.current.delete(node.path);
+            const nextCollapsedPaths = new Set(expandedPathsRef.current);
+            nextCollapsedPaths.delete(node.path);
+            expandedPathsRef.current = nextCollapsedPaths;
+            setExpanded(node.path, false);
+
+            const clearLoadingNode = (nodes: FileNode[]): FileNode[] => {
+              return nodes.map((n) => {
+                if (n.path === node.path) {
+                  return { ...n, isExpanded: false, isLoading: false };
+                }
+                if (n.children) {
+                  return { ...n, children: clearLoadingNode(n.children) };
+                }
+                return n;
+              });
+            };
+
+            setFiles((currentFiles) => {
+              const updatedFiles = clearLoadingNode(currentFiles);
+              filesRef.current = updatedFiles;
+              return updatedFiles;
+            });
+            console.error("Error loading directory:", error);
+          }
         }
       } else {
         // Toggle expanded state in store
         toggleExpanded(node.path);
+        const nextExpandedPaths = new Set(expandedPathsRef.current);
+        if (isCurrentlyExpanded) {
+          nextExpandedPaths.delete(node.path);
+        } else {
+          nextExpandedPaths.add(node.path);
+        }
+        expandedPathsRef.current = nextExpandedPaths;
         if (isCurrentlyExpanded) {
           pruneCollapsedDescendantSelection(node.path);
         }
@@ -2203,7 +2281,11 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         const updateNode = (nodes: FileNode[]): FileNode[] => {
           return nodes.map((n) => {
             if (n.path === node.path) {
-              return { ...n, isExpanded: !isCurrentlyExpanded };
+              return {
+                ...n,
+                isExpanded: !isCurrentlyExpanded,
+                isLoading: isCurrentlyExpanded ? false : n.isLoading,
+              };
             }
             if (n.children) {
               return { ...n, children: updateNode(n.children) };
@@ -2220,7 +2302,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       }
     },
     [
-      expandedPaths,
       getIsExpanded,
       pruneCollapsedDescendantSelection,
       setExpanded,
@@ -2573,6 +2654,19 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       fontWeight: node.isDirectory ? 500 : 400,
     };
 
+    const loadingNodeStyle: React.CSSProperties = {
+      display: "flex",
+      alignItems: "center",
+      height: "28px",
+      paddingLeft: "8px",
+      paddingRight: `${fileExplorerNodeRightInset}px`,
+      marginLeft: "8px",
+      marginRight: `${fileExplorerNodeRightInset}px`,
+      color: "var(--text-muted)",
+      fontSize: "12px",
+      gap: "6px",
+    };
+
     const folderCreateButtonStyle: React.CSSProperties = {
       width: `${folderCreateButtonSize}px`,
       height: `${folderCreateButtonSize}px`,
@@ -2591,6 +2685,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     };
 
     const childGuides = [...parentGuides, !isLast];
+    const childNodes = node.children ?? [];
 
     return (
       <div key={node.path}>
@@ -2655,26 +2750,36 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           </div>
         </ContextActionMenu>
 
-        <AnimatePresence initial={false}>
-          {node.isDirectory && isNodeExpanded && node.children && (
-            <motion.div
-              initial={{ opacity: 0, scaleY: 0.96 }}
-              animate={{ opacity: 1, scaleY: 1 }}
-              exit={{ opacity: 0, scaleY: 0.96 }}
-              transition={{ duration: 0.12, ease: "easeOut" }}
-              style={{ overflow: "hidden", transformOrigin: "top" }}
-            >
-              {node.children.map((child, index) =>
+        {node.isDirectory &&
+          isNodeExpanded &&
+          (childNodes.length > 0 || node.isLoading) && (
+            <div style={{ overflow: "hidden" }}>
+              {node.isLoading && childNodes.length === 0 && (
+                <div style={loadingNodeStyle}>
+                  {renderExplorerTreeGuides(
+                    level + 1,
+                    true,
+                    childGuides,
+                    guideColor,
+                  )}
+                  <RefreshCw
+                    size={12}
+                    className="animate-spin"
+                    style={{ flexShrink: 0 }}
+                  />
+                  <span>Loading</span>
+                </div>
+              )}
+              {childNodes.map((child, index) =>
                 renderFileNode(
                   child,
                   level + 1,
-                  index === node.children!.length - 1,
+                  index === childNodes.length - 1,
                   childGuides,
                 ),
               )}
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
       </div>
     );
   };
