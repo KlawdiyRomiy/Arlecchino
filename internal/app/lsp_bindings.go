@@ -311,10 +311,9 @@ func (a *App) LSPGoToDefinition(filePath string, content string, line int, chara
 	// Convert to result format
 	var results []LSPDefinitionResult
 	for _, loc := range locations {
-		// Remove file:// prefix
-		path := loc.URI
-		if len(path) > 7 && path[:7] == "file://" {
-			path = path[7:]
+		path := normalizeLSPDefinitionPath(loc.URI)
+		if path == "" {
+			continue
 		}
 		results = append(results, LSPDefinitionResult{
 			Path: path,
@@ -324,6 +323,14 @@ func (a *App) LSPGoToDefinition(filePath string, content string, line int, chara
 	}
 
 	return results, nil
+}
+
+func normalizeLSPDefinitionPath(uri string) string {
+	path, err := normalizeEditPath(uri)
+	if err == nil && path != "" {
+		return path
+	}
+	return strings.TrimPrefix(uri, "file://")
 }
 
 // LSPHover returns hover information for a symbol

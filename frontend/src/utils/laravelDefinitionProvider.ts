@@ -7,6 +7,75 @@ export interface DefinitionItem {
   displayPath?: string;
 }
 
+const LSP_DEFINITION_LANGUAGES = new Set([
+  "ada",
+  "astro",
+  "bash",
+  "blade",
+  "c",
+  "clojure",
+  "cmake",
+  "cpp",
+  "csharp",
+  "css",
+  "dart",
+  "dockerfile",
+  "elixir",
+  "erlang",
+  "fortran",
+  "fsharp",
+  "glsl",
+  "go",
+  "graphql",
+  "groovy",
+  "haskell",
+  "html",
+  "java",
+  "javascript",
+  "javascriptreact",
+  "json",
+  "julia",
+  "kotlin",
+  "latex",
+  "less",
+  "lua",
+  "markdown",
+  "ocaml",
+  "objectivec",
+  "perl",
+  "php",
+  "powershell",
+  "protobuf",
+  "python",
+  "r",
+  "ruby",
+  "rust",
+  "sass",
+  "scala",
+  "scss",
+  "solidity",
+  "sql",
+  "svelte",
+  "swift",
+  "terraform",
+  "toml",
+  "typescript",
+  "typescriptreact",
+  "vue",
+  "wgsl",
+  "xml",
+  "yaml",
+  "zig",
+]);
+
+const canTryLSPDefinition = (language?: string): boolean => {
+  const normalized = language?.trim().toLowerCase();
+  return Boolean(normalized && LSP_DEFINITION_LANGUAGES.has(normalized));
+};
+
+const isLikelyCodeSymbol = (wordText: string): boolean =>
+  /[A-Za-z_$]/.test(wordText) && /^[\w$@#:.\\-]+$/.test(wordText);
+
 /**
  * Find definitions using backend Go to Definition
  * Uses indexed data for fast lookup with LSP fallback
@@ -106,6 +175,7 @@ export function checkIfHasDefinition(
   wordText: string,
   beforeWord: string,
   afterWord: string,
+  language?: string,
 ): boolean {
   // =============== PHP / Laravel ===============
 
@@ -295,6 +365,10 @@ export function checkIfHasDefinition(
 
   // Class instantiation: new ClassName
   if (beforeWord.match(/new\s+$/)) {
+    return true;
+  }
+
+  if (canTryLSPDefinition(language) && isLikelyCodeSymbol(wordText)) {
     return true;
   }
 

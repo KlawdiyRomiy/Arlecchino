@@ -957,6 +957,53 @@ body > [data-radix-portal] > * {
   );
 }
 
+.quicklook-scroll-fog-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.quicklook-scroll-fog-shell::before,
+.quicklook-scroll-fog-shell::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 10px;
+  z-index: 2;
+  height: 24px;
+  pointer-events: none;
+}
+
+.quicklook-scroll-fog-shell::before {
+  top: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--editor-bg) 92%, transparent),
+    color-mix(in srgb, var(--editor-bg) 38%, transparent) 62%,
+    transparent
+  );
+}
+
+.quicklook-scroll-fog-shell::after {
+  bottom: 0;
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--editor-bg) 92%, transparent),
+    color-mix(in srgb, var(--editor-bg) 38%, transparent) 62%,
+    transparent
+  );
+}
+
+.quicklook-scroll-fog-shell .cm-editor {
+  height: 100%;
+}
+
+.quicklook-scroll-fog-shell .cm-scroller::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+}
+
 .file-explorer-node:hover {
   background-color: var(--file-explorer-hover-bg, transparent);
 }

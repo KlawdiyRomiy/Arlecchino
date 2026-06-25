@@ -17,10 +17,10 @@ import {
   foldGutter,
   indentOnInput,
 } from "@codemirror/language";
-import { tags as t } from "@lezer/highlight";
-import { createTheme } from "thememirror";
+import { Maximize2, X } from "lucide-react";
 import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import { createCodeMirrorFoldExtensions } from "../utils/codeMirrorWorkflowExtensions";
+import { codeEditorStyles, codeEditorTheme } from "../utils/codeMirrorTheme";
 import {
   interactiveSurfaceOverlayStyle,
   useInteractiveSurfaceMotion,
@@ -36,137 +36,23 @@ interface QuickLookModalProps {
   onExpand: () => void;
 }
 
-const blackprintTheme = createTheme({
-  variant: "dark",
-  settings: {
-    background: "#000000",
-    foreground: "#e0e0e0",
-    caret: "#ffffff",
-    selection: "#264f78",
-    lineHighlight: "#0a0a0a",
-    gutterBackground: "#000000",
-    gutterForeground: "#555555",
-  },
-  styles: [
-    { tag: t.comment, color: "#6a737d" },
-    { tag: t.lineComment, color: "#6a737d" },
-    { tag: t.blockComment, color: "#6a737d" },
-    { tag: t.docComment, color: "#6a737d" },
-    { tag: t.string, color: "#98c379" },
-    { tag: t.special(t.string), color: "#98c379" },
-    { tag: t.number, color: "#d19a66" },
-    { tag: t.bool, color: "#d19a66" },
-    { tag: t.null, color: "#d19a66" },
-    { tag: t.keyword, color: "#61afef" },
-    { tag: t.operator, color: "#abb2bf" },
-    { tag: t.className, color: "#e5c07b" },
-    { tag: t.definition(t.typeName), color: "#e5c07b" },
-    { tag: t.typeName, color: "#e5c07b" },
-    { tag: t.tagName, color: "#e06c75" },
-    { tag: t.attributeName, color: "#d19a66" },
-    { tag: t.propertyName, color: "#e06c75" },
-    { tag: t.function(t.variableName), color: "#61afef" },
-    { tag: t.definition(t.variableName), color: "#e06c75" },
-    { tag: t.variableName, color: "#e0e0e0" },
-    { tag: t.constant(t.variableName), color: "#d19a66" },
-    { tag: t.labelName, color: "#e06c75" },
-    { tag: t.namespace, color: "#e5c07b" },
-    { tag: t.macroName, color: "#61afef" },
-    { tag: t.literal, color: "#98c379" },
-    { tag: t.punctuation, color: "#abb2bf" },
-    { tag: t.paren, color: "#abb2bf" },
-    { tag: t.squareBracket, color: "#abb2bf" },
-    { tag: t.brace, color: "#abb2bf" },
-    { tag: t.derefOperator, color: "#abb2bf" },
-    { tag: t.self, color: "#e06c75" },
-  ],
-});
-
-const editorStyles = EditorView.theme({
+const quickLookEditorStyles = EditorView.theme({
   "&": {
     height: "100%",
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    fontSize: "14px",
-    backgroundColor: "#000",
+    backgroundColor: "var(--editor-bg)",
   },
   ".cm-scroller": {
-    backgroundColor: "#000",
+    backgroundColor: "var(--editor-bg)",
   },
   ".cm-content": {
-    padding: "8px 0",
-    caretColor: "#fff",
-    backgroundColor: "#000",
+    minHeight: "100%",
   },
   ".cm-gutters": {
-    backgroundColor: "#000",
-    borderRight: "1px solid #1a1a1a",
-    color: "#555",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "transparent",
-    color: "#d4a520",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "#0a0a0a",
-  },
-  ".cm-cursor": {
-    borderLeftColor: "#fff",
-    borderLeftWidth: "2px",
-  },
-  ".cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "#264f78 !important",
-  },
-  "&.cm-focused .cm-selectionBackground, &.cm-focused .cm-content ::selection":
-    {
-      backgroundColor: "#264f78 !important",
-    },
-  "& .cm-selectionLayer .cm-selectionBackground": {
-    backgroundColor: "#264f78 !important",
-  },
-  "&:not(.cm-focused) .cm-selectionBackground": {
-    backgroundColor: "#264f78 !important",
-  },
-  ".cm-line": {
-    padding: "0 8px",
-  },
-  ".cm-foldGutter": {
-    width: "12px",
-  },
-  ".cm-tooltip": {
-    backgroundColor: "#1a1a1a",
-    border: "1px solid #333",
-    borderRadius: "4px",
-  },
-  ".cm-tooltip-autocomplete": {
-    backgroundColor: "#0f0f0f",
-    border: "1px solid #2a2a2a",
-    borderRadius: "6px",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
-  },
-  ".cm-tooltip-autocomplete ul": {
-    fontFamily: '"JetBrains Mono", monospace',
-    fontSize: "13px",
-  },
-  ".cm-tooltip-autocomplete ul li": {
-    padding: "4px 8px",
-  },
-  ".cm-tooltip-autocomplete ul li[aria-selected]": {
-    backgroundColor: "#264f78",
-  },
-  ".cm-completionIcon": {
-    marginRight: "8px",
-    opacity: "0.7",
-  },
-  ".cm-completionLabel": {
-    color: "#e0e0e0",
-  },
-  ".cm-completionDetail": {
-    color: "#888",
-    marginLeft: "8px",
-    fontStyle: "italic",
+    borderRight: "1px solid var(--editor-border)",
   },
   ".quicklook-highlight": {
-    backgroundColor: "rgba(239, 68, 68, 0.15) !important",
+    backgroundColor:
+      "color-mix(in srgb, var(--status-info) 18%, transparent) !important",
   },
 });
 
@@ -216,21 +102,49 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
   const [modalSize, setModalSize] = useState({ width: 800, height: 600 });
   const [isResizing, setIsResizing] = useState(false);
+  const fileName = useMemo(
+    () => filePath.split("/").pop() || filePath || "Preview",
+    [filePath],
+  );
 
   useEffect(() => {
     if (!isOpen) return;
 
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+    const previousShellModalOpen = document.body.dataset.shellModalOpen;
+    document.body.dataset.shellModalOpen = "true";
+
+    return () => {
+      if (previousShellModalOpen === undefined) {
+        delete document.body.dataset.shellModalOpen;
+      } else {
+        document.body.dataset.shellModalOpen = previousShellModalOpen;
+      }
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Esc" || e.code === "Escape") {
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         onClose();
+        return;
+      }
+
+      if (e.metaKey && !e.altKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        onExpand();
       }
     };
 
-    document.addEventListener("keydown", handleEscape, true);
-    return () => document.removeEventListener("keydown", handleEscape, true);
-  }, [isOpen, onClose]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [isOpen, onClose, onExpand]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -305,8 +219,9 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
   const extensions = useMemo(() => {
     const exts: Extension[] = [
-      blackprintTheme,
-      editorStyles,
+      codeEditorTheme,
+      codeEditorStyles,
+      quickLookEditorStyles,
       highlightLineField,
       EditorView.lineWrapping,
       drawSelection(),
@@ -332,28 +247,37 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
           animate={{ opacity: 1 }}
           exit={reduceModalMotion ? { opacity: 1 } : { opacity: 0 }}
           transition={{ duration: reduceModalMotion ? 0 : 0.15 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center"
           onClick={handleBackdropClick}
           onAnimationStart={markMotionStart}
-          style={interactiveSurfaceOverlayStyle}
-          role="button"
+          style={{
+            ...interactiveSurfaceOverlayStyle,
+            background:
+              "color-mix(in srgb, var(--surface-shell) 50%, rgba(0, 0, 0, 0.5))",
+            backdropFilter: "blur(10px) saturate(0.94)",
+          }}
+          role="presentation"
           tabIndex={-1}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
               onClose();
             }
           }}
-          aria-label="Modal backdrop"
         >
           <style>{`
             .quicklook-highlight {
-              background-color: rgba(239, 68, 68, 0.15) !important;
               animation: quicklookFlash 0.6s ease-out;
             }
 
             @keyframes quicklookFlash {
-              0%, 100% { background-color: rgba(239, 68, 68, 0.15); }
-              50% { background-color: rgba(239, 68, 68, 0.3); }
+              0%, 100% {
+                background-color: color-mix(in srgb, var(--status-info) 18%, transparent);
+              }
+              50% {
+                background-color: color-mix(in srgb, var(--status-info) 30%, transparent);
+              }
             }
           `}</style>
 
@@ -372,62 +296,69 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
               duration: reduceModalMotion ? 0 : 0.2,
               ease: "easeOut",
             }}
-            className="relative flex flex-col rounded-lg shadow-2xl overflow-hidden bg-black"
+            className="relative flex flex-col overflow-hidden"
             onAnimationStart={markMotionStart}
             style={{
               ...surfaceStyle,
               width: modalSize.width,
               height: modalSize.height,
+              borderRadius: "var(--radius-shell)",
+              border: "1px solid var(--shell-border-strong)",
+              background:
+                "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 98%, transparent), color-mix(in srgb, var(--surface-shell) 99%, transparent))",
+              color: "var(--text-primary)",
+              boxShadow:
+                "var(--shadow-overlay), inset 0 1px 0 var(--shell-inner-highlight)",
+              backdropFilter: "blur(18px) saturate(1.08)",
             }}
           >
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-[#1a1a1a] bg-black">
-              <div className="flex items-center gap-2">
+            <div
+              className="flex items-center justify-between"
+              style={{
+                minHeight: 46,
+                padding: "0 12px",
+                borderBottom: "1px solid var(--shell-inline-divider)",
+                background:
+                  "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-strong) 92%, transparent), color-mix(in srgb, var(--surface-shell) 98%, transparent))",
+              }}
+            >
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="w-5 h-5 rounded-full flex items-center justify-center bg-[#333] hover:bg-[#444] transition-colors"
+                  className="panel-control-button"
                   title="Close (Esc)"
-                  aria-label="Close modal"
+                  aria-label="Close preview"
                 >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <title>Close</title>
-                    <path
-                      d="M1 1L9 9M9 1L1 9"
-                      stroke="#888"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                  <X size={14} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
                   onClick={onExpand}
-                  className="w-5 h-5 rounded-full flex items-center justify-center bg-[#333] hover:bg-[#444] transition-colors"
-                  title="Open in tab"
-                  aria-label="Open in new tab"
+                  className="panel-control-button"
+                  title="Open in tab (Cmd+T)"
+                  aria-label="Open preview in editor tab"
                 >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <title>Expand</title>
-                    <path
-                      d="M1 5H9M5 1V9"
-                      stroke="#888"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                  <Maximize2 size={14} aria-hidden="true" />
                 </button>
               </div>
 
-              <div className="text-sm font-medium text-[#888]">
-                {filePath.split("/").pop()}
+              <div
+                className="min-w-0 flex-1 truncate px-3 text-center"
+                style={{
+                  color: "var(--text-secondary)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+                title={filePath}
+              >
+                {fileName}
               </div>
 
-              <div className="w-16" />
+              <div style={{ width: 72 }} />
             </div>
 
-            {/* Editor */}
-            <div className="flex-1 relative overflow-hidden">
+            <div className="quicklook-scroll-fog-shell">
               <CodeMirror
                 ref={editorRef}
                 value={content}
@@ -450,11 +381,11 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
                   lintKeymap: false,
                   tabSize: 4,
                 }}
+                theme="none"
                 className="h-full"
               />
             </div>
 
-            {/* Resize handle */}
             <div
               ref={resizeRef}
               className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize"
@@ -472,7 +403,10 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
                 }
               }}
             >
-              <div className="absolute bottom-1 right-1 w-3 h-3 border-r-2 border-b-2 border-[#333]" />
+              <div
+                className="absolute bottom-1 right-1 h-3 w-3 border-b-2 border-r-2"
+                style={{ borderColor: "var(--border-subtle)" }}
+              />
             </div>
           </motion.div>
         </motion.div>

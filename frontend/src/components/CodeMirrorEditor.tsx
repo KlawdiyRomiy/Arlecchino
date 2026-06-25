@@ -1516,7 +1516,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [filePath]);
 
   const resolveDefinitionAtPosition = useCallback(
-    async (view: EditorView, pos: number, mode: "goto" | "quickLook") => {
+    async (
+      view: EditorView,
+      pos: number,
+      mode: "goto" | "quickLook",
+      anchor?: { x: number; y: number },
+    ) => {
       if (!projectPath) return;
 
       const line = view.state.doc.lineAt(pos);
@@ -1559,8 +1564,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       setDefinitionMenu({
         isOpen: true,
-        x: coords.left,
-        y: coords.bottom,
+        x: anchor?.x ?? coords.left,
+        y: anchor?.y ?? coords.bottom,
         items: results,
         mode,
       });
@@ -1596,7 +1601,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       const beforeWord = line.text.substring(0, wordInfo.startColumn - 1);
       const afterWord = line.text.substring(wordInfo.endColumn - 1);
-      return checkIfHasDefinition(wordInfo.word, beforeWord, afterWord);
+      return checkIfHasDefinition(
+        wordInfo.word,
+        beforeWord,
+        afterWord,
+        language,
+      );
     },
     [language],
   );
@@ -1791,6 +1801,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             wordInfo.word,
             beforeWord,
             afterWord,
+            language,
           );
           if (!hasDefinition) {
             clearDefinitionLink(view);
@@ -1829,11 +1840,17 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           if (pos === null) return false;
 
           if (event.altKey && !event.metaKey && !event.ctrlKey) {
-            void resolveDefinitionAtPosition(view, pos, "quickLook");
+            void resolveDefinitionAtPosition(view, pos, "quickLook", {
+              x: event.clientX,
+              y: event.clientY,
+            });
             return true;
           }
           if ((event.metaKey || event.ctrlKey) && !event.altKey) {
-            void resolveDefinitionAtPosition(view, pos, "goto");
+            void resolveDefinitionAtPosition(view, pos, "goto", {
+              x: event.clientX,
+              y: event.clientY,
+            });
             return true;
           }
           return false;
