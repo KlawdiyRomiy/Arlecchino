@@ -89,6 +89,7 @@ type diagnosticsPreloadScanOptions struct {
 	BatchTimeout         time.Duration
 	BatchPause           time.Duration
 	CandidateOpenTimeout time.Duration
+	DisallowColdStart    bool
 	OnCandidateProcessed func(diagnosticsPreloadScanResult)
 	OnBatchComplete      func(diagnosticsPreloadScanResult)
 }
@@ -1185,6 +1186,9 @@ func (a *App) runDiagnosticsPreloadScanForSessionWithOptions(
 				openCtx, openCancel = context.WithTimeout(ctx, candidateOpenTimeout)
 			}
 			openCtx = indexerlsp.WithStartReason(openCtx, activationManualProjectScan)
+			if options.DisallowColdStart {
+				openCtx = indexerlsp.WithColdStartAllowed(openCtx, false)
+			}
 			opened, openErr := mgr.DidOpenTransientWithContext(openCtx, candidate.Language, candidate.Path, string(content))
 			if openCancel != nil {
 				openCancel()
@@ -1658,8 +1662,9 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 	previewCtx := preloadCtx
 	previewCancel := func() {}
 	previewOptions := diagnosticsPreloadScanOptions{
-		BatchPause:      diagnosticsPreloadPreviewBatchPause,
-		OnBatchComplete: emitPreviewProgress,
+		BatchPause:        diagnosticsPreloadPreviewBatchPause,
+		DisallowColdStart: mode != diagnosticsPreloadModeManualFull,
+		OnBatchComplete:   emitPreviewProgress,
 	}
 	if mode == diagnosticsPreloadModeManualFull {
 		previewOptions.BatchTimeout = diagnosticsPreloadFullBatchTimeout
@@ -1762,6 +1767,7 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 				BatchTimeout:         diagnosticsPreloadFullBatchTimeout,
 				BatchPause:           diagnosticsPreloadFullBatchPause,
 				CandidateOpenTimeout: diagnosticsPreloadFullCandidateOpenTimeout,
+				DisallowColdStart:    false,
 				OnCandidateProcessed: func(result diagnosticsPreloadScanResult) {
 					emitBackgroundProgress(result, false)
 				},

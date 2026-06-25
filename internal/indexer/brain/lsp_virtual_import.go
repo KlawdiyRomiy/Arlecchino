@@ -99,6 +99,7 @@ func (b *PredictionBrain) completeWithVirtualAccessImportLSP(ctx context.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = lsp.WithColdStartAllowed(ctx, false)
 
 	opened, err := b.lspManager.DidOpenTransientWithContext(ctx, lspLanguage, plan.filePath, plan.content)
 	if err != nil {
