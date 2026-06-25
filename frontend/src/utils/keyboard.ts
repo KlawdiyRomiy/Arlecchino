@@ -373,7 +373,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Copy the terminal selection.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+shift+c", "ctrl+shift+c"],
+    defaultShortcuts: ["cmd+shift+c"],
   },
   {
     id: "terminal.paste",
@@ -381,7 +381,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Paste clipboard text into the terminal.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+shift+v", "ctrl+shift+v"],
+    defaultShortcuts: ["cmd+shift+v"],
   },
   {
     id: "terminal.selectAll",
@@ -389,7 +389,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Select all text in the terminal buffer.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+a", "ctrl+shift+a"],
+    defaultShortcuts: ["cmd+a"],
   },
   {
     id: "terminal.clear",
@@ -397,7 +397,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Clear the terminal viewport.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+k", "ctrl+shift+k"],
+    defaultShortcuts: ["cmd+k"],
   },
   {
     id: "terminal.find",
@@ -437,7 +437,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Close the active terminal tab.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+w", "ctrl+w"],
+    defaultShortcuts: ["cmd+w"],
   },
   {
     id: "terminal.reopenTab",
@@ -453,7 +453,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Clear the current terminal input line.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+backspace", "cmd+delete", "ctrl+backspace"],
+    defaultShortcuts: ["cmd+backspace", "cmd+delete"],
   },
 ];
 
@@ -753,9 +753,6 @@ export function isShortcut(e: KeyboardEvent, shortcut: string): boolean {
   return isKey(e, key);
 }
 
-const isMacPlatform = (): boolean =>
-  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
-
 /**
  * Shorthand helpers for common shortcuts
  */
@@ -873,15 +870,11 @@ export const shortcuts = {
   terminalFindPrev: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "terminal.findPrevious"),
   terminalNewTab: (e: KeyboardEvent) =>
-    isMacPlatform()
-      ? matchesActionShortcut(e, "terminal.newTab")
-      : isShortcut(e, "ctrl+t"),
+    matchesActionShortcut(e, "terminal.newTab"),
   terminalCloseTab: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "terminal.closeTab"),
   terminalReopenTab: (e: KeyboardEvent) =>
-    isMacPlatform()
-      ? matchesActionShortcut(e, "terminal.reopenTab")
-      : isShortcut(e, "ctrl+shift+t"),
+    matchesActionShortcut(e, "terminal.reopenTab"),
   terminalClearLine: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "terminal.clearLine"),
 };

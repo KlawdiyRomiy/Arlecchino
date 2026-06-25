@@ -434,7 +434,7 @@ func (m *Manager) Close(id string) error {
 
 	session, exists := m.sessions[id]
 	if !exists {
-		return fmt.Errorf("session %s not found", id)
+		return nil
 	}
 
 	err := session.Close()

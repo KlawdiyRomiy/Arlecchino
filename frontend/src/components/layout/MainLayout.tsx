@@ -237,8 +237,6 @@ const ZEN_TOP_CHROME_INTERACTIVE_SELECTOR = [
 ].join(",");
 const MARKDOWN_LINK_PREVIEW_WINDOW_ID = "markdown-link-preview";
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
-const NATIVE_WINDOW_CONTROLS_OCCLUSION_WIDTH = 112;
-const NATIVE_WINDOW_CONTROLS_OCCLUSION_HEIGHT = 56;
 type FullscreenPanelId =
   | "terminal"
   | "aiChat"
@@ -5417,6 +5415,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   useMainLayoutKeyboardShortcuts({
     activeModal,
+    activePanelIdRef,
     activateAdjacentCodePanelTab,
     applicationMenuRepeatRef,
     beginHeldPanelShortcut,
@@ -5984,18 +5983,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         zenTopChromePointerInside ||
         zenTopChromeOccludedHeaderActive));
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
-  const terminalPanelConfig = panelConfigs.terminal;
-  const tuiTerminalOccludesNativeWindowControls =
-    tuiModeActive &&
-    panels.terminal &&
-    terminalPanelConfig.mode === "floating" &&
-    terminalPanelConfig.x < NATIVE_WINDOW_CONTROLS_OCCLUSION_WIDTH &&
-    terminalPanelConfig.y < NATIVE_WINDOW_CONTROLS_OCCLUSION_HEIGHT &&
-    terminalPanelConfig.x + terminalPanelConfig.size.width > 0 &&
-    terminalPanelConfig.y + terminalPanelConfig.size.height > 0;
   const nativeWindowControlsEnabled =
     showNativeMacWindowControls &&
-    !tuiTerminalOccludesNativeWindowControls &&
     (nativeWindowFullscreen || zenTopChromeVisible);
   const nativeWindowControlsVisible =
     nativeWindowControlsEnabled &&
@@ -6672,9 +6661,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         style={containerStyle}
         data-testid="main-layout"
         data-tui-session-id={tuiActiveSessionId || ""}
-        data-tui-terminal-occludes-native-controls={
-          tuiTerminalOccludesNativeWindowControls ? "true" : "false"
-        }
         data-zen-mode={zenModeEnabled ? "true" : "false"}
         data-zen-topbar-visible={zenTopChromeVisible ? "true" : "false"}
         data-zen-statusbar-visible={zenBottomChromeVisible ? "true" : "false"}

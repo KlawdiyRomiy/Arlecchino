@@ -162,6 +162,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   onSwitchProject?: (projectId: string, direction?: number) => void;
   openSettings: () => void;
   redoProjectEntryOperation: () => Promise<boolean>;
+  activePanelIdRef: MutableRefObject<PanelId | null>;
   panelsRef: MutableRefObject<PanelVisibility>;
   pressedShortcutCodesRef: MutableRefObject<Set<string>>;
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
@@ -211,6 +212,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   onSwitchProject,
   openSettings,
   redoProjectEntryOperation,
+  activePanelIdRef,
   panelsRef,
   pressedShortcutCodesRef,
   problemsPreFullscreenRef,
@@ -266,11 +268,15 @@ export const useMainLayoutKeyboardShortcuts = ({
         (pane) => pane.id === terminalState.activePaneId,
       );
       const isTerminalPanelVisible = panelState.terminal;
+      const isTerminalPanelActive =
+        activePanelIdRef.current === "terminal" && isTerminalPanelVisible;
       const isTerminalShortcutContext = hasTerminalShortcutContext({
         activeElement,
         tuiModeActive: isTUIActive,
         terminalPanelVisible: isTerminalPanelVisible,
       });
+      const isTerminalTabShortcutContext =
+        isTerminalShortcutContext || isTerminalPanelActive;
 
       if (shouldBypassGlobalFindShortcuts(e, activeElement)) {
         return;
@@ -361,10 +367,11 @@ export const useMainLayoutKeyboardShortcuts = ({
       if (shortcuts.terminalNewTab(e)) {
         const hasNoTabs = activePane && activePane.tabIds.length === 0;
         if (
-          isTerminalShortcutContext ||
+          isTerminalTabShortcutContext ||
           (isTerminalPanelVisible && hasNoTabs)
         ) {
           e.preventDefault();
+          e.stopPropagation();
           if (activePane) {
             void terminalState.createTerminal(activePane.id, terminalThemeId);
           }
@@ -372,8 +379,9 @@ export const useMainLayoutKeyboardShortcuts = ({
         }
       }
 
-      if (isTerminalShortcutContext && shortcuts.terminalCloseTab(e)) {
+      if (isTerminalTabShortcutContext && shortcuts.terminalCloseTab(e)) {
         e.preventDefault();
+        e.stopPropagation();
         if (activePane?.activeTabId) {
           void terminalState
             .closeTerminal(activePane.id, activePane.activeTabId)
@@ -384,8 +392,9 @@ export const useMainLayoutKeyboardShortcuts = ({
         return;
       }
 
-      if (isTerminalShortcutContext && shortcuts.terminalReopenTab(e)) {
+      if (isTerminalTabShortcutContext && shortcuts.terminalReopenTab(e)) {
         e.preventDefault();
+        e.stopPropagation();
         void terminalState.reopenLastClosedTab(terminalThemeId);
         return;
       }
@@ -818,6 +827,7 @@ export const useMainLayoutKeyboardShortcuts = ({
     };
   }, [
     activeModal,
+    activePanelIdRef,
     activateAdjacentCodePanelTab,
     applicationMenuRepeatRef,
     beginHeldPanelShortcut,

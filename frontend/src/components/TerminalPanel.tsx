@@ -1553,10 +1553,20 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                   <button
                     type="button"
                     style={closeTabBtnStyle}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCloseTab(pane.id, tabId);
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
                     }}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void handleCloseTab(pane.id, tabId);
+                    }}
+                    aria-label={`Close ${session.name}`}
                     title="Close Terminal"
                   >
                     <X size={12} />

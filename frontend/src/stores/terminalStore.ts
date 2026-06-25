@@ -322,6 +322,27 @@ const createTerminalBackendSession = async (
   await CreateTerminal(id, name);
 };
 
+const requestBackendTerminalClose = (id: string) => {
+  try {
+    void Promise.resolve(CloseTerminal(id)).catch((error) => {
+      console.error("[TerminalStore] Failed to close backend terminal", error);
+    });
+  } catch (error) {
+    console.error("[TerminalStore] Failed to close backend terminal", error);
+  }
+};
+
+const disposeClosedTerminalSession = (id: string, session: TerminalSession) => {
+  flushTerminalOutputQueue(session);
+  const tail = session.streamDecoder.decode();
+  if (tail.length > 0) {
+    session.terminal.write(tail);
+  }
+  requestBackendTerminalClose(id);
+  clearTerminalOutputQueue(id);
+  session.terminal.dispose();
+};
+
 const createLocalTerminalSession = (
   id: string,
   name: string,
@@ -1193,16 +1214,6 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const session = get().sessions.get(tabId);
       const shouldTrackClosedTab = !!session;
       const closedTabName = session?.name || "Terminal";
-      if (session) {
-        flushTerminalOutputQueue(session);
-        const tail = session.streamDecoder.decode();
-        if (tail.length > 0) {
-          session.terminal.write(tail);
-        }
-        await CloseTerminal(tabId);
-        clearTerminalOutputQueue(tabId);
-        session.terminal.dispose();
-      }
 
       cleanupSemanticSessionState(tabId);
 
@@ -1214,8 +1225,10 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         const newSemanticEntries = new Map(state.sessionSemanticEntries);
         newSemanticEntries.delete(tabId);
 
+        const closedPaneId =
+          state.panes.find((pane) => pane.tabIds.includes(tabId))?.id ?? paneId;
         const panesWithUpdatedTabs = state.panes.map((pane) => {
-          if (pane.id === paneId) {
+          if (pane.tabIds.includes(tabId)) {
             const closedIdx = pane.tabIds.indexOf(tabId);
             const newTabIds = pane.tabIds.filter((id) => id !== tabId);
             let newActiveId = pane.activeTabId;
@@ -1250,13 +1263,17 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           state.activeProjectPath,
         );
 
-        const nextActiveSessionId =
-          state.tuiActiveSessionId === tabId ? null : state.tuiActiveSessionId;
+        const nextActiveSessionId = resolveProjectTUISessionId(
+          nextPanes,
+          newSessions,
+          nextActivePaneId,
+        );
         const nextTuiModeActive = nextActiveSessionId !== null;
         const nextClosedTabsStack = shouldTrackClosedTab
-          ? [...state.closedTabsStack, { paneId, name: closedTabName }].slice(
-              -MAX_CLOSED_TERMINAL_TABS,
-            )
+          ? [
+              ...state.closedTabsStack,
+              { paneId: closedPaneId, name: closedTabName },
+            ].slice(-MAX_CLOSED_TERMINAL_TABS)
           : state.closedTabsStack;
 
         return {
@@ -1269,8 +1286,15 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           sessionSemanticEntries: newSemanticEntries,
           tuiActiveSessionId: nextActiveSessionId,
           tuiModeActive: nextTuiModeActive,
+          tuiAssist: nextTuiModeActive
+            ? state.tuiAssist
+            : { ...DEFAULT_TUI_ASSIST },
         };
       });
+
+      if (session) {
+        setTimeout(() => disposeClosedTerminalSession(tabId, session), 0);
+      }
     },
 
     setActiveTab: (paneId: string, tabId: string) => {
