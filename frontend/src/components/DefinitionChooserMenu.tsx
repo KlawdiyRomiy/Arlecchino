@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { FileCode } from "lucide-react";
 import { zIndex } from "../styles/colors";
@@ -63,7 +64,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === "undefined") return null;
 
   const viewportMargin = 12;
   const screenWidth = window.innerWidth;
@@ -87,7 +88,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
     Math.max(viewportMargin, screenHeight - menuHeight - viewportMargin),
   );
 
-  return (
+  return createPortal(
     <motion.div
       ref={menuRef}
       initial={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -195,6 +196,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
           </button>
         ))}
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   );
 };
