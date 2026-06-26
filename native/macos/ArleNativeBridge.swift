@@ -253,7 +253,66 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
 
 private var originalButtonsSuperviewFrameKey: UInt8 = 0
 private var originalButtonsSuperviewKey: UInt8 = 0
+private var windowButtonPlacementKey: UInt8 = 0
+private var windowButtonMoveObserverKey: UInt8 = 0
 private var windowButtonEventForwarderKey: UInt8 = 0
+
+private final class WindowButtonPlacement: NSObject {
+    let closeX: CGFloat
+    let closeY: CGFloat
+    let minimiseY: CGFloat
+    let maximiseY: CGFloat
+    let visible: Bool
+
+    init(closeX: CGFloat, closeY: CGFloat, minimiseY: CGFloat, maximiseY: CGFloat, visible: Bool) {
+        self.closeX = closeX
+        self.closeY = closeY
+        self.minimiseY = minimiseY
+        self.maximiseY = maximiseY
+        self.visible = visible
+    }
+}
+
+private final class WindowButtonMoveObserver: NSObject {
+    private weak var window: NSWindow?
+    private var observers: [NSObjectProtocol] = []
+
+    init(window: NSWindow) {
+        self.window = window
+        super.init()
+
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSWindow.willMoveNotification, object: window, queue: .main) { [weak self] _ in
+                self?.reposition()
+            },
+            center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { [weak self] _ in
+                self?.reposition()
+            },
+            center.addObserver(forName: NSWindow.willStartLiveResizeNotification, object: window, queue: .main) { [weak self] _ in
+                self?.reposition()
+            },
+            center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
+                self?.reposition()
+            },
+            center.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main) { [weak self] _ in
+                self?.reposition()
+            }
+        ]
+    }
+
+    deinit {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func reposition() {
+        guard let window else { return }
+        repositionRememberedWindowButtons(window)
+        scheduleRememberedWindowButtonsReposition(window)
+    }
+}
 
 @_cdecl("ArleNativeSetCallback")
 public func ArleNativeSetCallback(_ callback: ArleNativeCallback?) {
@@ -629,6 +688,58 @@ private func windowButton(for event: NSEvent, in window: NSWindow) -> NSButton? 
     return buttons.first { windowButton($0, contains: event) } ?? nil
 }
 
+private func rememberWindowButtonPlacement(
+    _ window: NSWindow,
+    closeX: CGFloat,
+    closeY: CGFloat,
+    minimiseY: CGFloat,
+    maximiseY: CGFloat,
+    visible: Bool
+) {
+    let placement = WindowButtonPlacement(
+        closeX: closeX,
+        closeY: closeY,
+        minimiseY: minimiseY,
+        maximiseY: maximiseY,
+        visible: visible
+    )
+    objc_setAssociatedObject(window, &windowButtonPlacementKey, placement, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+}
+
+private func rememberedWindowButtonPlacement(_ window: NSWindow) -> WindowButtonPlacement? {
+    objc_getAssociatedObject(window, &windowButtonPlacementKey) as? WindowButtonPlacement
+}
+
+private func repositionRememberedWindowButtons(_ window: NSWindow) {
+    guard let placement = rememberedWindowButtonPlacement(window) else { return }
+    _ = positionNativeWindowControlsOnMainThread(
+        Unmanaged.passUnretained(window).toOpaque(),
+        Double(placement.closeX),
+        Double(placement.closeY),
+        Double(placement.closeX),
+        Double(placement.minimiseY),
+        Double(placement.closeX),
+        Double(placement.maximiseY),
+        placement.visible
+    )
+}
+
+private func scheduleRememberedWindowButtonsReposition(_ window: NSWindow) {
+    DispatchQueue.main.async { [weak window] in
+        guard let window else { return }
+        repositionRememberedWindowButtons(window)
+    }
+}
+
+private func installWindowButtonMoveObserver(_ window: NSWindow) {
+    if objc_getAssociatedObject(window, &windowButtonMoveObserverKey) != nil {
+        return
+    }
+
+    let observer = WindowButtonMoveObserver(window: window)
+    objc_setAssociatedObject(window, &windowButtonMoveObserverKey, observer, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+}
+
 private func installWindowButtonEventForwarder(_ window: NSWindow) {
     if objc_getAssociatedObject(window, &windowButtonEventForwarderKey) != nil {
         return
@@ -643,6 +754,8 @@ private func installWindowButtonEventForwarder(_ window: NSWindow) {
         switch event.type {
         case .leftMouseDown:
             guard let button = windowButton(for: event, in: window) else {
+                repositionRememberedWindowButtons(window)
+                scheduleRememberedWindowButtonsReposition(window)
                 return event
             }
             pressedButton = button
@@ -650,12 +763,16 @@ private func installWindowButtonEventForwarder(_ window: NSWindow) {
             return nil
         case .leftMouseDragged:
             guard let button = pressedButton else {
+                repositionRememberedWindowButtons(window)
+                scheduleRememberedWindowButtonsReposition(window)
                 return event
             }
             button.highlight(windowButton(button, contains: event))
             return nil
         case .leftMouseUp:
             guard let button = pressedButton else {
+                repositionRememberedWindowButtons(window)
+                scheduleRememberedWindowButtonsReposition(window)
                 return event
             }
             pressedButton = nil
@@ -796,12 +913,21 @@ private func positionNativeWindowControlsOnMainThread(
     let close = window.standardWindowButton(.closeButton)
     let minimise = window.standardWindowButton(.miniaturizeButton)
     let maximise = window.standardWindowButton(.zoomButton)
+    installWindowButtonMoveObserver(window)
     installWindowButtonEventForwarder(window)
 
     if window.styleMask.contains(.fullScreen) {
         return restoreButtonsSuperview(close, minimise, maximise, visible: visible)
     }
 
+    rememberWindowButtonPlacement(
+        window,
+        closeX: CGFloat(closeX),
+        closeY: CGFloat(closeY),
+        minimiseY: CGFloat(minimiseY),
+        maximiseY: CGFloat(maximiseY),
+        visible: visible
+    )
     return moveButtonsSuperview(
         close,
         minimise,

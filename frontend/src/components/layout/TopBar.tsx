@@ -16,7 +16,7 @@ import {
   DownloadCloud,
   Bell,
 } from "lucide-react";
-import { WindowControls } from "../ui";
+import { NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT, WindowControls } from "../ui";
 import { DragGhost, type DragGhostState } from "../ui/DragGhost";
 import { MotionDropdownContent } from "../ui/MotionDropdownContent";
 import { useBackgroundShellStatus } from "../../shell/backgroundShellStatus";
@@ -79,6 +79,9 @@ const topbarItemLabels: Record<VisibleTopbarItemId, string> = {
   notifications: "Notifications",
   more: "More",
 };
+
+const TOPBAR_NO_DRAG_SELECTOR =
+  '[data-topbar-no-drag="true"], [data-window-controls-no-drag="true"]';
 
 const resolveVisibleTopbarOrder = (
   order: TopbarItemId[],
@@ -491,6 +494,24 @@ export const TopBar: React.FC<TopBarProps> = ({
   const topBarDragStyle = {
     "--wails-draggable": windowDragEnabled ? "drag" : "no-drag",
   } as React.CSSProperties;
+  const handleTopbarPointerDownCapture = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!windowDragEnabled || event.button !== 0 || !event.isPrimary) {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest(TOPBAR_NO_DRAG_SELECTOR)
+      ) {
+        return;
+      }
+
+      window.dispatchEvent(new Event(NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT));
+    },
+    [windowDragEnabled],
+  );
 
   const getTopbarItemClassName = (itemId: VisibleTopbarItemId) => {
     const baseClassName =
@@ -1112,6 +1133,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       transition={topbarReorderLayoutTransition}
       style={topBarItemNoDragStyle}
       data-topbar-item-id={itemId}
+      data-topbar-no-drag="true"
       data-topbar-dragging-item={
         draggedTopbarItemId === itemId ? "true" : undefined
       }
@@ -1130,6 +1152,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       className="relative z-50 flex h-14 min-w-0 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
       style={topBarDragStyle}
       data-testid="topbar"
+      onPointerDownCapture={handleTopbarPointerDownCapture}
     >
       <WindowControls
         visible={windowControlsVisible}
@@ -1137,7 +1160,11 @@ export const TopBar: React.FC<TopBarProps> = ({
         nativeEnabled={windowControlsNativeEnabled}
       />
 
-      <div className={topBarGroupClass} style={topBarItemNoDragStyle}>
+      <div
+        className={topBarGroupClass}
+        style={topBarItemNoDragStyle}
+        data-topbar-no-drag="true"
+      >
         <div
           ref={leftTopbarItemsRef}
           className="shell-cluster min-h-12 min-w-[3.5rem] px-1.5"
@@ -1152,6 +1179,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div
         className={`${topBarGroupClass} min-w-0`}
         style={topBarItemNoDragStyle}
+        data-topbar-no-drag="true"
       >
         <div className="shell-cluster min-h-12 min-w-[3.5rem] max-w-[min(58vw,470px)] overflow-x-auto px-1.5 pr-2">
           <ProjectIndicators
@@ -1174,7 +1202,11 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      <div className={topBarGroupClass} style={topBarItemNoDragStyle}>
+      <div
+        className={topBarGroupClass}
+        style={topBarItemNoDragStyle}
+        data-topbar-no-drag="true"
+      >
         <div
           ref={rightTopbarItemsRef}
           className="shell-cluster min-h-12 min-w-[3.5rem] max-w-[min(58vw,470px)] overflow-x-auto px-1.5"

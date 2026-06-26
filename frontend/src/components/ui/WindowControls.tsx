@@ -1,11 +1,17 @@
-import React, { useCallback, useLayoutEffect, useRef } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useProjectSwitchFrameMotion } from "../layout/ProjectSwitchTransition";
 import {
   PositionNativeWindowControls,
   RefreshNativeWindowControls,
   SetNativeWindowControlsVisible,
 } from "../../wails/app";
-import { WindowMinimise } from "../../wails/runtime";
+import { EventsOn, WindowMinimise } from "../../wails/runtime";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 
 interface WailsWindow {
@@ -36,6 +42,11 @@ const MAC_TOPBAR_HORIZONTAL_PADDING = 12;
 const MAC_BUTTON_LEFT = 12;
 const MAC_BUTTON_GAP = 10;
 const MAC_BUTTON_SIZE = 13;
+const MAC_NATIVE_TRANSIENT_BUTTON_SIZE = 14;
+const MAC_NATIVE_TRANSIENT_BUTTON_LEFT =
+  MAC_BUTTON_LEFT - (MAC_NATIVE_TRANSIENT_BUTTON_SIZE - MAC_BUTTON_SIZE) / 2;
+const MAC_NATIVE_TRANSIENT_BUTTON_GAP =
+  MAC_BUTTON_GAP - (MAC_NATIVE_TRANSIENT_BUTTON_SIZE - MAC_BUTTON_SIZE);
 const MAC_CONTROLS_BORDER_WIDTH = 1;
 const MAC_BUTTON_ROW_WIDTH = MAC_BUTTON_SIZE * 3 + MAC_BUTTON_GAP * 2;
 const MAC_BUBBLE_WIDTH =
@@ -44,6 +55,11 @@ const MAC_BUBBLE_X_OFFSET = -1;
 const MAC_BUBBLE_Y_OFFSET = 1;
 
 const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
+const NATIVE_WINDOW_CONTROLS_TRANSIENT_EVENT =
+  "shell:native-window-controls-transient";
+export const NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT =
+  "arlecchino:native-window-controls-drag-prime";
+const NATIVE_WINDOW_CONTROLS_GESTURE_SETTLE_DELAY_MS = 900;
 
 const macControlsOuterStyle = {
   "--wails-draggable": "no-drag",
@@ -88,6 +104,12 @@ const nativeButtonTargetsStyle: React.CSSProperties = {
   transform: "translateY(-50%)",
 };
 
+const nativeTransientButtonTargetsStyle: React.CSSProperties = {
+  ...nativeButtonTargetsStyle,
+  left: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_LEFT}px * var(--ui-inverse-scale))`,
+  gap: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_GAP}px * var(--ui-inverse-scale))`,
+};
+
 const nativeButtonTargetStyle: React.CSSProperties = {
   width: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
   height: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
@@ -109,6 +131,90 @@ const fallbackButtonStyle: React.CSSProperties = {
   width: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
   height: `calc(${MAC_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
 };
+
+const nativeTransientButtonStyle: React.CSSProperties = {
+  width: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
+  height: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
+  minWidth: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
+  maxWidth: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
+  minHeight: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
+  maxHeight: `calc(${MAC_NATIVE_TRANSIENT_BUTTON_SIZE}px * var(--ui-inverse-scale))`,
+  padding: 0,
+  border: "0",
+  boxShadow: "none",
+  boxSizing: "border-box",
+  appearance: "none",
+};
+
+interface NativeWindowControlsTransientPayload {
+  active?: boolean;
+}
+
+interface MacWindowControlButtonsProps {
+  onClose: () => void;
+  onMinimize: () => void;
+  onFullscreen: () => void;
+  nativeTransient?: boolean;
+}
+
+const MacWindowControlButtons: React.FC<MacWindowControlButtonsProps> = ({
+  onClose,
+  onMinimize,
+  onFullscreen,
+  nativeTransient = false,
+}) => (
+  <>
+    <button
+      type="button"
+      aria-label="Close"
+      title="Close"
+      className="group/window-control-button pointer-events-auto relative shrink-0 rounded-full border border-[#e0443e] bg-[#ff5f57] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.42),0_0.5px_1px_rgba(0,0,0,0.2)] outline-none transition-colors hover:bg-[#ff6b63] active:bg-[#e54840] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+      style={nativeTransient ? nativeTransientButtonStyle : fallbackButtonStyle}
+      onClick={onClose}
+    >
+      <span
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-100 group-hover/window-control-button:opacity-100"
+        aria-hidden="true"
+      >
+        <span className="absolute left-1/2 top-1/2 h-px w-[7px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-[rgba(105,17,14,0.76)]" />
+        <span className="absolute left-1/2 top-1/2 h-px w-[7px] -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full bg-[rgba(105,17,14,0.76)]" />
+      </span>
+    </button>
+    <button
+      type="button"
+      aria-label="Minimize"
+      title="Minimize"
+      className="group/window-control-button pointer-events-auto relative shrink-0 rounded-full border border-[#dea123] bg-[#febc2e] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.42),0_0.5px_1px_rgba(0,0,0,0.2)] outline-none transition-colors hover:bg-[#ffc847] active:bg-[#e5a823] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+      style={nativeTransient ? nativeTransientButtonStyle : fallbackButtonStyle}
+      onClick={onMinimize}
+    >
+      <span
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-100 group-hover/window-control-button:opacity-100"
+        aria-hidden="true"
+      >
+        <span className="absolute left-1/2 top-1/2 h-px w-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(126,80,3,0.78)]" />
+      </span>
+    </button>
+    <button
+      type="button"
+      aria-label="Full Screen"
+      title="Full Screen"
+      className="group/window-control-button pointer-events-auto relative shrink-0 rounded-full border border-[#20aa35] bg-[#28c840] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.42),0_0.5px_1px_rgba(0,0,0,0.2)] outline-none transition-colors hover:bg-[#32d74b] active:bg-[#22b838] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+      style={nativeTransient ? nativeTransientButtonStyle : fallbackButtonStyle}
+      onClick={onFullscreen}
+    >
+      <span
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-100 group-hover/window-control-button:opacity-100"
+        aria-hidden="true"
+      >
+        <span className="absolute left-[3px] top-[3px] h-px w-[5px] rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
+        <span className="absolute left-[3px] top-[3px] h-[5px] w-px rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
+        <span className="absolute bottom-[3px] right-[3px] h-px w-[5px] rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
+        <span className="absolute bottom-[3px] right-[3px] h-[5px] w-px rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
+      </span>
+    </button>
+  </>
+);
 
 const isMacPlatform = (): boolean => {
   if (typeof navigator === "undefined") {
@@ -225,9 +331,16 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   const minimizeRef = useRef<HTMLSpanElement>(null);
   const fullscreenRef = useRef<HTMLSpanElement>(null);
   const nativePositionInFlightRef = useRef(false);
+  const nativeGestureSettleTimerRef = useRef<number | null>(null);
   const controlsVisible = visible && backdropVisible;
   const nativeControlsEnabled = nativeEnabled ?? controlsVisible;
   const nativeBackdropHidden = !projectSwitchFrameMotion.active;
+  const [nativeControlsRuntimeTransient, setNativeControlsRuntimeTransient] =
+    useState(false);
+  const [nativeControlsGestureTransient, setNativeControlsGestureTransient] =
+    useState(false);
+  const nativeControlsTransient =
+    nativeControlsRuntimeTransient || nativeControlsGestureTransient;
 
   const handleClose = useCallback(() => {
     window.dispatchEvent(new Event(APP_CLOSE_REQUEST_EVENT));
@@ -236,6 +349,87 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   const handleFullscreen = useCallback(() => {
     void toggleWindowFullscreen();
   }, []);
+
+  useEffect(() => {
+    if (!useNativeMacControls) {
+      setNativeControlsRuntimeTransient(false);
+      setNativeControlsGestureTransient(false);
+      return;
+    }
+
+    return EventsOn<[NativeWindowControlsTransientPayload | undefined]>(
+      NATIVE_WINDOW_CONTROLS_TRANSIENT_EVENT,
+      (payload) => {
+        const active = Boolean(payload?.active);
+        setNativeControlsRuntimeTransient(active);
+        if (!active) {
+          setNativeControlsGestureTransient(false);
+        }
+      },
+    );
+  }, [useNativeMacControls]);
+
+  useEffect(() => {
+    if (!useNativeMacControls || !controlsVisible || !nativeControlsEnabled) {
+      setNativeControlsGestureTransient(false);
+      return;
+    }
+
+    const clearSettleTimer = () => {
+      if (nativeGestureSettleTimerRef.current === null) {
+        return;
+      }
+
+      window.clearTimeout(nativeGestureSettleTimerRef.current);
+      nativeGestureSettleTimerRef.current = null;
+    };
+
+    const releaseGestureTransient = () => {
+      clearSettleTimer();
+      setNativeControlsGestureTransient(false);
+      void SetNativeWindowControlsVisible(true)
+        .then((enabled) => {
+          if (!enabled) {
+            return undefined;
+          }
+
+          return RefreshNativeWindowControls();
+        })
+        .catch(() => undefined);
+    };
+
+    const scheduleGestureRelease = () => {
+      clearSettleTimer();
+      nativeGestureSettleTimerRef.current = window.setTimeout(
+        releaseGestureTransient,
+        NATIVE_WINDOW_CONTROLS_GESTURE_SETTLE_DELAY_MS,
+      );
+    };
+
+    const primeGestureTransient = () => {
+      setNativeControlsGestureTransient(true);
+      void SetNativeWindowControlsVisible(false).catch(() => undefined);
+      scheduleGestureRelease();
+    };
+
+    window.addEventListener(
+      NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT,
+      primeGestureTransient,
+    );
+    window.addEventListener("mouseup", releaseGestureTransient);
+    window.addEventListener("blur", releaseGestureTransient);
+
+    return () => {
+      window.removeEventListener(
+        NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT,
+        primeGestureTransient,
+      );
+      window.removeEventListener("mouseup", releaseGestureTransient);
+      window.removeEventListener("blur", releaseGestureTransient);
+      clearSettleTimer();
+      setNativeControlsGestureTransient(false);
+    };
+  }, [controlsVisible, nativeControlsEnabled, useNativeMacControls]);
 
   const positionNativeControls = useCallback(
     async ({
@@ -411,12 +605,13 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
         ref={placeholderRef}
         className="pointer-events-none shrink-0"
         style={macControlsOuterStyle}
-        aria-hidden="true"
+        aria-hidden={nativeControlsTransient ? undefined : true}
+        data-window-controls-no-drag="true"
         data-testid="window-controls-native-macos"
       >
         <div
           className="shell-cluster"
-          aria-hidden="true"
+          aria-hidden={nativeControlsTransient ? undefined : true}
           style={
             nativeBackdropHidden
               ? macControlsMeasurementBubbleStyle
@@ -441,6 +636,20 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
               data-native-window-control-target="fullscreen"
             />
           </div>
+          {nativeControlsTransient ? (
+            <div
+              className="pointer-events-auto"
+              style={nativeTransientButtonTargetsStyle}
+              data-testid="window-controls-native-transient-fallback"
+            >
+              <MacWindowControlButtons
+                onClose={handleClose}
+                onMinimize={handleMinimize}
+                onFullscreen={handleFullscreen}
+                nativeTransient
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -450,6 +659,7 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
     <div
       className="group/window-controls flex items-center"
       style={macControlsOuterStyle}
+      data-window-controls-no-drag="true"
       data-testid={
         renderMacControls
           ? "window-controls-react-macos"
@@ -461,55 +671,11 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
         style={fallbackBubbleStyle}
         data-testid="window-controls-react-bubble"
       >
-        <button
-          type="button"
-          aria-label="Close"
-          title="Close"
-          className="group/window-control-button relative shrink-0 rounded-full border border-[#e0443e] bg-[#ff5f57] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.42),0_0.5px_1px_rgba(0,0,0,0.2)] outline-none transition-colors hover:bg-[#ff6b63] active:bg-[#e54840] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-          style={fallbackButtonStyle}
-          onClick={handleClose}
-        >
-          <span
-            className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-100 group-hover/window-control-button:opacity-100"
-            aria-hidden="true"
-          >
-            <span className="absolute left-1/2 top-1/2 h-px w-[7px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full bg-[rgba(105,17,14,0.76)]" />
-            <span className="absolute left-1/2 top-1/2 h-px w-[7px] -translate-x-1/2 -translate-y-1/2 -rotate-45 rounded-full bg-[rgba(105,17,14,0.76)]" />
-          </span>
-        </button>
-        <button
-          type="button"
-          aria-label="Minimize"
-          title="Minimize"
-          className="group/window-control-button relative shrink-0 rounded-full border border-[#dea123] bg-[#febc2e] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.42),0_0.5px_1px_rgba(0,0,0,0.2)] outline-none transition-colors hover:bg-[#ffc847] active:bg-[#e5a823] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-          style={fallbackButtonStyle}
-          onClick={handleMinimize}
-        >
-          <span
-            className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-100 group-hover/window-control-button:opacity-100"
-            aria-hidden="true"
-          >
-            <span className="absolute left-1/2 top-1/2 h-px w-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(126,80,3,0.78)]" />
-          </span>
-        </button>
-        <button
-          type="button"
-          aria-label="Full Screen"
-          title="Full Screen"
-          className="group/window-control-button relative shrink-0 rounded-full border border-[#20aa35] bg-[#28c840] shadow-[inset_0_0.5px_0_rgba(255,255,255,0.42),0_0.5px_1px_rgba(0,0,0,0.2)] outline-none transition-colors hover:bg-[#32d74b] active:bg-[#22b838] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-          style={fallbackButtonStyle}
-          onClick={handleFullscreen}
-        >
-          <span
-            className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-100 group-hover/window-control-button:opacity-100"
-            aria-hidden="true"
-          >
-            <span className="absolute left-[3px] top-[3px] h-px w-[5px] rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
-            <span className="absolute left-[3px] top-[3px] h-[5px] w-px rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
-            <span className="absolute bottom-[3px] right-[3px] h-px w-[5px] rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
-            <span className="absolute bottom-[3px] right-[3px] h-[5px] w-px rotate-45 rounded-full bg-[rgba(13,83,26,0.8)]" />
-          </span>
-        </button>
+        <MacWindowControlButtons
+          onClose={handleClose}
+          onMinimize={handleMinimize}
+          onFullscreen={handleFullscreen}
+        />
       </div>
     </div>
   );

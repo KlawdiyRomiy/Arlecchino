@@ -12,6 +12,8 @@ package app
 
 static char arlecchinoOriginalButtonsSuperviewFrameKey;
 static char arlecchinoOriginalButtonsSuperviewKey;
+static char arlecchinoWindowButtonPlacementKey;
+static char arlecchinoWindowButtonMoveObserverKey;
 static char arlecchinoWindowButtonEventForwarderKey;
 
 static NSWindow* arlecchinoControlsWindow(void *preferredWindow) {
@@ -144,6 +146,158 @@ static NSButton* arlecchinoWindowButtonForEvent(NSWindow *window, NSEvent *event
     return nil;
 }
 
+static bool arlecchinoPositionNativeWindowControlsOnMainThread(
+    void *preferredWindow,
+    double closeX, double closeY,
+    double minimiseX, double minimiseY,
+    double maximiseX, double maximiseY,
+    bool visible
+);
+
+static void arlecchinoRememberWindowButtonPlacement(
+    NSWindow *window,
+    double closeX,
+    double closeY,
+    double minimiseY,
+    double maximiseY,
+    bool visible
+) {
+    if (window == nil) {
+        return;
+    }
+
+    NSDictionary *placement = @{
+        @"closeX": @(closeX),
+        @"closeY": @(closeY),
+        @"minimiseY": @(minimiseY),
+        @"maximiseY": @(maximiseY),
+        @"visible": @(visible),
+    };
+    objc_setAssociatedObject(
+        window,
+        &arlecchinoWindowButtonPlacementKey,
+        placement,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC
+    );
+}
+
+static void arlecchinoRepositionRememberedWindowButtons(NSWindow *window) {
+    NSDictionary *placement = objc_getAssociatedObject(window, &arlecchinoWindowButtonPlacementKey);
+    if (window == nil || ![placement isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
+
+    NSNumber *closeX = placement[@"closeX"];
+    NSNumber *closeY = placement[@"closeY"];
+    NSNumber *minimiseY = placement[@"minimiseY"];
+    NSNumber *maximiseY = placement[@"maximiseY"];
+    NSNumber *visible = placement[@"visible"];
+    if (
+        ![closeX isKindOfClass:[NSNumber class]] ||
+        ![closeY isKindOfClass:[NSNumber class]] ||
+        ![minimiseY isKindOfClass:[NSNumber class]] ||
+        ![maximiseY isKindOfClass:[NSNumber class]] ||
+        ![visible isKindOfClass:[NSNumber class]]
+    ) {
+        return;
+    }
+
+    arlecchinoPositionNativeWindowControlsOnMainThread(
+        window,
+        [closeX doubleValue],
+        [closeY doubleValue],
+        [closeX doubleValue],
+        [minimiseY doubleValue],
+        [closeX doubleValue],
+        [maximiseY doubleValue],
+        [visible boolValue]
+    );
+}
+
+static void arlecchinoScheduleRememberedWindowButtonsReposition(NSWindow *window) {
+    if (window == nil) {
+        return;
+    }
+
+    NSWindow *scheduledWindow = [window retain];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        arlecchinoRepositionRememberedWindowButtons(scheduledWindow);
+        [scheduledWindow release];
+    });
+}
+
+@interface ArlecchinoWindowButtonMoveObserver : NSObject {
+@private
+    NSWindow *_window;
+}
+- (instancetype)initWithWindow:(NSWindow*)window;
+- (void)windowWillMove:(NSNotification*)notification;
+- (void)windowDidMove:(NSNotification*)notification;
+- (void)windowWillResize:(NSNotification*)notification;
+- (void)windowDidResize:(NSNotification*)notification;
+@end
+
+@implementation ArlecchinoWindowButtonMoveObserver
+
+- (instancetype)initWithWindow:(NSWindow*)window {
+    self = [super init];
+    if (self != nil) {
+        _window = window;
+        NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+        [center addObserver:self selector:@selector(windowWillMove:) name:NSWindowWillMoveNotification object:window];
+        [center addObserver:self selector:@selector(windowDidMove:) name:NSWindowDidMoveNotification object:window];
+        [center addObserver:self selector:@selector(windowWillResize:) name:NSWindowWillStartLiveResizeNotification object:window];
+        [center addObserver:self selector:@selector(windowDidResize:) name:NSWindowDidResizeNotification object:window];
+        [center addObserver:self selector:@selector(windowDidResize:) name:NSWindowDidEndLiveResizeNotification object:window];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [super dealloc];
+}
+
+- (void)windowWillMove:(NSNotification*)notification {
+    arlecchinoRepositionRememberedWindowButtons(_window);
+    arlecchinoScheduleRememberedWindowButtonsReposition(_window);
+}
+
+- (void)windowDidMove:(NSNotification*)notification {
+    arlecchinoRepositionRememberedWindowButtons(_window);
+    arlecchinoScheduleRememberedWindowButtonsReposition(_window);
+}
+
+- (void)windowWillResize:(NSNotification*)notification {
+    arlecchinoRepositionRememberedWindowButtons(_window);
+    arlecchinoScheduleRememberedWindowButtonsReposition(_window);
+}
+
+- (void)windowDidResize:(NSNotification*)notification {
+    arlecchinoRepositionRememberedWindowButtons(_window);
+    arlecchinoScheduleRememberedWindowButtonsReposition(_window);
+}
+
+@end
+
+static void arlecchinoInstallWindowButtonMoveObserver(NSWindow *window) {
+    if (window == nil) {
+        return;
+    }
+    if (objc_getAssociatedObject(window, &arlecchinoWindowButtonMoveObserverKey) != nil) {
+        return;
+    }
+
+    ArlecchinoWindowButtonMoveObserver *observer = [[ArlecchinoWindowButtonMoveObserver alloc] initWithWindow:window];
+    objc_setAssociatedObject(
+        window,
+        &arlecchinoWindowButtonMoveObserverKey,
+        observer,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC
+    );
+    [observer release];
+}
+
 static void arlecchinoInstallWindowButtonEventForwarder(NSWindow *window) {
     if (window == nil) {
         return;
@@ -163,6 +317,8 @@ static void arlecchinoInstallWindowButtonEventForwarder(NSWindow *window) {
             case NSEventTypeLeftMouseDown: {
                 NSButton *button = arlecchinoWindowButtonForEvent(window, event);
                 if (button == nil) {
+                    arlecchinoRepositionRememberedWindowButtons(window);
+                    arlecchinoScheduleRememberedWindowButtonsReposition(window);
                     return event;
                 }
 
@@ -172,6 +328,8 @@ static void arlecchinoInstallWindowButtonEventForwarder(NSWindow *window) {
             }
             case NSEventTypeLeftMouseDragged: {
                 if (pressedButton == nil) {
+                    arlecchinoRepositionRememberedWindowButtons(window);
+                    arlecchinoScheduleRememberedWindowButtonsReposition(window);
                     return event;
                 }
 
@@ -182,6 +340,8 @@ static void arlecchinoInstallWindowButtonEventForwarder(NSWindow *window) {
                 NSButton *button = pressedButton;
                 pressedButton = nil;
                 if (button == nil) {
+                    arlecchinoRepositionRememberedWindowButtons(window);
+                    arlecchinoScheduleRememberedWindowButtonsReposition(window);
                     return event;
                 }
 
@@ -373,12 +533,14 @@ static bool arlecchinoPositionNativeWindowControlsOnMainThread(
     NSButton *closeButton = [window standardWindowButton:NSWindowCloseButton];
     NSButton *minimiseButton = [window standardWindowButton:NSWindowMiniaturizeButton];
     NSButton *maximiseButton = [window standardWindowButton:NSWindowZoomButton];
+    arlecchinoInstallWindowButtonMoveObserver(window);
     arlecchinoInstallWindowButtonEventForwarder(window);
 
     if (arlecchinoWindowIsFullscreen(window)) {
         return arlecchinoRestoreWindowButtonsSuperview(closeButton, minimiseButton, maximiseButton, visible);
     }
 
+    arlecchinoRememberWindowButtonPlacement(window, closeX, closeY, minimiseY, maximiseY, visible);
     return arlecchinoMoveWindowButtonsSuperview(
         closeButton,
         minimiseButton,
