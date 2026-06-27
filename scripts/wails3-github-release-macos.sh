@@ -68,8 +68,8 @@ Options:
   --notes-file <path>       Required release notes file for GitHub release and manifest.
   --dry-run-report <path>   Optional JSON plan output for dry-run.
 
-The app updater reads public GitHub release download URLs at runtime. This
-script uses gh CLI only for developer-side release publishing.
+The app updater stores GitHub access in macOS Keychain at runtime. This script
+uses gh CLI only for developer-side release publishing.
 EOF
 }
 
@@ -237,9 +237,11 @@ if [[ -z "$TITLE" ]]; then
   TITLE="$(format_release_title "$VERSION")"
 fi
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-RELEASE_DOWNLOAD_BASE="https://github.com/$OWNER/$REPO/releases/download/$TAG"
-ZIP_ASSET_DOWNLOAD_URL="$RELEASE_DOWNLOAD_BASE/arlecchino-macos-universal.zip"
-MANIFEST_SOURCE="$RELEASE_DOWNLOAD_BASE/$PRIMARY_MANIFEST_ASSET"
+MANIFEST_SOURCE="github-release://$OWNER/$REPO/latest/$PRIMARY_MANIFEST_ASSET"
+if [[ "$OWNER" != "KlawdiyRomiy" || "$REPO" != "Arlecchino" ]]; then
+  echo "ERROR: updater GitHub release provider currently allows only KlawdiyRomiy/Arlecchino." >&2
+  exit 1
+fi
 node "$ROOT_DIR/scripts/wails3-release-notes-policy.mjs" --validate "$NOTES_FILE"
 
 write_dry_run_report() {
@@ -300,6 +302,7 @@ const report = {
     "arlecchino-update-public-key.txt",
     "checksums.sha256",
     "release-evidence.json",
+    "github-release-evidence.json",
   ],
   publishGuards: [
     "tracked tree is clean",
@@ -309,7 +312,7 @@ const report = {
     "macOS updater ZIP must have permission-stable code identity before manifest upload",
     "gh release create uses --verify-tag",
   ],
-  tokenPolicy: "runtime updater uses public release URLs; publishing uses gh CLI only",
+  tokenPolicy: "runtime token is stored in macOS Keychain; publishing uses gh CLI only",
 };
 if (out) {
   fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -420,9 +423,9 @@ if [[ "$CREATE_DMG" == "1" && -f "$DMG_PATH" ]]; then
 fi
 gh release upload "$TAG" "${UPLOADS[@]}" --repo "$OWNER/$REPO" --clobber
 
-ZIP_ASSET_NAME="$(gh api "repos/$OWNER/$REPO/releases/tags/$TAG" --jq '.assets[] | select(.name == "arlecchino-macos-universal.zip") | .name')"
-if [[ "$ZIP_ASSET_NAME" != "arlecchino-macos-universal.zip" ]]; then
-  echo "ERROR: uploaded ZIP asset was not found." >&2
+ZIP_ASSET_API_URL="$(gh api "repos/$OWNER/$REPO/releases/tags/$TAG" --jq '.assets[] | select(.name == "arlecchino-macos-universal.zip") | .url')"
+if [[ -z "$ZIP_ASSET_API_URL" ]]; then
+  echo "ERROR: uploaded ZIP asset API URL was not found." >&2
   exit 1
 fi
 
@@ -440,7 +443,7 @@ generate_update_manifest() {
     --arch universal \
     --kind zip \
     --public-key-out "$PUBLIC_KEY_PATH" \
-    --url "$ZIP_ASSET_DOWNLOAD_URL" \
+    --url "$ZIP_ASSET_API_URL" \
     --release-notes-file "$NOTES_FILE" > "$log_path"
 }
 
@@ -466,3 +469,81 @@ if [[ "$LEGACY_MANIFEST_ENABLED" == "1" ]]; then
   MANIFEST_UPLOADS+=("$LEGACY_MANIFEST_PATH")
 fi
 gh release upload "$TAG" "${MANIFEST_UPLOADS[@]}" "$PUBLIC_KEY_PATH" "$CHECKSUMS_PATH" "$RELEASE_REPORT" --repo "$OWNER/$REPO" --clobber
+PRIMARY_MANIFEST_ASSET_API_URL="$(gh api "repos/$OWNER/$REPO/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$PRIMARY_MANIFEST_ASSET\") | .url")"
+if [[ -z "$PRIMARY_MANIFEST_ASSET_API_URL" ]]; then
+  echo "ERROR: uploaded primary manifest asset API URL was not found." >&2
+  exit 1
+fi
+LEGACY_MANIFEST_ASSET_API_URL=""
+if [[ "$LEGACY_MANIFEST_ENABLED" == "1" ]]; then
+  LEGACY_MANIFEST_ASSET_API_URL="$(gh api "repos/$OWNER/$REPO/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$LEGACY_MANIFEST_ASSET\") | .url")"
+  if [[ -z "$LEGACY_MANIFEST_ASSET_API_URL" ]]; then
+    echo "ERROR: uploaded legacy manifest asset API URL was not found." >&2
+    exit 1
+  fi
+fi
+PRIVATE_REPORT="$RELEASE_DIR/github-release-evidence.json"
+node - "$PRIVATE_REPORT" "$OWNER" "$REPO" "$TAG" "$TITLE" "$VERSION" "$BUILD_NUMBER" "$CHANNEL" "$MANIFEST_SOURCE" "$ZIP_ASSET_API_URL" "$PRIMARY_MANIFEST_ASSET_API_URL" "$LEGACY_MANIFEST_ENABLED" "$LEGACY_MANIFEST_ASSET_API_URL" "$RELEASE_REPORT" "$PRIMARY_MANIFEST_ASSET" "$LEGACY_MANIFEST_ASSET" "$LEGACY_MANIFEST_CHANNEL" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const [
+  out,
+  owner,
+  repo,
+  tag,
+  title,
+  version,
+  build,
+  channel,
+  manifestSource,
+  zipAssetApiUrl,
+  primaryManifestAssetApiUrl,
+  legacyManifestEnabled,
+  legacyManifestAssetApiUrl,
+  releaseEvidence,
+  primaryManifestAsset,
+  legacyManifestAsset,
+  legacyManifestChannel,
+] = process.argv.slice(2);
+const report = {
+  generatedAt: new Date().toISOString(),
+  mode: "publish",
+  repository: `${owner}/${repo}`,
+  tag,
+  title,
+  version,
+  build,
+  channel,
+  manifestSource,
+  privateProvider: {
+    kind: "github-release",
+    zipAssetApiUrl,
+    primaryManifestAssetApiUrl,
+    legacyManifestAssetApiUrl: legacyManifestEnabled === "1" ? legacyManifestAssetApiUrl : "",
+    auth: "runtime Keychain token, never embedded in artifact",
+  },
+  primaryManifest: {
+    asset: primaryManifestAsset,
+    channel,
+  },
+  legacyManifest: legacyManifestEnabled === "1" ? {
+    asset: legacyManifestAsset,
+    channel: legacyManifestChannel,
+    purpose: "compatibility for already-published alpha updater clients",
+    sameZipAssetApiUrl: zipAssetApiUrl,
+  } : null,
+  artifacts: {
+    zip: "arlecchino-macos-universal.zip",
+    dmg: "arlecchino-macos-universal.dmg",
+    primaryManifest: primaryManifestAsset,
+    legacyManifest: legacyManifestEnabled === "1" ? legacyManifestAsset : "",
+    publicKey: "arlecchino-update-public-key.txt",
+    checksums: "checksums.sha256",
+    releaseEvidence,
+  },
+};
+fs.mkdirSync(path.dirname(out), { recursive: true });
+fs.writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+NODE
+gh release upload "$TAG" "$PRIVATE_REPORT" --repo "$OWNER/$REPO" --clobber
