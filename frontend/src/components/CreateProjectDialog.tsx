@@ -130,7 +130,7 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
       {open && (
         <MotionShellDialogFrame
           key="create-project-dialog"
-          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm"
+          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5"
           panelClassName="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
           panelTestId="create-project-dialog"
         >

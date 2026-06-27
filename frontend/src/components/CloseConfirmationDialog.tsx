@@ -87,7 +87,7 @@ export const CloseConfirmationDialog: React.FC<
       {request ? (
         <MotionShellDialogFrame
           key={`close-confirmation-${request.kind}`}
-          overlayClassName="pointer-events-auto fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          overlayClassName="pointer-events-auto fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/45 px-4"
           panelClassName="pointer-events-auto max-h-[calc(100vh-32px)] w-[42em] max-w-[calc(100vw-32px)] overflow-y-auto rounded-[1.5em] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-[2em] text-[calc(16px*var(--ui-scale,1))] shadow-2xl"
           panelTestId="close-confirmation-dialog"
         >

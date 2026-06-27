@@ -92,7 +92,7 @@ export const ExecutionDialog: React.FC<ExecutionDialogProps> = ({
             <>
               <Dialog.Overlay forceMount asChild>
                 <motion.div
-                  className="fixed inset-0 z-[110] bg-black/45 backdrop-blur-sm"
+                  className="fixed inset-0 z-[110] bg-black/45"
                   initial={reduceDialogMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}

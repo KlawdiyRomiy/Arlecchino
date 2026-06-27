@@ -61,7 +61,7 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
       {createEntryDialog ? (
         <MotionShellDialogFrame
           key={`create-entry-${createEntryDialog.type}`}
-          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm"
+          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5"
           panelClassName="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
           panelTestId={`project-entry-${createEntryDialog.type}-dialog`}
         >
@@ -135,7 +135,7 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
       {renameEntryDialog ? (
         <MotionShellDialogFrame
           key="rename-entry"
-          overlayClassName="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          overlayClassName="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4"
           panelClassName="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl"
           panelTestId="project-entry-rename-dialog"
         >
@@ -185,7 +185,7 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
       {trashEntryDialog ? (
         <MotionShellDialogFrame
           key="trash-entry"
-          overlayClassName="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          overlayClassName="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4"
           panelClassName="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl"
           panelTestId="project-entry-trash-dialog"
         >

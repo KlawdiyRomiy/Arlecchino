@@ -414,7 +414,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
             <React.Fragment key="dependency-policy-modal-motion">
               <Dialog.Overlay forceMount asChild>
                 <motion.div
-                  className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[10px]"
+                  className="fixed inset-0 z-[110] bg-black/55"
                   initial={reduceDialogMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}

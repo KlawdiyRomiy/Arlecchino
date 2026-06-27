@@ -164,7 +164,7 @@ export const CloneRepositoryDialog: React.FC<CloneRepositoryDialogProps> = ({
       {open && (
         <MotionShellDialogFrame
           key="clone-repository-dialog"
-          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm"
+          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5"
           panelClassName="shell-overlay-card w-[min(620px,100%)] p-8 outline-none"
           panelTestId="clone-repository-dialog"
         >

@@ -182,7 +182,7 @@ export const MCPApprovalDialog: React.FC = () => {
             <React.Fragment key={activeRequest.requestId}>
               <Dialog.Overlay forceMount asChild>
                 <motion.div
-                  className="fixed inset-0 z-[120] bg-black/55 backdrop-blur-[8px]"
+                  className="fixed inset-0 z-[120] bg-black/55"
                   initial={reduceDialogMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}

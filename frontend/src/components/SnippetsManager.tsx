@@ -152,7 +152,6 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         justifyContent: "center",
         zIndex: 50,
         backgroundColor: isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.3)",
-        backdropFilter: "blur(8px)",
       }}
       onClick={onClose}
     >

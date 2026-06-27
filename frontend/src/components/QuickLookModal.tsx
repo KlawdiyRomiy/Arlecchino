@@ -254,7 +254,6 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
             ...interactiveSurfaceOverlayStyle,
             background:
               "color-mix(in srgb, var(--surface-shell) 50%, rgba(0, 0, 0, 0.5))",
-            backdropFilter: "blur(10px) saturate(0.94)",
           }}
           role="presentation"
           tabIndex={-1}
