@@ -93,6 +93,10 @@ export interface HeldPanelShortcut {
 export type PanelConfigs = Record<PanelId, PanelConfig>;
 export type RememberedSnappedPositions = Record<PanelId, PanelPosition>;
 
+export interface PanelStateApplyOptions {
+  preferredPanelId?: PanelId | null;
+}
+
 export interface HydratedPanelLayoutState {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;

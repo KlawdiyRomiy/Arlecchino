@@ -28,6 +28,7 @@ var nativeMenuAcceleratorActions = map[string]bool{
 	"problems.toggle":         true,
 	"problems.fullscreen":     true,
 	"panel.closeFullscreen":   true,
+	"panel.reopenClosed":      true,
 	"window.toggleFullscreen": true,
 }
 
@@ -49,6 +50,7 @@ var defaultApplicationMenuShortcuts = map[string][]string{
 	"problems.toggle":         {"cmd+i"},
 	"problems.fullscreen":     {"cmd+shift+i"},
 	"panel.closeFullscreen":   {"option+w"},
+	"panel.reopenClosed":      {"option+z"},
 	"window.toggleFullscreen": {"fn+f"},
 }
 
@@ -164,6 +166,7 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	viewMenu.Add("Actual Size").SetAccelerator("cmd+0").OnClick(a.emitViewZoom("reset"))
 	viewMenu.AddSeparator()
 	a.addMenuAction(viewMenu, "Close Fullscreen Panel", "panel.closeFullscreen", shortcuts)
+	a.addMenuAction(viewMenu, "Reopen Closed Panel", "panel.reopenClosed", shortcuts)
 	a.addMenuAction(viewMenu, "Enter Full Screen", "window.toggleFullscreen", shortcuts)
 
 	aiMenu := appMenu.AddSubmenu("AI")

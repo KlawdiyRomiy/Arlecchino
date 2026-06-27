@@ -49,6 +49,7 @@ import type {
   PanelFullscreenSnapshot,
   PanelId,
   PanelOpenRequest,
+  PanelStateApplyOptions,
   PanelVisibility,
   RememberedSnappedPositions,
 } from "./MainLayout.types";
@@ -111,8 +112,14 @@ interface MainLayoutPanelEventsDispatcher {
 }
 
 interface UseMainLayoutPanelEventsOptions {
-  applyPanelConfigsState: (panelConfigs: PanelConfigs) => void;
-  applyPanelsState: (panels: PanelVisibility) => void;
+  applyPanelConfigsState: (
+    panelConfigs: PanelConfigs,
+    options?: PanelStateApplyOptions,
+  ) => void;
+  applyPanelsState: (
+    panels: PanelVisibility,
+    options?: PanelStateApplyOptions,
+  ) => void;
   applyRememberedSnappedPositionsState: (
     rememberedPositions: RememberedSnappedPositions,
   ) => void;
@@ -170,6 +177,7 @@ interface UseMainLayoutPanelEventsOptions {
   openTUIAssistPanel: UnknownEventHandler;
   panelConfigsRef: MutableRefObject<PanelConfigs>;
   panelsRef: MutableRefObject<PanelVisibility>;
+  reopenLastClosedSurface: () => boolean;
   aiChatPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   rememberedSnappedPositionsRef: MutableRefObject<RememberedSnappedPositions>;
@@ -239,6 +247,7 @@ export const useMainLayoutPanelEvents = ({
   openTUIAssistPanel,
   panelConfigsRef,
   panelsRef,
+  reopenLastClosedSurface,
   aiChatPreFullscreenRef,
   problemsPreFullscreenRef,
   rememberedSnappedPositionsRef,
@@ -305,11 +314,11 @@ export const useMainLayoutPanelEvents = ({
           .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
       }
 
-      applyPanelConfigsState(nextPanelConfigs);
+      applyPanelConfigsState(nextPanelConfigs, { preferredPanelId: panelId });
       if (!wasVisible && nextPanels[panelId] && nextConfig.mode === "snapped") {
         startSnappedSlotEnter(nextConfig.position);
       }
-      applyPanelsState(nextPanels);
+      applyPanelsState(nextPanels, { preferredPanelId: panelId });
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       if (nextPanels[panelId]) {
         setActivePanelId(panelId);
@@ -800,6 +809,9 @@ export const useMainLayoutPanelEvents = ({
         case "panel.closeFullscreen":
           closeActiveFullscreenPanelFromShortcut();
           return;
+        case "panel.reopenClosed":
+          reopenLastClosedSurface();
+          return;
         case "browser.preview":
           toggleCanonicalBrowserPreviewRef.current();
           return;
@@ -819,6 +831,7 @@ export const useMainLayoutPanelEvents = ({
       openCommandDispatcher,
       openSettings,
       problemsPreFullscreenRef,
+      reopenLastClosedSurface,
       shouldSuppressApplicationMenuAction,
       terminalPreFullscreenRef,
       toggleCanonicalBrowserPreviewRef,

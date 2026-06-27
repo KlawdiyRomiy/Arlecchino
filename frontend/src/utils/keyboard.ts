@@ -110,6 +110,7 @@ export type ShortcutActionId =
   | "problems.toggle"
   | "problems.fullscreen"
   | "panel.closeFullscreen"
+  | "panel.reopenClosed"
   | "terminal.toggle"
   | "terminal.fullscreen"
   | "ai.toggle"
@@ -206,6 +207,14 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     group: "Panels",
     scope: "global",
     defaultShortcuts: ["option+w"],
+  },
+  {
+    id: "panel.reopenClosed",
+    label: "Reopen closed panel",
+    description: "Reopen the last closed panel or preview surface.",
+    group: "Panels",
+    scope: "global",
+    defaultShortcuts: ["option+z"],
   },
   {
     id: "ai.toggle",
@@ -794,6 +803,8 @@ export const shortcuts = {
     matchesActionShortcut(e, "problems.fullscreen"),
   closeFullscreenPanel: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "panel.closeFullscreen"),
+  reopenClosedPanel: (e: KeyboardEvent) =>
+    matchesActionShortcut(e, "panel.reopenClosed"),
   copyProjectPath: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "project.copyPath"),
   openBrowserPreview: (e: KeyboardEvent) =>

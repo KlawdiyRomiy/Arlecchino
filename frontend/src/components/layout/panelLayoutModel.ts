@@ -7,6 +7,7 @@ import type {
   PanelConfigs,
   PanelId,
   PanelOpenRequest,
+  PanelStateApplyOptions,
   PanelVisibility,
   RememberedSnappedPositions,
   ZenPinnedPanels,
@@ -362,6 +363,45 @@ export const resolveSmartSnappedPosition = (
   return null;
 };
 
+export const normalizeVisibleSnappedPanelOwnership = (
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+  options: PanelStateApplyOptions = {},
+): PanelVisibility => {
+  const panelIds = Object.keys(panelConfigs) as PanelId[];
+  const preferredPanelId = options.preferredPanelId;
+  const orderedPanelIds =
+    preferredPanelId && panelIds.includes(preferredPanelId)
+      ? [
+          preferredPanelId,
+          ...panelIds.filter((panelId) => panelId !== preferredPanelId),
+        ]
+      : panelIds;
+  const occupiedPositions = new Set<PanelPosition>();
+  let nextPanels: PanelVisibility | null = null;
+
+  orderedPanelIds.forEach((panelId) => {
+    const visiblePanels = nextPanels ?? panels;
+    if (!visiblePanels[panelId]) {
+      return;
+    }
+
+    const config = panelConfigs[panelId];
+    if (config.mode !== "snapped") {
+      return;
+    }
+
+    if (!occupiedPositions.has(config.position)) {
+      occupiedPositions.add(config.position);
+      return;
+    }
+
+    nextPanels = { ...visiblePanels, [panelId]: false };
+  });
+
+  return nextPanels ?? panels;
+};
+
 const buildCenteredFloatingOpenRequest = (
   panelId: PanelId,
   request: PanelOpenRequest,
@@ -481,7 +521,18 @@ export const computeNextPanelOpenState = (
   }
 
   nextPanels[panelId] = true;
-  return { nextPanels, nextConfig, nextRememberedSnappedPositions };
+  return {
+    nextPanels: normalizeVisibleSnappedPanelOwnership(
+      nextPanels,
+      {
+        ...panelConfigs,
+        [panelId]: nextConfig,
+      },
+      { preferredPanelId: panelId },
+    ),
+    nextConfig,
+    nextRememberedSnappedPositions,
+  };
 };
 
 export const cloneDefaultPanelConfigs = (): PanelConfigs => ({

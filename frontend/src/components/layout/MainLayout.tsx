@@ -150,6 +150,7 @@ import type {
   PanelFullscreenSnapshot,
   PanelId,
   PanelOpenRequest,
+  PanelStateApplyOptions,
   PanelVisibility,
   ProjectEntryDeletedEvent,
   ProjectEntryRenamedEvent,
@@ -169,6 +170,7 @@ import {
   normalizeHydratedPanelLayoutState,
   normalizePanelSizeForPosition,
   normalizePreviewWindowSizeForPosition,
+  normalizeVisibleSnappedPanelOwnership,
   resolveSmartSnappedPosition,
   resolvePanelId,
   uniquePanelPositions,
@@ -245,6 +247,67 @@ type FullscreenPanelId =
   | "problems"
   | "code"
   | "markdownPreview";
+
+const CLOSED_PANEL_SURFACE_STACK_LIMIT = 24;
+
+type ClosedPanelSurfaceEntry =
+  | {
+      kind: "panel";
+      panelId: PanelId;
+      config: PanelConfig;
+      rememberedPosition: PanelPosition;
+    }
+  | {
+      kind: "preview";
+      windowState: PreviewWindow;
+    };
+
+const clonePanelConfigValue = (config: PanelConfig): PanelConfig => ({
+  ...config,
+  size: { ...config.size },
+});
+
+const clonePreviewWindowValue = (
+  windowState: PreviewWindow,
+): PreviewWindow => ({
+  ...windowState,
+  payload: { ...windowState.payload },
+});
+
+const closedSurfacesMatch = (
+  left: ClosedPanelSurfaceEntry,
+  right: ClosedPanelSurfaceEntry,
+): boolean => {
+  if (left.kind !== right.kind) {
+    return false;
+  }
+
+  if (left.kind === "panel" && right.kind === "panel") {
+    return left.panelId === right.panelId;
+  }
+
+  if (left.kind === "preview" && right.kind === "preview") {
+    return left.windowState.id === right.windowState.id;
+  }
+
+  return false;
+};
+
+const buildPreviewWindowOpenInput = (
+  windowState: PreviewWindow,
+): OpenPreviewWindowInput => ({
+  id: windowState.id,
+  surface: windowState.surface,
+  title: windowState.title,
+  payload: { ...windowState.payload },
+  mode: windowState.mode,
+  position: windowState.position,
+  width: windowState.width,
+  height: windowState.height,
+  x: windowState.x,
+  y: windowState.y,
+  pinned: windowState.isPinned,
+});
 
 interface FullscreenPanelTransitionTarget {
   panelId: PanelId;
@@ -849,6 +912,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     actionId: ShortcutActionId;
     lastAt: number;
   } | null>(null);
+  const closedPanelSurfacesRef = React.useRef<ClosedPanelSurfaceEntry[]>([]);
   const openCanonicalBrowserPreviewRef = React.useRef<() => boolean>(
     () => false,
   );
@@ -1011,8 +1075,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const applyPanelsState = useCallback(
-    (nextPanels: PanelVisibility) => {
+    (
+      requestedPanels: PanelVisibility,
+      options: PanelStateApplyOptions = {},
+    ) => {
       const previousPanels = panelsRef.current;
+      const requestedVisiblePanelId =
+        options.preferredPanelId ??
+        (Object.keys(requestedPanels) as PanelId[]).find(
+          (panelId) => requestedPanels[panelId] && !previousPanels[panelId],
+        ) ??
+        null;
+      const nextPanels = normalizeVisibleSnappedPanelOwnership(
+        requestedPanels,
+        panelConfigsRef.current,
+        { preferredPanelId: requestedVisiblePanelId },
+      );
       const currentActivePanelId = activePanelIdRef.current;
       const newlyVisiblePanelId = (Object.keys(nextPanels) as PanelId[]).find(
         (panelId) => nextPanels[panelId] && !previousPanels[panelId],
@@ -1056,11 +1134,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const applyPanelConfigsState = useCallback(
-    (nextPanelConfigs: PanelConfigs) => {
+    (nextPanelConfigs: PanelConfigs, options: PanelStateApplyOptions = {}) => {
       panelConfigsRef.current = nextPanelConfigs;
       setPanelConfigs(nextPanelConfigs);
+
+      const normalizedPanels = normalizeVisibleSnappedPanelOwnership(
+        panelsRef.current,
+        nextPanelConfigs,
+        { preferredPanelId: options.preferredPanelId ?? null },
+      );
+      if (normalizedPanels !== panelsRef.current) {
+        applyPanelsState(normalizedPanels, options);
+      }
     },
-    [],
+    [applyPanelsState],
   );
 
   const applyRememberedSnappedPositionsState = useCallback(
@@ -1069,6 +1156,51 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setRememberedSnappedPositions(nextRememberedSnappedPositions);
     },
     [],
+  );
+
+  const rememberClosedPanelSurface = useCallback(
+    (entry: ClosedPanelSurfaceEntry) => {
+      const withoutDuplicate = closedPanelSurfacesRef.current.filter(
+        (candidate) => !closedSurfacesMatch(candidate, entry),
+      );
+      closedPanelSurfacesRef.current = [...withoutDuplicate, entry].slice(
+        -CLOSED_PANEL_SURFACE_STACK_LIMIT,
+      );
+    },
+    [],
+  );
+
+  const rememberClosedPanel = useCallback(
+    (
+      panelId: PanelId,
+      config: PanelConfig = panelConfigsRef.current[panelId],
+    ) => {
+      if (!panelsRef.current[panelId]) {
+        return;
+      }
+
+      rememberClosedPanelSurface({
+        kind: "panel",
+        panelId,
+        config: clonePanelConfigValue(config),
+        rememberedPosition: rememberedSnappedPositionsRef.current[panelId],
+      });
+    },
+    [rememberClosedPanelSurface],
+  );
+
+  const rememberClosedPreviewWindow = useCallback(
+    (windowState: PreviewWindow | undefined) => {
+      if (!windowState) {
+        return;
+      }
+
+      rememberClosedPanelSurface({
+        kind: "preview",
+        windowState: clonePreviewWindowValue(windowState),
+      });
+    },
+    [rememberClosedPanelSurface],
   );
 
   useEffect(() => {
@@ -1566,7 +1698,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           },
         };
 
-        applyPanelConfigsState(nextPanelConfigs);
+        applyPanelConfigsState(nextPanelConfigs, {
+          preferredPanelId: panelId,
+        });
         if (restoredMode === "snapped") {
           applyRememberedSnappedPositionsState({
             ...rememberedSnappedPositionsRef.current,
@@ -1582,19 +1716,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         y: currentConfig.y,
         size: { ...currentConfig.size },
       };
-      applyPanelConfigsState({
-        ...panelConfigsRef.current,
-        [panelId]: {
-          ...panelConfigsRef.current[panelId],
-          mode: "floating",
-          x: 0,
-          y: 0,
-          size: {
-            width: panelWorkspaceSize.width,
-            height: panelWorkspaceSize.height,
+      applyPanelConfigsState(
+        {
+          ...panelConfigsRef.current,
+          [panelId]: {
+            ...panelConfigsRef.current[panelId],
+            mode: "floating",
+            x: 0,
+            y: 0,
+            size: {
+              width: panelWorkspaceSize.width,
+              height: panelWorkspaceSize.height,
+            },
           },
         },
-      });
+        { preferredPanelId: panelId },
+      );
     },
     [
       applyPanelConfigsState,
@@ -1747,24 +1884,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       );
       const restoredMode = saved?.mode ?? "snapped";
       const restoredPosition = saved ? latestConfig.position : fallbackPosition;
+      const restoredConfig: PanelConfig = {
+        ...latestConfig,
+        mode: restoredMode,
+        position: restoredPosition,
+        x: saved?.x ?? 0,
+        y: saved?.y ?? 0,
+        size: saved?.size ?? fallbackSize,
+      };
 
-      applyPanelConfigsState({
-        ...panelConfigsRef.current,
-        [panelId]: {
-          ...latestConfig,
-          mode: restoredMode,
-          position: restoredPosition,
-          x: saved?.x ?? 0,
-          y: saved?.y ?? 0,
-          size: saved?.size ?? fallbackSize,
+      applyPanelConfigsState(
+        {
+          ...panelConfigsRef.current,
+          [panelId]: restoredConfig,
         },
-      });
+        { preferredPanelId: panelId },
+      );
       if (restoredMode === "snapped") {
         applyRememberedSnappedPositionsState({
           ...rememberedSnappedPositionsRef.current,
           [panelId]: restoredPosition,
         });
       }
+      rememberClosedPanel(panelId, restoredConfig);
       applyPanelsState({ ...panelsRef.current, [panelId]: false });
     });
     return true;
@@ -1833,20 +1975,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         size: { ...currentConfig.size },
       };
 
-      applyPanelsState({ ...panelsRef.current, [panelId]: true });
-      applyPanelConfigsState({
-        ...panelConfigsRef.current,
-        [panelId]: {
-          ...currentConfig,
-          mode: "floating",
-          x: 0,
-          y: 0,
-          size: {
-            width: panelWorkspaceSize.width,
-            height: panelWorkspaceSize.height,
+      applyPanelsState(
+        { ...panelsRef.current, [panelId]: true },
+        { preferredPanelId: panelId },
+      );
+      applyPanelConfigsState(
+        {
+          ...panelConfigsRef.current,
+          [panelId]: {
+            ...currentConfig,
+            mode: "floating",
+            x: 0,
+            y: 0,
+            size: {
+              width: panelWorkspaceSize.width,
+              height: panelWorkspaceSize.height,
+            },
           },
         },
-      });
+        { preferredPanelId: panelId },
+      );
     });
   }
 
@@ -2641,11 +2789,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           rememberedSnappedPositionsRef.current,
         );
 
-      applyPanelsState(nextPanels);
-      applyPanelConfigsState({
-        ...panelConfigsRef.current,
-        [panelId]: nextConfig,
-      });
+      applyPanelsState(nextPanels, { preferredPanelId: panelId });
+      applyPanelConfigsState(
+        {
+          ...panelConfigsRef.current,
+          [panelId]: nextConfig,
+        },
+        { preferredPanelId: panelId },
+      );
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       state.setTUIAssist({ active: false, panel: null, anchor: position });
       if (state.tuiModeActive) {
@@ -3129,6 +3280,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         setEditorStatusFile(null, null, null);
       }
       const currentConfig = panelConfigsRef.current[panelId];
+      rememberClosedPanel(panelId, currentConfig);
       const restoredSlotPresence =
         panelsRef.current[panelId] &&
         currentConfig.mode === "snapped" &&
@@ -3163,6 +3315,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [
       reducePanelMotion,
       restoreSnappedSlotPresence,
+      rememberClosedPanel,
       schedulePanelCloseAfterPresenceRestore,
       setEditorStatusFile,
       startPanelExitMotion,
@@ -3203,11 +3356,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         rememberedSnappedPositionsRef.current,
       );
 
-    applyPanelsState(nextPanels);
-    applyPanelConfigsState({
-      ...panelConfigsRef.current,
-      markdownPreview: nextConfig,
-    });
+    applyPanelsState(nextPanels, { preferredPanelId: "markdownPreview" });
+    applyPanelConfigsState(
+      {
+        ...panelConfigsRef.current,
+        markdownPreview: nextConfig,
+      },
+      { preferredPanelId: "markdownPreview" },
+    );
     applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
     pinZenPanelIfShortcutOpened("markdownPreview");
   }, [
@@ -3229,6 +3385,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         targetWindow?.mode === "snapped" &&
         restoreSnappedSlotPresence(targetWindow.position);
 
+      rememberClosedPreviewWindow(targetWindow);
       startPreviewWindowExitMotion(targetWindow);
       if (restoredSlotPresence && !reducePanelMotion) {
         schedulePanelCloseAfterPresenceRestore(() =>
@@ -3242,11 +3399,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [
       closePreviewWindow,
       reducePanelMotion,
+      rememberClosedPreviewWindow,
       restoreSnappedSlotPresence,
       schedulePanelCloseAfterPresenceRestore,
       startPreviewWindowExitMotion,
     ],
   );
+
+  const closeAllPreviewWindowsWithRestore = useCallback(() => {
+    usePreviewWindowStore
+      .getState()
+      .windows.forEach((windowState) =>
+        rememberClosedPreviewWindow(windowState),
+      );
+    closeAllPreviewWindows();
+  }, [closeAllPreviewWindows, rememberClosedPreviewWindow]);
 
   const findVisibleSnappedPanelAtPosition = useCallback(
     (
@@ -3479,7 +3646,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           };
         }
 
-        applyPanelConfigsState(nextPanelConfigs);
+        applyPanelConfigsState(nextPanelConfigs, {
+          preferredPanelId: targetPanel,
+        });
         applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       } else if (targetPreviewWindow) {
         relocatingPreviewWindows.push(targetPreviewWindow.id);
@@ -3723,8 +3892,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         previewWindows: relocatingPreviewWindows,
         positions: uniquePanelPositions(settlingPositions),
       });
-      applyPanelsState(nextPanels);
-      applyPanelConfigsState(nextPanelConfigs);
+      applyPanelsState(nextPanels, { preferredPanelId: panelId });
+      applyPanelConfigsState(nextPanelConfigs, { preferredPanelId: panelId });
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       markActivePanel(panelId);
       return true;
@@ -3865,8 +4034,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           ...panelConfigsRef.current,
           [panelId]: nextConfig,
         };
-        applyPanelConfigsState(nextConfigs);
-        applyPanelsState({ ...panelsRef.current, [panelId]: true });
+        applyPanelConfigsState(nextConfigs, { preferredPanelId: panelId });
+        applyPanelsState(
+          { ...panelsRef.current, [panelId]: true },
+          { preferredPanelId: panelId },
+        );
         if (nextConfig.mode === "snapped") {
           applyRememberedSnappedPositionsState({
             ...rememberedSnappedPositionsRef.current,
@@ -4239,53 +4411,58 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [applyPanelPromotion, applyPreviewPromotion],
   );
 
-  const resolveBrowserPreviewOpenInput = (
-    input: OpenPreviewWindowInput,
-  ): OpenPreviewWindowInput => {
-    if (input.surface !== "browser") {
-      return input;
-    }
+  const resolveBrowserPreviewOpenInput = useCallback(
+    (input: OpenPreviewWindowInput): OpenPreviewWindowInput => {
+      const existingWindow = input.id
+        ? usePreviewWindowStore
+            .getState()
+            .windows.find((windowState) => windowState.id === input.id)
+        : null;
+      if (existingWindow && input.position === undefined) {
+        return input;
+      }
 
-    const existingWindow = input.id
-      ? usePreviewWindowStore
-          .getState()
-          .windows.find((windowState) => windowState.id === input.id)
-      : null;
-    if (existingWindow && input.position === undefined) {
-      return input;
-    }
+      const requestedPosition: PanelPosition =
+        input.position ?? (input.side === "left" ? "left" : "right");
+      const requestedSnapped =
+        input.mode === "snapped" ||
+        input.position !== undefined ||
+        input.side !== undefined;
 
-    const requestedPosition: PanelPosition =
-      input.position ?? (input.side === "left" ? "left" : "right");
-    const requestedSnapped =
-      input.mode === "snapped" ||
-      input.position !== undefined ||
-      input.side !== undefined;
+      if (!requestedSnapped) {
+        return input;
+      }
 
-    if (!requestedSnapped) {
-      return input;
-    }
+      const excludedWindowIds = existingWindow
+        ? [existingWindow.id]
+        : undefined;
+      const resolvedPosition = !isSnappedPositionOccupied(requestedPosition, {
+        excludeWindowIds: excludedWindowIds,
+      })
+        ? requestedPosition
+        : findAvailablePanelPosition({
+            preferred: requestedPosition,
+            excludeWindowIds: excludedWindowIds,
+          });
 
-    const resolvedPosition = !isSnappedPositionOccupied(requestedPosition)
-      ? requestedPosition
-      : findAvailablePanelPosition({ preferred: requestedPosition });
+      if (!resolvedPosition) {
+        return {
+          ...input,
+          mode: "floating",
+          position: requestedPosition,
+          side: undefined,
+        };
+      }
 
-    if (!resolvedPosition) {
       return {
         ...input,
-        mode: "floating",
-        position: requestedPosition,
+        mode: "snapped",
+        position: resolvedPosition,
         side: undefined,
       };
-    }
-
-    return {
-      ...input,
-      mode: "snapped",
-      position: resolvedPosition,
-      side: undefined,
-    };
-  };
+    },
+    [findAvailablePanelPosition, isSnappedPositionOccupied],
+  );
 
   const {
     beginHeldPanelShortcut,
@@ -4541,7 +4718,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         code: nextConfig,
       };
 
-      applyPanelConfigsState(nextPanelConfigs);
+      applyPanelConfigsState(nextPanelConfigs, { preferredPanelId: "code" });
       if (nextPanels.code) {
         beginPanelMotionWindow();
       }
@@ -4552,7 +4729,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ) {
         startSnappedSlotEnter(nextConfig.position);
       }
-      applyPanelsState(nextPanels);
+      applyPanelsState(nextPanels, { preferredPanelId: "code" });
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       if (nextPanels.code) {
         markActivePanel("code");
@@ -5291,13 +5468,128 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     ],
   );
 
+  const reopenLastClosedSurface = useCallback((): boolean => {
+    let entry = closedPanelSurfacesRef.current.pop();
+
+    while (entry) {
+      if (entry.kind === "panel") {
+        const panelId = entry.panelId;
+        if (panelsRef.current[panelId]) {
+          entry = closedPanelSurfacesRef.current.pop();
+          continue;
+        }
+
+        const rememberedForRestore =
+          entry.config.mode === "snapped"
+            ? {
+                ...rememberedSnappedPositionsRef.current,
+                [panelId]: entry.config.position,
+              }
+            : {
+                ...rememberedSnappedPositionsRef.current,
+                [panelId]: entry.rememberedPosition,
+              };
+        const request: PanelOpenRequest =
+          entry.config.mode === "snapped"
+            ? { panel: panelId, mode: "snapped" }
+            : {
+                panel: panelId,
+                mode: "floating",
+                x: entry.config.x,
+                y: entry.config.y,
+                width: entry.config.size.width,
+                height: entry.config.size.height,
+              };
+        const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
+          computeNextPanelOpenState(
+            panelId,
+            request,
+            panelsRef.current,
+            panelConfigsRef.current,
+            rememberedForRestore,
+          );
+        const restoredConfig =
+          entry.config.mode === "snapped" && nextConfig.mode === "snapped"
+            ? {
+                ...nextConfig,
+                size: normalizePanelSizeForPosition(
+                  nextConfig.position,
+                  entry.config.size,
+                ),
+              }
+            : nextConfig;
+
+        applyPanelConfigsState(
+          {
+            ...panelConfigsRef.current,
+            [panelId]: restoredConfig,
+          },
+          { preferredPanelId: panelId },
+        );
+        if (nextPanels[panelId] && restoredConfig.mode === "snapped") {
+          startSnappedSlotEnter(restoredConfig.position);
+        }
+        applyPanelsState(nextPanels, { preferredPanelId: panelId });
+        applyRememberedSnappedPositionsState(
+          restoredConfig.mode === "snapped"
+            ? {
+                ...nextRememberedSnappedPositions,
+                [panelId]: restoredConfig.position,
+              }
+            : nextRememberedSnappedPositions,
+        );
+        pinZenPanelIfShortcutOpened(panelId);
+        markActivePanel(panelId);
+        return true;
+      }
+
+      const closedWindowState = entry.windowState;
+      if (
+        usePreviewWindowStore
+          .getState()
+          .windows.some(
+            (windowState) => windowState.id === closedWindowState.id,
+          )
+      ) {
+        entry = closedPanelSurfacesRef.current.pop();
+        continue;
+      }
+
+      const openResult = openPreviewWindow(
+        resolveBrowserPreviewOpenInput(
+          buildPreviewWindowOpenInput(closedWindowState),
+        ),
+      );
+      if (openResult.opened) {
+        if (openResult.id) {
+          focusPreviewWindow(openResult.id);
+        }
+        return true;
+      }
+
+      entry = closedPanelSurfacesRef.current.pop();
+    }
+
+    return false;
+  }, [
+    applyPanelConfigsState,
+    applyPanelsState,
+    applyRememberedSnappedPositionsState,
+    focusPreviewWindow,
+    markActivePanel,
+    openPreviewWindow,
+    pinZenPanelIfShortcutOpened,
+    resolveBrowserPreviewOpenInput,
+    startSnappedSlotEnter,
+  ]);
+
   const { applyPanelOpenState, closeTerminalPanel, toggleNamedPanel } =
     useMainLayoutPanelEvents({
       applyPanelConfigsState,
       applyPanelsState,
       applyRememberedSnappedPositionsState,
       closeActiveFullscreenPanelFromShortcut,
-      closeAllPreviewWindows,
+      closeAllPreviewWindows: closeAllPreviewWindowsWithRestore,
       closeExecutionDialog,
       closePanelWithMotion,
       closeSettings,
@@ -5338,6 +5630,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       openTUIAssistPanel,
       panelConfigsRef,
       panelsRef,
+      reopenLastClosedSurface,
       problemsPreFullscreenRef,
       rememberedSnappedPositionsRef,
       setPanelConfigs,
@@ -5354,7 +5647,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const openProblemsInAvailableSlot = useCallback(() => {
     const position = findAvailablePanelPosition({
-      preferred: "bottom",
+      preferred: rememberedSnappedPositionsRef.current.problems,
       exclude: ["problems"],
     });
 
@@ -5450,6 +5743,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     onSwitchProject,
     openSettings,
     redoProjectEntryOperation,
+    reopenLastClosedSurface,
     panelsRef,
     pressedShortcutCodesRef,
     problemsPreFullscreenRef,

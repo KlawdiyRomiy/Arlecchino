@@ -162,6 +162,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   onSwitchProject?: (projectId: string, direction?: number) => void;
   openSettings: () => void;
   redoProjectEntryOperation: () => Promise<boolean>;
+  reopenLastClosedSurface: () => boolean;
   activePanelIdRef: MutableRefObject<PanelId | null>;
   panelsRef: MutableRefObject<PanelVisibility>;
   pressedShortcutCodesRef: MutableRefObject<Set<string>>;
@@ -212,6 +213,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   onSwitchProject,
   openSettings,
   redoProjectEntryOperation,
+  reopenLastClosedSurface,
   activePanelIdRef,
   panelsRef,
   pressedShortcutCodesRef,
@@ -349,6 +351,18 @@ export const useMainLayoutKeyboardShortcuts = ({
           e.stopPropagation();
           return;
         }
+      }
+
+      if (shortcuts.reopenClosedPanel(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        markShortcutActionHandled("panel.reopenClosed");
+        e.preventDefault();
+        e.stopPropagation();
+        reopenLastClosedSurface();
+        return;
       }
 
       if (

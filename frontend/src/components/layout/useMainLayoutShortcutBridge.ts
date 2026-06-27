@@ -12,6 +12,7 @@ import type {
   HeldPanelShortcutTarget,
   PanelConfigs,
   PanelId,
+  PanelStateApplyOptions,
   PanelVisibility,
   RememberedSnappedPositions,
 } from "./MainLayout.types";
@@ -44,8 +45,14 @@ interface PanelDropSettlingRequest {
 }
 
 interface UseMainLayoutShortcutBridgeOptions {
-  applyPanelConfigsState: (panelConfigs: PanelConfigs) => void;
-  applyPanelsState: (panels: PanelVisibility) => void;
+  applyPanelConfigsState: (
+    panelConfigs: PanelConfigs,
+    options?: PanelStateApplyOptions,
+  ) => void;
+  applyPanelsState: (
+    panels: PanelVisibility,
+    options?: PanelStateApplyOptions,
+  ) => void;
   applyRememberedSnappedPositionsState: (
     rememberedPositions: RememberedSnappedPositions,
   ) => void;
@@ -254,8 +261,8 @@ export const useMainLayoutShortcutBridge = ({
       previewWindows: relocatingPreviewWindows,
       positions: uniquePanelPositions(settlingPositions),
     });
-    applyPanelsState(nextPanels);
-    applyPanelConfigsState(nextPanelConfigs);
+    applyPanelsState(nextPanels, { preferredPanelId: panelId });
+    applyPanelConfigsState(nextPanelConfigs, { preferredPanelId: panelId });
     applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
     return true;
   };
