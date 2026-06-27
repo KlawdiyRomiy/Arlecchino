@@ -79,6 +79,14 @@ interface FileDialogBridge {
   SelectOpenTarget?: (title: string) => Promise<unknown> | unknown;
 }
 
+interface SystemFontsBridge {
+  ListSystemFontFamilies?: () => Promise<unknown> | unknown;
+}
+
+export interface SystemFontFamilyInfo {
+  family: string;
+}
+
 export interface AIProviderRuntimeModel {
   id: string;
   displayName: string;
@@ -376,6 +384,12 @@ const selectOpenTargetMethodNames = [
   "arlecchino.App.SelectOpenTarget",
 ] as const;
 
+const listSystemFontFamiliesMethodNames = [
+  "arlecchino/internal/app.App.ListSystemFontFamilies",
+  "main.App.ListSystemFontFamilies",
+  "arlecchino.App.ListSystemFontFamilies",
+] as const;
+
 const aiListProviderRuntimesMethodNames = [
   "arlecchino/internal/app.App.AIListProviderRuntimes",
   "main.App.AIListProviderRuntimes",
@@ -487,6 +501,9 @@ let getProjectEntryUndoStateMethodName:
 let selectOpenTargetMethodName:
   | (typeof selectOpenTargetMethodNames)[number]
   | undefined;
+let listSystemFontFamiliesMethodName:
+  | (typeof listSystemFontFamiliesMethodNames)[number]
+  | undefined;
 let aiListProviderRuntimesMethodName:
   | (typeof aiListProviderRuntimesMethodNames)[number]
   | undefined;
@@ -585,6 +602,18 @@ const getFileDialogBridge = (): FileDialogBridge | undefined => {
   return (
     window as unknown as {
       go?: { main?: { App?: FileDialogBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getSystemFontsBridge = (): SystemFontsBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: SystemFontsBridge } };
     }
   ).go?.main?.App;
 };
@@ -1000,6 +1029,63 @@ export async function SelectOpenTarget(
 
   throw new Error("Open target dialog bridge is unavailable.");
 }
+
+const normalizeSystemFontFamilies = (payload: unknown): string[] => {
+  if (!Array.isArray(payload)) {
+    throw new Error("Invalid system font families payload.");
+  }
+
+  const seen = new Set<string>();
+  const families: string[] = [];
+
+  for (const entry of payload) {
+    const family =
+      typeof entry === "string"
+        ? entry
+        : entry &&
+            typeof entry === "object" &&
+            typeof (entry as SystemFontFamilyInfo).family === "string"
+          ? (entry as SystemFontFamilyInfo).family
+          : "";
+    const normalized = family.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    families.push(normalized);
+  }
+
+  return families.sort((left, right) => left.localeCompare(right));
+};
+
+export async function ListSystemFontFamilies(): Promise<string[]> {
+  const bridge = getSystemFontsBridge();
+  if (bridge?.ListSystemFontFamilies) {
+    try {
+      return normalizeSystemFontFamilies(
+        await Promise.resolve(bridge.ListSystemFontFamilies()),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const payload = await callRuntimeBridgeMethod<unknown>(
+    listSystemFontFamiliesMethodName,
+    (methodName) => {
+      listSystemFontFamiliesMethodName =
+        methodName as (typeof listSystemFontFamiliesMethodNames)[number];
+    },
+    listSystemFontFamiliesMethodNames,
+  );
+  return normalizeSystemFontFamilies(payload);
+}
+
 export async function OpenProjectWindow(path: string): Promise<boolean> {
   const bridge = getProjectWindowBridge();
   if (bridge?.OpenProjectWindow) {

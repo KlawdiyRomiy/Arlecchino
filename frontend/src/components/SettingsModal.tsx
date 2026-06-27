@@ -49,6 +49,7 @@ import {
   GetAutocompleteLanguageCapabilities,
   InstallLSPServer,
   IsLSPInstalling,
+  ListSystemFontFamilies,
   type AIPredictionMode,
   type AIPredictionSettings,
   type AIPredictionStatus,
@@ -314,44 +315,12 @@ const editorFontFamilyPresets: Array<{
   value: string;
 }> = [
   {
-    label: "Fira Code",
+    label: "Arlecchino Fira Code",
     value: DEFAULT_EDITOR_FONT_FAMILY,
   },
   {
-    label: "JetBrains Mono",
-    value: '"JetBrains Mono", "SF Mono", Menlo, monospace',
-  },
-  {
-    label: "Berkeley Mono",
-    value: '"Berkeley Mono", "SF Mono", Menlo, monospace',
-  },
-  {
-    label: "Commit Mono",
-    value: '"Commit Mono", "SF Mono", Menlo, monospace',
-  },
-  {
-    label: "Cascadia Code",
-    value: '"Cascadia Code", "SF Mono", Menlo, monospace',
-  },
-  {
-    label: "Iosevka",
-    value: 'Iosevka, "SF Mono", Menlo, monospace',
-  },
-  {
-    label: "SF Mono",
-    value: '"SF Mono", Menlo, Monaco, monospace',
-  },
-  {
-    label: "Menlo",
-    value: "Menlo, Monaco, monospace",
-  },
-  {
-    label: "Monaco",
-    value: "Monaco, Menlo, monospace",
-  },
-  {
-    label: "Consolas",
-    value: 'Consolas, "SF Mono", Menlo, monospace',
+    label: "System monospace",
+    value: 'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace',
   },
 ];
 
@@ -360,49 +329,14 @@ const uiFontFamilyPresets: Array<{
   value: string;
 }> = [
   {
-    label: "Inter",
+    label: "System UI",
     value: DEFAULT_UI_FONT_FAMILY,
   },
   {
-    label: "SF Pro",
-    value: '"SF Pro", -apple-system, BlinkMacSystemFont, sans-serif',
+    label: "Arlecchino Nunito",
+    value:
+      '"Arlecchino Nunito", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
   },
-  {
-    label: "Helvetica Neue",
-    value: '"Helvetica Neue", Arial, sans-serif',
-  },
-  {
-    label: "Avenir Next",
-    value: '"Avenir Next", Avenir, sans-serif',
-  },
-  {
-    label: "IBM Plex Sans",
-    value: '"IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif',
-  },
-  {
-    label: "Roboto",
-    value: "Roboto, -apple-system, BlinkMacSystemFont, sans-serif",
-  },
-];
-
-const commonSystemFontFamilies = [
-  "SF Pro",
-  "SF Pro Display",
-  "SF Pro Text",
-  "Avenir Next",
-  "Helvetica Neue",
-  "Arial",
-  "Inter",
-  "Roboto",
-  "IBM Plex Sans",
-  "JetBrains Mono",
-  "SF Mono",
-  "Menlo",
-  "Monaco",
-  "Fira Code",
-  "Cascadia Code",
-  "Iosevka",
-  "Consolas",
 ];
 
 type FontOption = {
@@ -410,6 +344,8 @@ type FontOption = {
   value: string;
   sampleFamily: string;
 };
+
+type FontDiscoveryState = "loading" | "available" | "unavailable";
 
 type LocalFontAccessNavigator = Navigator & {
   queryLocalFonts?: () => Promise<
@@ -1406,6 +1342,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     message: string;
   } | null>(null);
   const [localFontFamilies, setLocalFontFamilies] = useState<string[]>([]);
+  const [fontDiscoveryState, setFontDiscoveryState] =
+    useState<FontDiscoveryState>("loading");
   const [shortcutGroup, setShortcutGroup] = useState<"All" | ShortcutGroup>(
     "All",
   );
@@ -1520,14 +1458,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       ? `configured via ${privateUpdateAuthStatus.source ?? "private access"}`
       : (privateUpdateAuthStatus.reason ?? "not configured")
     : "not loaded";
-  const activeEditorFontFamilyPreset =
-    editorFontFamilyPresets.find(
-      (preset) => preset.value === editorFontFamily,
-    ) ?? null;
   const localFontOptions = useMemo<FontOption[]>(
     () =>
       uniqueFontOptions(
-        [...localFontFamilies, ...commonSystemFontFamilies]
+        localFontFamilies
           .filter((family) => family.trim().length > 0)
           .sort((a, b) => a.localeCompare(b))
           .map((family) => ({
@@ -1574,9 +1508,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const activeUiFontFamilyLabel = activeUiFontFamilyOption?.label ?? "Custom";
   const activeEditorFontFamilyOption =
     editorFontOptions.find((option) => option.value === editorFontFamily) ??
-    activeEditorFontFamilyPreset;
+    null;
   const activeEditorFontFamilyLabel =
     activeEditorFontFamilyOption?.label ?? "Custom";
+  const localFontStatusLabel =
+    fontDiscoveryState === "loading"
+      ? "Scanning installed system fonts."
+      : localFontFamilies.length > 0
+        ? `${localFontFamilies.length} installed fonts detected.`
+        : "Installed system fonts could not be detected.";
   const settingsSearchSuggestions = useMemo(() => {
     const query = normalizeSettingsSearchText(settingsQuery);
     return settingsSearchEntries
@@ -2004,33 +1944,58 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
 
   useEffect(() => {
-    const queryLocalFonts = (navigator as LocalFontAccessNavigator)
-      .queryLocalFonts;
-    if (!queryLocalFonts) {
-      return;
-    }
-
     let cancelled = false;
-    void queryLocalFonts
-      .call(navigator)
-      .then((fonts) => {
+    const loadFontsFromBrowser = async (): Promise<string[]> => {
+      const queryLocalFonts = (navigator as LocalFontAccessNavigator)
+        .queryLocalFonts;
+      if (!queryLocalFonts) {
+        return [];
+      }
+
+      const fonts = await queryLocalFonts.call(navigator);
+      return Array.from(
+        new Set(
+          fonts
+            .map((font) => (font.family || font.fullName || "").trim())
+            .filter(Boolean),
+        ),
+      );
+    };
+
+    const loadLocalFonts = async () => {
+      setFontDiscoveryState("loading");
+
+      try {
+        const families = await ListSystemFontFamilies();
         if (cancelled) {
           return;
         }
-        const families = Array.from(
-          new Set(
-            fonts
-              .map((font) => (font.family || font.fullName || "").trim())
-              .filter(Boolean),
-          ),
-        );
-        setLocalFontFamilies(families);
-      })
-      .catch(() => {
+        if (families.length > 0) {
+          setLocalFontFamilies(families);
+          setFontDiscoveryState("available");
+          return;
+        }
+      } catch {
+        // Fall through to the browser Local Font Access API when available.
+      }
+
+      try {
+        const families = await loadFontsFromBrowser();
+        if (!cancelled) {
+          setLocalFontFamilies(families);
+          setFontDiscoveryState(
+            families.length > 0 ? "available" : "unavailable",
+          );
+        }
+      } catch {
         if (!cancelled) {
           setLocalFontFamilies([]);
+          setFontDiscoveryState("unavailable");
         }
-      });
+      }
+    };
+
+    void loadLocalFonts();
 
     return () => {
       cancelled = true;
@@ -4215,8 +4180,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                                 <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                   <div className="text-[12px] text-[var(--text-muted)]">
-                                    Local fonts appear when the system grants
-                                    font access.
+                                    {localFontStatusLabel}
                                   </div>
                                   <button
                                     type="button"
@@ -4654,7 +4618,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                           className="min-w-0 truncate font-mono"
                                           style={{
                                             fontFamily:
-                                              activeEditorFontFamilyOption?.value ??
+                                              activeEditorFontFamilyOption?.sampleFamily ??
                                               editorFontFamily,
                                           }}
                                         >
@@ -4710,8 +4674,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   </DropdownMenu.Root>
                                   <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="text-[12px] text-[var(--text-muted)]">
-                                      Local fonts appear when the system grants
-                                      font access.
+                                      {localFontStatusLabel}
                                     </div>
                                     <button
                                       type="button"

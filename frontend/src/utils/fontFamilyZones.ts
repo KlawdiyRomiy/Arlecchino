@@ -1,13 +1,13 @@
 const MAX_FONT_FAMILY_LENGTH = 240;
 
 export const DEFAULT_UI_FONT_FAMILY =
-  '"Inter", "SF Pro", -apple-system, BlinkMacSystemFont, sans-serif';
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 export const DEFAULT_EDITOR_FONT_FAMILY =
-  '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace';
+  '"Arlecchino Fira Code", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace';
 
 export const DEFAULT_TERMINAL_FONT_FAMILY =
-  "'JetBrains Mono', 'SF Mono', Menlo, Monaco, 'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', Consolas, monospace";
+  'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace';
 
 const normalizeFontFamily = (fontFamily: string, fallback: string): string => {
   const normalized = fontFamily.replace(/\s+/g, " ").trim();
