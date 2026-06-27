@@ -57,10 +57,12 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
       }
     };
 
+    window.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleKeyDown, true);
 
     return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKeyDown, true);
     };

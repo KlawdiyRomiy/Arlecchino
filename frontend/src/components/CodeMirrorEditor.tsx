@@ -20,6 +20,7 @@ import {
 import {
   EditorState,
   Extension,
+  Prec,
   StateEffect,
   StateField,
 } from "@codemirror/state";
@@ -819,6 +820,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     items: [],
     mode: "goto",
   });
+  const closeDefinitionMenu = useCallback(() => {
+    setDefinitionMenu({
+      isOpen: false,
+      x: 0,
+      y: 0,
+      items: [],
+      mode: "goto",
+    });
+  }, []);
   const [contextMenuAvailability, setContextMenuAvailability] = useState({
     definition: false,
     selection: false,
@@ -1379,6 +1389,24 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         },
       ]),
     [formatDocument],
+  );
+
+  const definitionChooserKeymap = useMemo<Extension>(
+    () =>
+      definitionMenu.isOpen
+        ? Prec.highest(
+            keymap.of([
+              {
+                key: "Escape",
+                run: () => {
+                  closeDefinitionMenu();
+                  return true;
+                },
+              },
+            ]),
+          )
+        : [],
+    [closeDefinitionMenu, definitionMenu.isOpen],
   );
 
   const getEditorView = useCallback(
@@ -2090,6 +2118,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       closeBrackets(),
       highlightLineField,
       codeMirrorFileSearchExtension,
+      definitionChooserKeymap,
       keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
       saveKeymap,
       formatKeymap,
@@ -2128,6 +2157,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [
     adaptiveCompartmentExtension,
     aiInlinePatchExtension,
+    definitionChooserKeymap,
     editorFeatureBudget.layoutStableLineWrapping,
     formatKeymap,
     languageExtension,
@@ -2216,23 +2246,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             } else if (onOpenFile) {
               onOpenFile(path, line);
             }
-            setDefinitionMenu({
-              isOpen: false,
-              x: 0,
-              y: 0,
-              items: [],
-              mode: "goto",
-            });
+            closeDefinitionMenu();
           }}
-          onClose={() => {
-            setDefinitionMenu({
-              isOpen: false,
-              x: 0,
-              y: 0,
-              items: [],
-              mode: "goto",
-            });
-          }}
+          onClose={closeDefinitionMenu}
         />
       </div>
     </ContextActionMenu>
