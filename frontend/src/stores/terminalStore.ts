@@ -402,7 +402,25 @@ const escapeShellSingleQuotes = (value: string) => value.replace(/'/g, `'\\''`);
 const getProjectLayoutMapKey = (projectPath: string | null | undefined) =>
   normalizeProjectPathKey(projectPath) || "__global__";
 
+const hashTerminalProjectPath = (projectPath: string): string => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < projectPath.length; index += 1) {
+    hash ^= projectPath.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+};
+
 const getLayoutStorageKey = (projectPath: string | null | undefined) => {
+  const normalizedProjectPath = normalizeProjectPathKey(projectPath);
+  return normalizedProjectPath
+    ? `${TERMINAL_LAYOUT_STORAGE_KEY}:project:${hashTerminalProjectPath(
+        normalizedProjectPath,
+      )}`
+    : TERMINAL_LAYOUT_STORAGE_KEY;
+};
+
+const getLegacyLayoutStorageKey = (projectPath: string | null | undefined) => {
   const normalizedProjectPath = normalizeProjectPathKey(projectPath);
   return normalizedProjectPath
     ? `${TERMINAL_LAYOUT_STORAGE_KEY}:${normalizedProjectPath}`
@@ -433,7 +451,16 @@ const loadLayoutSnapshot = (
   }
 
   try {
-    const raw = window.localStorage.getItem(getLayoutStorageKey(projectPath));
+    const storageKey = getLayoutStorageKey(projectPath);
+    const legacyStorageKey = getLegacyLayoutStorageKey(projectPath);
+    let raw = window.localStorage.getItem(storageKey);
+    if (!raw && legacyStorageKey !== storageKey) {
+      raw = window.localStorage.getItem(legacyStorageKey);
+      if (raw) {
+        window.localStorage.setItem(storageKey, raw);
+        window.localStorage.removeItem(legacyStorageKey);
+      }
+    }
     if (!raw) {
       return {
         panes: fallbackPanes,
@@ -506,10 +533,12 @@ const persistLayoutSnapshot = (
   };
 
   try {
-    window.localStorage.setItem(
-      getLayoutStorageKey(projectPath),
-      JSON.stringify(snapshot),
-    );
+    const storageKey = getLayoutStorageKey(projectPath);
+    const legacyStorageKey = getLegacyLayoutStorageKey(projectPath);
+    window.localStorage.setItem(storageKey, JSON.stringify(snapshot));
+    if (legacyStorageKey !== storageKey) {
+      window.localStorage.removeItem(legacyStorageKey);
+    }
   } catch (error) {
     console.error(
       "[TerminalStore] Failed to persist terminal layout snapshot",

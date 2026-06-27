@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Search, FileText, X } from "lucide-react";
 import * as AppFunctions from "../wails/app";
 import { useTheme } from "../hooks/useTheme";
+import { projectPathStorageKey } from "../stores/browserPreviewStore";
 import { colors, getThemeColors, radius, transitions } from "../styles/colors";
 
 interface SearchResult {
@@ -20,6 +21,16 @@ interface GlobalSearchProps {
   onFileOpen: (path: string, line: number) => void;
 }
 
+const LEGACY_GLOBAL_SEARCH_STORAGE_KEY = "last-global-search";
+const GLOBAL_SEARCH_STORAGE_PREFIX = "global-search-options";
+
+interface CachedGlobalSearchState {
+  caseSensitive?: boolean;
+  useRegex?: boolean;
+  wholeWord?: boolean;
+  fileTypeFilter?: string;
+}
+
 export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   isOpen,
   onClose,
@@ -36,26 +47,36 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const searchRequestSeqRef = useRef(0);
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
+  const searchStorageKey = useMemo(() => {
+    const key = projectPathStorageKey(projectPath);
+    return key ? `${GLOBAL_SEARCH_STORAGE_PREFIX}:${key}` : "";
+  }, [projectPath]);
 
-  // Load cached search on mount
+  // Load project-scoped search options when opened.
   useEffect(() => {
     if (isOpen) {
-      const cached = localStorage.getItem("last-global-search");
+      localStorage.removeItem(LEGACY_GLOBAL_SEARCH_STORAGE_KEY);
+      setQuery("");
+      setResults([]);
+      const cached = searchStorageKey
+        ? localStorage.getItem(searchStorageKey)
+        : null;
       if (cached) {
         try {
-          const data = JSON.parse(cached);
-          setQuery(data.query || "");
-          setResults(data.results || []);
+          const data = JSON.parse(cached) as CachedGlobalSearchState;
           setCaseSensitive(data.caseSensitive || false);
           setUseRegex(data.useRegex || false);
+          setWholeWord(data.wholeWord ?? true);
+          setFileTypeFilter(data.fileTypeFilter || "all");
         } catch (e) {
           console.error("Failed to load cached search", e);
         }
       }
     }
-  }, [isOpen]);
+  }, [isOpen, searchStorageKey]);
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -65,18 +86,22 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
 
   useEffect(() => {
     if (!query.trim()) {
+      searchRequestSeqRef.current += 1;
       setResults([]);
+      setIsSearching(false);
       return;
     }
 
+    const requestId = searchRequestSeqRef.current + 1;
+    searchRequestSeqRef.current = requestId;
     const searchTimeout = setTimeout(() => {
-      performSearch();
+      void performSearch(requestId);
     }, 300);
 
     return () => clearTimeout(searchTimeout);
-  }, [query, caseSensitive, useRegex, wholeWord]);
+  }, [query, caseSensitive, useRegex, wholeWord, projectPath]);
 
-  const performSearch = async () => {
+  const performSearch = async (requestId: number) => {
     if (!query.trim()) return;
 
     setIsSearching(true);
@@ -87,13 +112,21 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
         useRegex,
         wholeWord,
       );
+      if (searchRequestSeqRef.current !== requestId) {
+        return;
+      }
       setResults(searchResults || []);
       setSelectedIndex(0);
     } catch (error) {
+      if (searchRequestSeqRef.current !== requestId) {
+        return;
+      }
       console.error("Search failed:", error);
       setResults([]);
     } finally {
-      setIsSearching(false);
+      if (searchRequestSeqRef.current === requestId) {
+        setIsSearching(false);
+      }
     }
   };
 
@@ -103,19 +136,16 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   };
 
   const handleClose = () => {
-    if (query.trim()) {
+    if (searchStorageKey) {
       localStorage.setItem(
-        "last-global-search",
+        searchStorageKey,
         JSON.stringify({
-          query,
-          results,
           caseSensitive,
           useRegex,
           wholeWord,
+          fileTypeFilter,
         }),
       );
-    } else {
-      localStorage.removeItem("last-global-search");
     }
     onClose();
   };
@@ -174,7 +204,6 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
         paddingTop: "5rem",
         zIndex: 50,
         backgroundColor: isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.3)",
-        backdropFilter: "blur(8px)",
       }}
       onClick={handleClose}
     >

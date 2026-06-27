@@ -569,7 +569,15 @@ func (a *App) projectEntrySession(ctx context.Context) (*ProjectRuntimeSession, 
 }
 
 func resolveProjectEntryRoot(session *ProjectRuntimeSession) (projectEntryResolvedRoot, error) {
+	if session == nil {
+		return projectEntryResolvedRoot{}, fmt.Errorf("no project opened")
+	}
 	rawRoot := strings.TrimSpace(session.currentProjectPath())
+	return resolveProjectEntryRootFromPath(rawRoot)
+}
+
+func resolveProjectEntryRootFromPath(rawRoot string) (projectEntryResolvedRoot, error) {
+	rawRoot = strings.TrimSpace(rawRoot)
 	if rawRoot == "" {
 		return projectEntryResolvedRoot{}, fmt.Errorf("no project opened")
 	}

@@ -92,12 +92,13 @@ func (a *App) aiStrictProjectSessionID(ctx context.Context) (string, error) {
 }
 
 func (a *App) AIGetStatus(ctx context.Context) (ai.AIStatus, error) {
-	if session := a.projectSessionForContext(ctx); session != nil && session.currentProjectPath() != "" {
-		if err := a.ensureAIProjectSessionOpen(session); err != nil {
-			a.logWarning(fmt.Sprintf("[AI] failed to sync project context: %v", err))
+	service := a.ensureAIService()
+	if session := a.projectSessionForContext(ctx); session != nil {
+		if projectPath := session.currentProjectPath(); projectPath != "" && service.HasProjectRoot(session.ID, projectPath) {
+			return service.Status(session.ID), nil
 		}
 	}
-	return a.ensureAIService().Status(a.aiProjectSessionID(ctx)), nil
+	return service.StatusWithoutProject(), nil
 }
 
 func (a *App) AIListProviders() ([]ai.AIProviderDescriptor, error) {
@@ -193,13 +194,7 @@ func providerAuthSessionTerminal(status string) bool {
 }
 
 func (a *App) AIGetPredictionStatus(ctx context.Context) (ai.AIPredictionStatus, error) {
-	projectID := a.aiProjectSessionID(ctx)
-	if session := a.projectSessionForContext(ctx); session != nil && session.currentProjectPath() != "" {
-		if err := a.ensureAIProjectSessionOpen(session); err != nil {
-			a.logWarning(fmt.Sprintf("[AI] failed to sync prediction project context: %v", err))
-		}
-	}
-	return a.ensureAIService().PredictionStatus(projectID), nil
+	return a.ensureAIService().PredictionStatus(""), nil
 }
 
 func (a *App) AISavePredictionSettings(settings ai.AIPredictionSettings) (ai.AIPredictionStatus, error) {
@@ -580,25 +575,13 @@ func (a *App) AIApproveMnemonicEntryProposal(ctx context.Context, req ai.AIMnemo
 }
 
 func (a *App) AISaveMnemonicEntry(ctx context.Context, input ai.AIMnemonicEntryInput) (ai.AIMnemonicEntry, error) {
-	sessionID, err := a.ensureAIProjectSessionID(ctx)
-	if err != nil {
-		return ai.AIMnemonicEntry{}, err
-	}
-	return a.ensureAIService().SaveMnemonicEntry(sessionID, input)
+	return ai.AIMnemonicEntry{}, fmt.Errorf("direct mnemonic save requires proposal-approved review path")
 }
 
 func (a *App) AIUpdateMnemonicEntry(ctx context.Context, id string, patch ai.AIMnemonicEntryPatch) (ai.AIMnemonicEntry, error) {
-	sessionID, err := a.ensureAIProjectSessionID(ctx)
-	if err != nil {
-		return ai.AIMnemonicEntry{}, err
-	}
-	return a.ensureAIService().UpdateMnemonicEntry(sessionID, id, patch)
+	return ai.AIMnemonicEntry{}, fmt.Errorf("direct mnemonic update requires proposal-approved review path")
 }
 
 func (a *App) AIDeleteMnemonicEntry(ctx context.Context, id string) error {
-	sessionID, err := a.ensureAIProjectSessionID(ctx)
-	if err != nil {
-		return err
-	}
-	return a.ensureAIService().DeleteMnemonicEntry(sessionID, id)
+	return fmt.Errorf("direct mnemonic delete requires proposal-approved review path")
 }

@@ -268,6 +268,11 @@ type projectEntryDeletedEvent struct {
 }
 
 func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
+	var err error
+	dirPath, err = a.resolveRendererProjectPath(dirPath, "directory path", true)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -294,10 +299,20 @@ func shouldHideProjectExplorerEntry(name string) bool {
 }
 
 func (a *App) InspectEditorFile(filePath string) (EditorFileInspection, error) {
+	var err error
+	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	if err != nil {
+		return EditorFileInspection{}, err
+	}
 	return inspectEditorFile(filePath)
 }
 
 func (a *App) ReadEditorFilePreview(filePath string, maxBytes int) (EditorFilePreview, error) {
+	var err error
+	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	if err != nil {
+		return EditorFilePreview{}, err
+	}
 	inspection, err := inspectEditorFile(filePath)
 	if err != nil {
 		return EditorFilePreview{}, err
@@ -331,6 +346,11 @@ func (a *App) ReadEditorFilePreview(filePath string, maxBytes int) (EditorFilePr
 }
 
 func (a *App) ReadEditorVisualFile(filePath string) (EditorVisualFile, error) {
+	var err error
+	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	if err != nil {
+		return EditorVisualFile{}, err
+	}
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return EditorVisualFile{}, err
@@ -367,6 +387,11 @@ func (a *App) ReadEditorVisualFile(filePath string) (EditorVisualFile, error) {
 }
 
 func (a *App) ReadFile(filePath string) (string, error) {
+	var err error
+	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	if err != nil {
+		return "", err
+	}
 	inspection, err := inspectEditorFile(filePath)
 	if err != nil {
 		return "", err
@@ -680,6 +705,11 @@ func formatFileSize(bytes int64) string {
 }
 
 func (a *App) WriteFile(filePath string, content string) error {
+	var err error
+	filePath, err = a.resolveRendererProjectPath(filePath, "file path", false)
+	if err != nil {
+		return err
+	}
 	_, statErr := os.Stat(filePath)
 	created := os.IsNotExist(statErr)
 	if statErr != nil && !created {
@@ -708,7 +738,7 @@ func (a *App) WriteFile(filePath string, content string) error {
 }
 
 func (a *App) CreateDirectory(dirPath string) error {
-	dirPath, err := normalizeRequiredPath(dirPath, "directory path")
+	dirPath, err := a.resolveRendererProjectPath(dirPath, "directory path", false)
 	if err != nil {
 		return err
 	}
@@ -823,6 +853,25 @@ func normalizeRequiredPath(rawPath string, fieldName string) (string, error) {
 	}
 
 	return filepath.Clean(absolutePath), nil
+}
+
+func (a *App) resolveRendererProjectPath(rawPath string, fieldName string, mustExist bool) (string, error) {
+	projectPath := ""
+	if a != nil {
+		projectPath = strings.TrimSpace(a.currentProjectPath())
+	}
+	if projectPath == "" {
+		return "", fmt.Errorf("active project is required for %s", fieldName)
+	}
+	root, err := resolveProjectEntryRootFromPath(projectPath)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := resolveProjectEntryPathInRoot(root, rawPath, mustExist)
+	if err != nil {
+		return "", err
+	}
+	return resolved.Path, nil
 }
 
 func sanitizeProjectEntryName(name string) (string, error) {
@@ -958,8 +1007,12 @@ func buildWindowsTrashCommand(path string, isDirectory bool) string {
 // Returns all matching file paths
 func (a *App) FindFileByName(searchDir string, fileName string) ([]string, error) {
 	var results []string
+	resolvedSearchDir, err := a.resolveRendererProjectPath(searchDir, "search directory", true)
+	if err != nil {
+		return nil, err
+	}
 
-	err := filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(resolvedSearchDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip errors (permission denied, etc.)
 		}

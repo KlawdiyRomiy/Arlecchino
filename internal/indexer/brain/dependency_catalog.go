@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,17 +31,22 @@ type dependencyEntry struct {
 }
 
 type dependencyCacheEntry struct {
-	fingerprint string
-	entries     []dependencyEntry
-	loadedAt    time.Time
+	fingerprint          string
+	manifestFingerprint  string
+	installedFingerprint string
+	installedCheckedAt   time.Time
+	entries              []dependencyEntry
+	loadedAt             time.Time
 }
 
 type dependencyCatalog struct {
-	root          string
-	mu            sync.RWMutex
-	cache         map[string]dependencyCacheEntry
-	cacheStatus   map[string]string
-	commandRunner func(name string, args ...string) ([]byte, error)
+	root                    string
+	mu                      sync.RWMutex
+	cache                   map[string]dependencyCacheEntry
+	cacheStatus             map[string]string
+	manifestInventory       map[string][]string
+	manifestInventoryLoaded bool
+	commandRunner           func(name string, args ...string) ([]byte, error)
 }
 
 type dependencyOwnerResolution int
@@ -49,6 +56,13 @@ const (
 	dependencyOwnerUnique
 	dependencyOwnerAmbiguous
 )
+
+const (
+	maxDependencyCatalogFileBytes     = int64(2 * 1024 * 1024)
+	dependencyInstalledFingerprintTTL = 10 * time.Second
+)
+
+var dependencyCatalogWalkDir = filepath.WalkDir
 
 func NewDependencyCatalog(root string) *dependencyCatalog {
 	return &dependencyCatalog{
@@ -183,8 +197,23 @@ func (c *dependencyCatalog) entriesForLanguage(language string) []dependencyEntr
 func (c *dependencyCatalog) entriesForLanguageWithCacheStatus(language string) ([]dependencyEntry, bool) {
 	normalizedLanguage := normalizeDependencyLanguage(language)
 	files := c.manifestFiles(normalizedLanguage)
-	fingerprint := c.manifestFingerprint(files)
-	if installedFingerprint := c.installedFingerprint(normalizedLanguage); installedFingerprint != "" {
+	manifestFingerprint := c.manifestFingerprint(files)
+	now := time.Now()
+
+	c.mu.RLock()
+	if cached, ok := c.cache[normalizedLanguage]; ok &&
+		cached.manifestFingerprint == manifestFingerprint &&
+		now.Sub(cached.installedCheckedAt) < dependencyInstalledFingerprintTTL {
+		entries := append([]dependencyEntry(nil), cached.entries...)
+		c.mu.RUnlock()
+		c.setCacheStatus(normalizedLanguage, "hit")
+		return entries, true
+	}
+	c.mu.RUnlock()
+
+	installedFingerprint := c.installedFingerprint(normalizedLanguage)
+	fingerprint := manifestFingerprint
+	if installedFingerprint != "" {
 		fingerprint += "|installed:" + installedFingerprint
 	}
 
@@ -192,6 +221,12 @@ func (c *dependencyCatalog) entriesForLanguageWithCacheStatus(language string) (
 	if cached, ok := c.cache[normalizedLanguage]; ok && cached.fingerprint == fingerprint {
 		entries := append([]dependencyEntry(nil), cached.entries...)
 		c.mu.RUnlock()
+		c.mu.Lock()
+		if current, ok := c.cache[normalizedLanguage]; ok && current.fingerprint == fingerprint {
+			current.installedCheckedAt = now
+			c.cache[normalizedLanguage] = current
+		}
+		c.mu.Unlock()
 		c.setCacheStatus(normalizedLanguage, "hit")
 		return entries, true
 	}
@@ -201,9 +236,12 @@ func (c *dependencyCatalog) entriesForLanguageWithCacheStatus(language string) (
 
 	c.mu.Lock()
 	c.cache[normalizedLanguage] = dependencyCacheEntry{
-		fingerprint: fingerprint,
-		entries:     append([]dependencyEntry(nil), entries...),
-		loadedAt:    time.Now(),
+		fingerprint:          fingerprint,
+		manifestFingerprint:  manifestFingerprint,
+		installedFingerprint: installedFingerprint,
+		installedCheckedAt:   now,
+		entries:              append([]dependencyEntry(nil), entries...),
+		loadedAt:             now,
 	}
 	c.mu.Unlock()
 	c.setCacheStatus(normalizedLanguage, "miss")
@@ -219,6 +257,8 @@ func (c *dependencyCatalog) Invalidate() {
 	c.mu.Lock()
 	c.cache = make(map[string]dependencyCacheEntry)
 	c.cacheStatus = make(map[string]string)
+	c.manifestInventory = nil
+	c.manifestInventoryLoaded = false
 	c.mu.Unlock()
 }
 
@@ -296,6 +336,7 @@ func (c *dependencyCatalog) findCatalogFiles(names ...string) []string {
 		return nil
 	}
 
+	inventory := c.catalogFileInventory()
 	files := make([]string, 0, len(nameSet))
 	seen := make(map[string]struct{})
 	addFile := func(path string) {
@@ -307,13 +348,25 @@ func (c *dependencyCatalog) findCatalogFiles(names ...string) []string {
 	}
 
 	for name := range nameSet {
-		path := filepath.Join(c.root, name)
-		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+		for _, path := range inventory[name] {
 			addFile(path)
 		}
 	}
 
-	_ = filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
+	sort.Strings(files)
+	return files
+}
+
+func (c *dependencyCatalog) catalogFileInventory() map[string][]string {
+	c.mu.Lock()
+	if c.manifestInventoryLoaded {
+		defer c.mu.Unlock()
+		return cloneStringSliceMap(c.manifestInventory)
+	}
+	c.mu.Unlock()
+
+	inventory := make(map[string][]string)
+	_ = dependencyCatalogWalkDir(c.root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -323,17 +376,61 @@ func (c *dependencyCatalog) findCatalogFiles(names ...string) []string {
 			}
 			return nil
 		}
-		if _, ok := nameSet[d.Name()]; !ok {
+		info, statErr := d.Info()
+		if statErr != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		if info, statErr := d.Info(); statErr == nil && info.Mode().IsRegular() {
-			addFile(path)
-		}
+		inventory[d.Name()] = append(inventory[d.Name()], path)
 		return nil
 	})
+	for name := range inventory {
+		sort.Strings(inventory[name])
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.manifestInventoryLoaded {
+		return cloneStringSliceMap(c.manifestInventory)
+	}
+	c.manifestInventory = inventory
+	c.manifestInventoryLoaded = true
+	return cloneStringSliceMap(inventory)
+}
 
-	sort.Strings(files)
-	return files
+func cloneStringSliceMap(input map[string][]string) map[string][]string {
+	if len(input) == 0 {
+		return nil
+	}
+	output := make(map[string][]string, len(input))
+	for key, values := range input {
+		output[key] = append([]string(nil), values...)
+	}
+	return output
+}
+
+func readDependencyCatalogFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("dependency catalog file is not regular: %s", path)
+	}
+	if info.Size() > maxDependencyCatalogFileBytes {
+		return nil, fmt.Errorf("dependency catalog file exceeds size limit: %s", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxDependencyCatalogFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxDependencyCatalogFileBytes {
+		return nil, fmt.Errorf("dependency catalog file exceeds size limit: %s", path)
+	}
+	return data, nil
 }
 
 func shouldSkipDependencyCatalogDir(name string) bool {
@@ -699,7 +796,7 @@ func pythonImportName(entry os.DirEntry) string {
 
 func (c *dependencyCatalog) loadNpmLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "package-lock.json")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -729,7 +826,7 @@ func (c *dependencyCatalog) loadNpmLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadPnpmLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "pnpm-lock.yaml")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -779,7 +876,7 @@ func (c *dependencyCatalog) loadPnpmLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadYarnLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "yarn.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -820,7 +917,7 @@ func (c *dependencyCatalog) loadYarnLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadPoetryLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "poetry.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -870,7 +967,7 @@ func (c *dependencyCatalog) loadPoetryLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadPipfileLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "Pipfile.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -907,7 +1004,7 @@ func (c *dependencyCatalog) loadPipfileLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadComposerLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "composer.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -932,7 +1029,7 @@ func (c *dependencyCatalog) loadComposerLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadCargoLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "Cargo.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -968,7 +1065,7 @@ func (c *dependencyCatalog) loadCargoLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadGemfileLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "Gemfile.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -1009,7 +1106,7 @@ func (c *dependencyCatalog) loadGemfileLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadPubspecLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "pubspec.lock")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -1043,7 +1140,7 @@ func (c *dependencyCatalog) loadPubspecLockEntries() []dependencyEntry {
 
 func (c *dependencyCatalog) loadSwiftResolvedEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "Package.resolved")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -1104,7 +1201,7 @@ func mapAnyToString(input map[string]any) map[string]string {
 
 func (c *dependencyCatalog) loadDotNetLockEntries() []dependencyEntry {
 	path := filepath.Join(c.root, "packages.lock.json")
-	data, err := os.ReadFile(path)
+	data, err := readDependencyCatalogFile(path)
 	if err != nil {
 		return nil
 	}
@@ -1151,7 +1248,7 @@ func lockPackageNameFromPath(raw string) string {
 func (c *dependencyCatalog) loadGoManifestEntries() []dependencyEntry {
 	entries := c.loadGoStdlibEntries()
 	for _, goModPath := range c.findCatalogFiles("go.mod") {
-		data, err := os.ReadFile(goModPath)
+		data, err := readDependencyCatalogFile(goModPath)
 		if err != nil {
 			continue
 		}
@@ -1219,7 +1316,7 @@ func (c *dependencyCatalog) loadGoStdlibEntries() []dependencyEntry {
 func (c *dependencyCatalog) loadNodeManifestEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 16)
 	for _, packageJSONPath := range c.findCatalogFiles("package.json") {
-		data, err := os.ReadFile(packageJSONPath)
+		data, err := readDependencyCatalogFile(packageJSONPath)
 		if err != nil {
 			continue
 		}
@@ -1265,12 +1362,12 @@ func packageJSONEntries(deps map[string]string, detailPrefix string) []dependenc
 func (c *dependencyCatalog) loadPythonManifestEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 16)
 	for _, requirementsPath := range c.findCatalogFiles("requirements.txt") {
-		if data, err := os.ReadFile(requirementsPath); err == nil {
+		if data, err := readDependencyCatalogFile(requirementsPath); err == nil {
 			entries = append(entries, parseRequirementsEntries(string(data))...)
 		}
 	}
 	for _, pyprojectPath := range c.findCatalogFiles("pyproject.toml") {
-		if data, err := os.ReadFile(pyprojectPath); err == nil {
+		if data, err := readDependencyCatalogFile(pyprojectPath); err == nil {
 			entries = append(entries, parsePyProjectEntries(string(data))...)
 		}
 	}
@@ -1373,7 +1470,7 @@ func parsePyProjectEntries(data string) []dependencyEntry {
 func (c *dependencyCatalog) loadComposerManifestEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 16)
 	for _, composerPath := range c.findCatalogFiles("composer.json") {
-		data, err := os.ReadFile(composerPath)
+		data, err := readDependencyCatalogFile(composerPath)
 		if err != nil {
 			continue
 		}
@@ -1400,7 +1497,7 @@ func (c *dependencyCatalog) loadComposerManifestEntries() []dependencyEntry {
 func (c *dependencyCatalog) loadCargoManifestEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 16)
 	for _, cargoPath := range c.findCatalogFiles("Cargo.toml") {
-		data, err := os.ReadFile(cargoPath)
+		data, err := readDependencyCatalogFile(cargoPath)
 		if err != nil {
 			continue
 		}
@@ -1438,7 +1535,7 @@ func (c *dependencyCatalog) loadCargoManifestEntries() []dependencyEntry {
 func (c *dependencyCatalog) loadGemfileEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 8)
 	for _, gemfilePath := range c.findCatalogFiles("Gemfile") {
-		data, err := os.ReadFile(gemfilePath)
+		data, err := readDependencyCatalogFile(gemfilePath)
 		if err != nil {
 			continue
 		}
@@ -1472,7 +1569,7 @@ type pomProject struct {
 func (c *dependencyCatalog) loadJVMEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 16)
 	for _, pomPath := range c.findCatalogFiles("pom.xml") {
-		data, err := os.ReadFile(pomPath)
+		data, err := readDependencyCatalogFile(pomPath)
 		if err != nil {
 			continue
 		}
@@ -1495,7 +1592,7 @@ func (c *dependencyCatalog) loadJVMEntries() []dependencyEntry {
 	}
 
 	for _, path := range c.findCatalogFiles("build.gradle", "build.gradle.kts") {
-		data, err := os.ReadFile(path)
+		data, err := readDependencyCatalogFile(path)
 		if err != nil {
 			continue
 		}
@@ -1525,7 +1622,7 @@ func parseGradleEntries(data string) []dependencyEntry {
 func (c *dependencyCatalog) loadDotNetEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 8)
 	for _, packagesPath := range c.findCatalogFiles("packages.config") {
-		data, err := os.ReadFile(packagesPath)
+		data, err := readDependencyCatalogFile(packagesPath)
 		if err != nil {
 			continue
 		}
@@ -1548,7 +1645,7 @@ func (c *dependencyCatalog) loadDotNetEntries() []dependencyEntry {
 func (c *dependencyCatalog) loadPubspecEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 8)
 	for _, pubspecPath := range c.findCatalogFiles("pubspec.yaml") {
-		data, err := os.ReadFile(pubspecPath)
+		data, err := readDependencyCatalogFile(pubspecPath)
 		if err != nil {
 			continue
 		}
@@ -1579,7 +1676,7 @@ func (c *dependencyCatalog) loadPubspecEntries() []dependencyEntry {
 func (c *dependencyCatalog) loadSwiftPackageEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 8)
 	for _, packagePath := range c.findCatalogFiles("Package.swift") {
-		data, err := os.ReadFile(packagePath)
+		data, err := readDependencyCatalogFile(packagePath)
 		if err != nil {
 			continue
 		}
@@ -1603,7 +1700,7 @@ func (c *dependencyCatalog) loadSwiftPackageEntries() []dependencyEntry {
 func (c *dependencyCatalog) loadTerraformEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 8)
 	for _, lockPath := range c.findCatalogFiles(".terraform.lock.hcl") {
-		data, err := os.ReadFile(lockPath)
+		data, err := readDependencyCatalogFile(lockPath)
 		if err != nil {
 			continue
 		}

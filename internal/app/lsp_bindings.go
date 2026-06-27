@@ -121,6 +121,7 @@ type LSPDiagnosticsPreloadEvent struct {
 	UnsafeCandidates             int    `json:"unsafeCandidates,omitempty"`
 	UnsupportedCandidates        int    `json:"unsupportedCandidates,omitempty"`
 	NoServerCandidates           int    `json:"noServerCandidates,omitempty"`
+	ColdStartSkippedCandidates   int    `json:"coldStartSkippedCandidates,omitempty"`
 	OpenFailedCandidates         int    `json:"openFailedCandidates,omitempty"`
 	PublicationTimeoutCandidates int    `json:"publicationTimeoutCandidates,omitempty"`
 	Message                      string `json:"message,omitempty"`

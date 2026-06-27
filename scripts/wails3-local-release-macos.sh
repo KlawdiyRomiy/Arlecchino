@@ -301,10 +301,11 @@ DMG_RUNTIME_ASSETS_STATUS="skipped"
 DMG_RUNTIME_ASSETS_REASON=""
 
 if [[ -n "$UPDATE_PRIVATE_KEY" && -z "$UPDATE_PUBLIC_KEY" ]]; then
-  UPDATE_PUBLIC_KEY="$(node - "$UPDATE_PRIVATE_KEY" <<'NODE'
+  UPDATE_PUBLIC_KEY="$(ARLE_WAILS3_UPDATE_SIGNING_KEY="$UPDATE_PRIVATE_KEY" node - <<'NODE'
 const crypto = require("crypto");
 const fs = require("fs");
-const privateKey = crypto.createPrivateKey(fs.readFileSync(process.argv[2]));
+const privateKeyPath = process.env.ARLE_WAILS3_UPDATE_SIGNING_KEY || "";
+const privateKey = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
 if (privateKey.asymmetricKeyType !== "ed25519") {
   throw new Error(`Private key must be Ed25519, got ${privateKey.asymmetricKeyType}`);
 }
@@ -471,9 +472,8 @@ if [[ -n "$UPDATE_PRIVATE_KEY" ]]; then
   if [[ -n "$UPDATE_ARTIFACT_URL" ]]; then
     UPDATE_MANIFEST_URL_ARG=(--url "$UPDATE_ARTIFACT_URL")
   fi
-  node "$ROOT_DIR/scripts/wails3-update-manifest.mjs" \
+  ARLE_WAILS3_UPDATE_SIGNING_KEY="$UPDATE_PRIVATE_KEY" node "$ROOT_DIR/scripts/wails3-update-manifest.mjs" \
     --artifact "$ZIP_PATH" \
-    --private-key "$UPDATE_PRIVATE_KEY" \
     --out "$UPDATE_MANIFEST_PATH" \
     --version "$VERSION" \
     --build "$BUILD_NUMBER" \

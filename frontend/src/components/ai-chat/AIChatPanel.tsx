@@ -52,12 +52,12 @@ import {
   AIListTools,
   AIListToolAudit,
   AIProbeModelCapability,
+  AIProposeMnemonicEntry,
   AIRefreshLocalProviders,
   AIRevokeContextCapsule,
   AIRequestPlanRevision,
   AIRollbackPatchCheckpoint,
   AISaveConsentPolicy,
-  AISaveMnemonicEntry,
   AISearchMnemonic,
   AIStartLinkedReview,
   AIStartAgentAuthRun,
@@ -67,7 +67,6 @@ import {
   AIStopProviderRuntime,
   AISubmitQuestionAnswer,
   AISuggestChatMentions,
-  AIUpdateMnemonicEntry,
   type AIProviderRuntimeDescriptor,
   type AIProviderRuntimeModel,
   type AIProviderAuthSession,
@@ -195,7 +194,7 @@ import "./ai-chat.css";
 
 const defaultChatSessionId = "default";
 const chatHydrationBatchSize = 4;
-const allProjectChatRunsLimit = 0;
+const allProjectChatRunsLimit = 100;
 const chatHydrationMaxAttempts = 3;
 const chatHydrationRetryDelayMs = 750;
 
@@ -3821,24 +3820,33 @@ export function AIChatPanelContent({
     async (content: string) => {
       const trimmed = content.trim();
       if (!trimmed) return;
+      if (!activeRunKey) {
+        setMnemonicError("Open a chat run before saving project memory.");
+        return;
+      }
       setMnemonicBusy(true);
       setMnemonicError("");
       try {
-        await AISaveMnemonicEntry({
-          content: trimmed,
-          type: "note",
-          source: "user",
-          trust: "trusted",
-          pinned: true,
-          isLatest: true,
-          confidence: 1,
-          importance: 5,
-          provenance: {
-            reviewedBy: "user",
-            source: "ai-chat-settings",
+        const proposal = await AIProposeMnemonicEntry({
+          runId: activeRunKey,
+          entry: {
+            content: trimmed,
+            type: "note",
+            source: "user",
+            trust: "trusted",
+            pinned: true,
+            isLatest: true,
+            confidence: 1,
+            importance: 5,
           },
         });
-        await refreshMnemonicEntries();
+        await AIApproveMnemonicEntryProposal({
+          artifactId: proposal.artifact.id,
+          reviewedBy: "user",
+          trust: "trusted",
+          pinned: true,
+        });
+        await Promise.all([refreshActiveArtifacts(), refreshMnemonicEntries()]);
       } catch (error) {
         setMnemonicError(
           error instanceof Error ? error.message : String(error),
@@ -3847,25 +3855,47 @@ export function AIChatPanelContent({
         setMnemonicBusy(false);
       }
     },
-    [refreshMnemonicEntries],
+    [activeRunKey, refreshActiveArtifacts, refreshMnemonicEntries],
   );
 
   const handleMnemonicPromote = useCallback(
     async (entryId: string) => {
       if (!entryId) return;
+      if (!activeRunKey) {
+        setMnemonicError("Open a chat run before trusting project memory.");
+        return;
+      }
+      const entry = mnemonicEntries.find(
+        (candidate) => candidate.id === entryId,
+      );
+      if (!entry) {
+        setMnemonicError("Mnemonic entry was not found.");
+        return;
+      }
       setMnemonicBusy(true);
       setMnemonicError("");
       try {
-        await AIUpdateMnemonicEntry(entryId, {
-          trust: "trusted",
-          pinned: true,
-          isLatest: true,
-          provenance: {
-            reviewedBy: "user",
-            promotion: "user_confirmed",
+        const proposal = await AIProposeMnemonicEntry({
+          runId: activeRunKey,
+          entry: {
+            content: entry.content,
+            type: entry.type || "note",
+            source: "user",
+            tags: entry.tags ?? [],
+            trust: "trusted",
+            pinned: true,
+            isLatest: true,
+            confidence: entry.confidence || 1,
+            importance: Math.max(entry.importance || 5, 5),
           },
         });
-        await refreshMnemonicEntries();
+        await AIApproveMnemonicEntryProposal({
+          artifactId: proposal.artifact.id,
+          reviewedBy: "user",
+          trust: "trusted",
+          pinned: true,
+        });
+        await Promise.all([refreshActiveArtifacts(), refreshMnemonicEntries()]);
       } catch (error) {
         setMnemonicError(
           error instanceof Error ? error.message : String(error),
@@ -3874,7 +3904,12 @@ export function AIChatPanelContent({
         setMnemonicBusy(false);
       }
     },
-    [refreshMnemonicEntries],
+    [
+      activeRunKey,
+      mnemonicEntries,
+      refreshActiveArtifacts,
+      refreshMnemonicEntries,
+    ],
   );
 
   const handleApproveMnemonicArtifact = useCallback(

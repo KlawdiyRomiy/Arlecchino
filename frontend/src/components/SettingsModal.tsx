@@ -1453,11 +1453,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     autoUpdateStatus.state === "checking" ||
     autoUpdateStatus.state === "downloading" ||
     autoUpdateStatus.state === "applying";
-  const privateUpdateAccessLabel = privateUpdateAuthStatus
-    ? privateUpdateAuthStatus.configured
-      ? `configured via ${privateUpdateAuthStatus.source ?? "private access"}`
-      : (privateUpdateAuthStatus.reason ?? "not configured")
-    : "not loaded";
+  const privateUpdateManifestSource =
+    privateUpdateAuthStatus?.manifestSource ??
+    buildInfo.updateManifestUrl ??
+    "";
+  const privateUpdateAccessEnabled = privateUpdateManifestSource
+    .trim()
+    .startsWith("github-release://");
+  const privateUpdateAccessLabel = privateUpdateAccessEnabled
+    ? privateUpdateAuthStatus
+      ? privateUpdateAuthStatus.configured
+        ? `configured via ${privateUpdateAuthStatus.source ?? "private access"}`
+        : (privateUpdateAuthStatus.reason ?? "not configured")
+      : "not loaded"
+    : "public release URL";
   const localFontOptions = useMemo<FontOption[]>(
     () =>
       uniqueFontOptions(
@@ -1520,6 +1529,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const settingsSearchSuggestions = useMemo(() => {
     const query = normalizeSettingsSearchText(settingsQuery);
     return settingsSearchEntries
+      .filter(
+        (entry) =>
+          privateUpdateAccessEnabled || entry.id !== "private-release-access",
+      )
       .map((entry) => ({
         entry,
         rank: rankSettingsSearchEntry(entry, query),
@@ -1539,7 +1552,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       })
       .slice(0, 8)
       .map(({ entry }) => entry);
-  }, [settingsQuery]);
+  }, [privateUpdateAccessEnabled, settingsQuery]);
   const showSettingsSearchSuggestions = settingsSearchFocused;
   const getSettingTargetClass = (settingId: string) =>
     highlightedSettingId === settingId
@@ -2322,11 +2335,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return;
     }
 
-    void refreshPrivateUpdateAuthStatus();
+    if (privateUpdateAccessEnabled) {
+      void refreshPrivateUpdateAuthStatus();
+    } else {
+      setPrivateUpdateAuthStatus(null);
+    }
     void refreshAutocompleteCapabilities();
   }, [
     activeTab,
     isOpen,
+    privateUpdateAccessEnabled,
     refreshAutocompleteCapabilities,
     refreshPrivateUpdateAuthStatus,
   ]);
@@ -4932,79 +4950,81 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   </div>
                                 ))}
                               </div>
-                              <div
-                                data-setting-id="private-release-access"
-                                className={`mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3 transition-shadow ${getSettingTargetClass(
-                                  "private-release-access",
-                                )}`}
-                              >
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
-                                      <KeyRound size={14} />
-                                      Private GitHub release access
+                              {privateUpdateAccessEnabled && (
+                                <div
+                                  data-setting-id="private-release-access"
+                                  className={`mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3 transition-shadow ${getSettingTargetClass(
+                                    "private-release-access",
+                                  )}`}
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
+                                        <KeyRound size={14} />
+                                        Private GitHub release access
+                                      </div>
+                                      <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+                                        Token is stored in macOS Keychain and is
+                                        never shown after saving.
+                                      </div>
                                     </div>
-                                    <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
-                                      Token is stored in macOS Keychain and is
-                                      never shown after saving.
-                                    </div>
+                                    <span
+                                      className={`${settingsPillClass} ${
+                                        privateUpdateAuthStatus?.configured
+                                          ? "text-[var(--status-success)]"
+                                          : "text-[var(--status-warning)]"
+                                      }`}
+                                    >
+                                      {privateUpdateAuthStatus?.configured
+                                        ? "Configured"
+                                        : "Missing token"}
+                                    </span>
                                   </div>
-                                  <span
-                                    className={`${settingsPillClass} ${
-                                      privateUpdateAuthStatus?.configured
-                                        ? "text-[var(--status-success)]"
-                                        : "text-[var(--status-warning)]"
-                                    }`}
-                                  >
-                                    {privateUpdateAuthStatus?.configured
-                                      ? "Configured"
-                                      : "Missing token"}
-                                  </span>
+                                  <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                                    <input
+                                      type="password"
+                                      autoComplete="off"
+                                      value={privateUpdateToken}
+                                      onChange={(event) =>
+                                        setPrivateUpdateToken(
+                                          event.currentTarget.value,
+                                        )
+                                      }
+                                      placeholder="Fine-grained GitHub token"
+                                      className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+                                    />
+                                    <button
+                                      type="button"
+                                      className={settingsActionButtonClass}
+                                      disabled={
+                                        privateUpdateAuthBusy ||
+                                        !privateUpdateToken.trim()
+                                      }
+                                      onClick={() => {
+                                        void savePrivateUpdateAccessToken();
+                                      }}
+                                    >
+                                      <Check size={14} />
+                                      Save Token
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={settingsActionButtonClass}
+                                      disabled={privateUpdateAuthBusy}
+                                      onClick={() => {
+                                        void clearPrivateUpdateAccessToken();
+                                      }}
+                                    >
+                                      <Trash2 size={14} />
+                                      Clear
+                                    </button>
+                                  </div>
+                                  <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
+                                    {privateUpdateAuthStatus?.reason ??
+                                      "Open this tab to load private update access status."}
+                                  </div>
                                 </div>
-                                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-                                  <input
-                                    type="password"
-                                    autoComplete="off"
-                                    value={privateUpdateToken}
-                                    onChange={(event) =>
-                                      setPrivateUpdateToken(
-                                        event.currentTarget.value,
-                                      )
-                                    }
-                                    placeholder="Fine-grained GitHub token"
-                                    className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-                                  />
-                                  <button
-                                    type="button"
-                                    className={settingsActionButtonClass}
-                                    disabled={
-                                      privateUpdateAuthBusy ||
-                                      !privateUpdateToken.trim()
-                                    }
-                                    onClick={() => {
-                                      void savePrivateUpdateAccessToken();
-                                    }}
-                                  >
-                                    <Check size={14} />
-                                    Save Token
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={settingsActionButtonClass}
-                                    disabled={privateUpdateAuthBusy}
-                                    onClick={() => {
-                                      void clearPrivateUpdateAccessToken();
-                                    }}
-                                  >
-                                    <Trash2 size={14} />
-                                    Clear
-                                  </button>
-                                </div>
-                                <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
-                                  {privateUpdateAuthStatus?.reason ??
-                                    "Open this tab to load private update access status."}
-                                </div>
-                              </div>
+                              )}
                               <button
                                 type="button"
                                 className={`${settingsActionButtonClass} mt-4`}

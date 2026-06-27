@@ -15,7 +15,7 @@ import {
 const args = process.argv.slice(2);
 
 const usage = () => {
-  console.log(`Usage: scripts/wails3-update-manifest.mjs --artifact <path> --private-key <pem> --out <path> [options]
+  console.log(`Usage: scripts/wails3-update-manifest.mjs --artifact <path> --private-key <path> --out <path> [options]
 
 Options:
   --version <version>       Release version. Default: 0.0.0-beta
@@ -51,7 +51,8 @@ if (args.includes("-h") || args.includes("--help")) {
 }
 
 const artifactPath = readOption("--artifact");
-const privateKeyPath = readOption("--private-key");
+const privateKeyPath =
+  readOption("--private-key") || process.env.ARLE_WAILS3_UPDATE_SIGNING_KEY || "";
 const outPath =
   readOption("--out") || process.env.ARLE_WAILS3_UPDATE_MANIFEST_OUT || "";
 if (!artifactPath || !privateKeyPath || !outPath) {

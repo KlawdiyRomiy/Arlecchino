@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -66,6 +67,11 @@ type editorBinaryClassification struct {
 }
 
 func (a *App) ReadEditorBinaryFile(filePath string) (EditorBinaryFile, error) {
+	var err error
+	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	if err != nil {
+		return EditorBinaryFile{}, err
+	}
 	return readEditorBinaryFile(filePath)
 }
 
@@ -349,7 +355,7 @@ func inspectZIPBinary(filePath string) []EditorBinarySection {
 		}
 		rows = append(rows, EditorBinaryFieldPair{
 			Label: trimEditorBinaryLabel(name),
-			Value: fmt.Sprintf("%s compressed, %s uncompressed", formatFileSize(int64(file.CompressedSize64)), formatFileSize(saturatingInt64(file.UncompressedSize64))),
+			Value: fmt.Sprintf("%s compressed, %s uncompressed", formatFileSize(saturatingInt64(file.CompressedSize64)), formatFileSize(saturatingInt64(file.UncompressedSize64))),
 		})
 	}
 	if len(reader.File) > limit {
@@ -405,12 +411,13 @@ func inspectWASMBinary(prefix []byte, size int64) EditorBinarySection {
 		offset += width
 
 		value := fmt.Sprintf("id %d, offset 0x%X, payload %s", sectionID, sectionOffset, formatFileSize(saturatingInt64(payloadSize)))
-		nextOffset := offset + int(payloadSize)
-		if payloadSize > uint64(len(prefix)-offset) {
+		payloadSizeInt, payloadFitsInt := uint64ToInt(payloadSize)
+		if !payloadFitsInt || payloadSizeInt > len(prefix)-offset {
 			value += " (payload extends beyond preview)"
 			rows = append(rows, EditorBinaryFieldPair{Label: wasmSectionName(sectionID), Value: value})
 			break
 		}
+		nextOffset := offset + payloadSizeInt
 		rows = append(rows, EditorBinaryFieldPair{Label: wasmSectionName(sectionID), Value: value})
 		offset = nextOffset
 	}
@@ -607,4 +614,14 @@ func saturatingInt64(value uint64) int64 {
 		return int64(^uint64(0) >> 1)
 	}
 	return int64(value)
+}
+
+func uint64ToInt(value uint64) (int, bool) {
+	if strconv.IntSize == 32 && value > 1<<31-1 {
+		return 0, false
+	}
+	if strconv.IntSize == 64 && value > 1<<63-1 {
+		return 0, false
+	}
+	return int(value), true // #nosec G115 -- guarded by strconv.IntSize bounds above.
 }

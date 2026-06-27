@@ -21,6 +21,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	lspregistry "arlecchino/internal/lsp"
 	"arlecchino/internal/processcontrol"
@@ -107,6 +108,12 @@ const (
 	completionTriggerInvoked    = 1
 	completionTriggerCharacter  = 2
 	completionTriggerIncomplete = 3
+)
+
+const (
+	maxLSPMessageBytes       = 16 << 20
+	maxDiagnosticsPerPublish = 5000
+	maxDiagnosticTextBytes   = 8192
 )
 
 var completionSnippetPlaceholderPattern = regexp.MustCompile(`\$\{[0-9]+(?::[^}]*)?\}|\$[0-9]+`)
@@ -1542,6 +1549,15 @@ func (m *Manager) runningServerForLanguage(language string) (*Server, bool) {
 	return server, true
 }
 
+func (m *Manager) HasWarmServerForLanguage(language string) bool {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		return false
+	}
+	_, ok = m.runningServerForLanguage(resolvedLanguage)
+	return ok
+}
+
 type rehydrateOpenDoc struct {
 	language   string
 	filePath   string
@@ -2522,9 +2538,27 @@ func cloneDiagnostics(diagnostics []Diagnostic) []Diagnostic {
 		return nil
 	}
 
+	if len(diagnostics) > maxDiagnosticsPerPublish {
+		diagnostics = diagnostics[:maxDiagnosticsPerPublish]
+	}
 	cloned := make([]Diagnostic, len(diagnostics))
-	copy(cloned, diagnostics)
+	for i := range diagnostics {
+		cloned[i] = diagnostics[i]
+		cloned[i].Message = truncateDiagnosticText(cloned[i].Message)
+		cloned[i].Source = truncateDiagnosticText(cloned[i].Source)
+	}
 	return cloned
+}
+
+func truncateDiagnosticText(value string) string {
+	if len(value) <= maxDiagnosticTextBytes {
+		return value
+	}
+	truncated := value[:maxDiagnosticTextBytes]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated + "...[truncated]"
 }
 
 func fileURIToPath(uri string) string {
@@ -4453,6 +4487,28 @@ func serverRequestResult(method string, params json.RawMessage) any {
 	}
 }
 
+func (s *Server) failReadLoop(message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "language server connection closed"
+	}
+	s.mu.Lock()
+	if s.lastError != "" {
+		message = s.lastError
+	} else {
+		s.lastError = message
+	}
+	s.running = false
+	s.mu.Unlock()
+	if s.stdin != nil {
+		_ = s.stdin.Close()
+	}
+	if s.stdout != nil {
+		_ = s.stdout.Close()
+	}
+	s.failPendingRequests(message)
+}
+
 func (s *Server) readLoop() {
 	reader := bufio.NewReader(s.stdout)
 
@@ -4461,15 +4517,7 @@ func (s *Server) readLoop() {
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				message := fmt.Sprintf("read header error: %v", err)
-				s.mu.Lock()
-				if s.lastError != "" {
-					message = s.lastError
-				}
-				s.running = false
-				s.lastError = message
-				s.mu.Unlock()
-				s.failPendingRequests(message)
+				s.failReadLoop(fmt.Sprintf("read header error: %v", err))
 				return
 			}
 			line = strings.TrimSpace(line)
@@ -4478,7 +4526,16 @@ func (s *Server) readLoop() {
 			}
 			if strings.HasPrefix(line, "Content-Length:") {
 				lenStr := strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:"))
-				contentLength, _ = strconv.Atoi(lenStr)
+				parsedLength, parseErr := strconv.Atoi(lenStr)
+				if parseErr != nil || parsedLength < 0 {
+					s.failReadLoop(fmt.Sprintf("invalid language server content length: %q", lenStr))
+					return
+				}
+				if parsedLength > maxLSPMessageBytes {
+					s.failReadLoop(fmt.Sprintf("language server message too large: %d bytes", parsedLength))
+					return
+				}
+				contentLength = parsedLength
 			}
 		}
 
@@ -4489,15 +4546,7 @@ func (s *Server) readLoop() {
 		body := make([]byte, contentLength)
 		_, err := io.ReadFull(reader, body)
 		if err != nil {
-			message := fmt.Sprintf("read body error: %v", err)
-			s.mu.Lock()
-			if s.lastError != "" {
-				message = s.lastError
-			}
-			s.running = false
-			s.lastError = message
-			s.mu.Unlock()
-			s.failPendingRequests(message)
+			s.failReadLoop(fmt.Sprintf("read body error: %v", err))
 			return
 		}
 

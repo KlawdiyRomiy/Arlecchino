@@ -67,6 +67,7 @@ type diagnosticsPreloadPlan struct {
 	UnsafeCandidates             int
 	UnsupportedCandidates        int
 	NoServerCandidates           int
+	ColdStartSkippedCandidates   int
 	OpenFailedCandidates         int
 	PublicationTimeoutCandidates int
 	Message                      string
@@ -79,6 +80,7 @@ type diagnosticsPreloadScanResult struct {
 	CheckedCandidates            int
 	FailedCandidates             int
 	OpenFailedCandidates         int
+	ColdStartSkippedCandidates   int
 	PublicationTimeoutCandidates int
 	TimedOut                     bool
 	Aborted                      bool
@@ -220,6 +222,7 @@ func newLSPDiagnosticsPreloadEventForSession(
 		UnsafeCandidates:             plan.UnsafeCandidates,
 		UnsupportedCandidates:        plan.UnsupportedCandidates,
 		NoServerCandidates:           plan.NoServerCandidates,
+		ColdStartSkippedCandidates:   plan.ColdStartSkippedCandidates,
 		OpenFailedCandidates:         plan.OpenFailedCandidates,
 		PublicationTimeoutCandidates: plan.PublicationTimeoutCandidates,
 		Message:                      plan.Message,
@@ -1170,6 +1173,12 @@ func (a *App) runDiagnosticsPreloadScanForSessionWithOptions(
 				markCandidateProcessed()
 				continue
 			}
+			if options.DisallowColdStart && !mgr.HasWarmServerForLanguage(candidate.Language) {
+				result.ColdStartSkippedCandidates++
+				delete(tracked, indexerlsp.DiagnosticsPublicationKey(candidate.Language, candidate.Path))
+				markCandidateProcessed()
+				continue
+			}
 
 			content, readErr := readDiagnosticsPreloadCandidate(root, candidate)
 			if readErr != nil {
@@ -1295,6 +1304,9 @@ func completeDiagnosticsPreloadPlan(
 	case failedCandidates > 0:
 		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
 		plan.Message = "Diagnostics scan could not open every selected file."
+	case plan.ColdStartSkippedCandidates > 0:
+		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
+		plan.Message = diagnosticsPreloadIncompleteMessage(plan)
 	case checkedCandidates < plan.SelectedCandidates:
 		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
 		plan.Message = "Diagnostics scan did not receive diagnostics publications for every selected file."
@@ -1312,6 +1324,9 @@ func diagnosticsPreloadIncompleteMessage(plan diagnosticsPreloadPlan) string {
 	}
 	if plan.NoServerCandidates > 0 {
 		reasons = append(reasons, formatDiagnosticsPreloadCount(plan.NoServerCandidates, "file", "files")+" without a configured language server")
+	}
+	if plan.ColdStartSkippedCandidates > 0 {
+		reasons = append(reasons, formatDiagnosticsPreloadCount(plan.ColdStartSkippedCandidates, "file", "files")+" skipped because no warm language server was running")
 	}
 	if plan.OversizedCandidates > 0 {
 		reasons = append(reasons, formatDiagnosticsPreloadCount(plan.OversizedCandidates, "file", "files")+" over the diagnostics size limit")
@@ -1706,6 +1721,7 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 	checkedCandidates := previewResult.CheckedCandidates
 	failedCandidates := previewResult.FailedCandidates
 	openFailedCandidates := previewResult.OpenFailedCandidates
+	coldStartSkippedCandidates := previewResult.ColdStartSkippedCandidates
 	publicationTimeoutCandidates := previewResult.PublicationTimeoutCandidates
 	timedOut := previewResult.TimedOut
 
@@ -1727,6 +1743,7 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 			"Still scanning diagnostics across this project.",
 		)
 		fullProgressPlan.OpenFailedCandidates = openFailedCandidates
+		fullProgressPlan.ColdStartSkippedCandidates = coldStartSkippedCandidates
 		fullProgressPlan.PublicationTimeoutCandidates = publicationTimeoutCandidates
 		a.emitEvent("lsp:diagnostics:preload:start", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, fullProgressPlan))
 
@@ -1739,6 +1756,7 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 			lastProgressChecked = totalChecked
 			totalFailed := previewResult.FailedCandidates + result.FailedCandidates
 			totalOpenFailed := previewResult.OpenFailedCandidates + result.OpenFailedCandidates
+			totalColdStartSkipped := previewResult.ColdStartSkippedCandidates + result.ColdStartSkippedCandidates
 			totalPublicationTimeout := previewResult.PublicationTimeoutCandidates + result.PublicationTimeoutCandidates
 			totalTimedOut := previewResult.TimedOut || result.TimedOut
 			progressPlan := diagnosticsPreloadFullScanProgressPlan(
@@ -1749,6 +1767,7 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 				"Still scanning diagnostics across this project.",
 			)
 			progressPlan.OpenFailedCandidates = totalOpenFailed
+			progressPlan.ColdStartSkippedCandidates = totalColdStartSkipped
 			progressPlan.PublicationTimeoutCandidates = totalPublicationTimeout
 			a.recordBackgroundDiagnosticsScan(session.ID, root, generation, progressPlan, totalChecked, totalFailed, BackgroundShellJobRunning, progressPlan.Message)
 			a.emitEvent("lsp:diagnostics:preload:start", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, progressPlan))
@@ -1798,14 +1817,17 @@ func (a *App) lspPreloadProjectDiagnosticsForSessionWithOptions(
 		checkedCandidates += backgroundResult.CheckedCandidates
 		failedCandidates += backgroundResult.FailedCandidates
 		openFailedCandidates += backgroundResult.OpenFailedCandidates
+		coldStartSkippedCandidates += backgroundResult.ColdStartSkippedCandidates
 		publicationTimeoutCandidates += backgroundResult.PublicationTimeoutCandidates
 		timedOut = timedOut || backgroundResult.TimedOut
 		plan = diagnosticsPreloadFullScanProgressPlan(plan, checkedCandidates, failedCandidates, timedOut, "")
 		plan.OpenFailedCandidates = openFailedCandidates
+		plan.ColdStartSkippedCandidates = coldStartSkippedCandidates
 		plan.PublicationTimeoutCandidates = publicationTimeoutCandidates
 	}
 
 	plan.OpenFailedCandidates = openFailedCandidates
+	plan.ColdStartSkippedCandidates = coldStartSkippedCandidates
 	plan.PublicationTimeoutCandidates = publicationTimeoutCandidates
 	completedPlan := completeDiagnosticsPreloadPlan(plan, checkedCandidates, failedCandidates, timedOut)
 	if preloadCtx.Err() == nil || errors.Is(preloadCtx.Err(), context.DeadlineExceeded) {

@@ -60,6 +60,22 @@ function searchTerms(query: string): string[] {
     });
 }
 
+const isSafeMarkdownImageSrc = (src: string | undefined): src is string => {
+  const value = src?.trim();
+  if (!value || value.startsWith("//")) {
+    return false;
+  }
+  if (/^data:image\/(avif|gif|jpeg|jpg|png|webp);/i.test(value)) {
+    return true;
+  }
+  try {
+    const parsedUrl = new URL(value);
+    return parsedUrl.protocol === "blob:";
+  } catch {
+    return !/^[a-z][a-z0-9+.-]*:/i.test(value);
+  }
+};
+
 function highlightedText(value: string, terms: string[]): React.ReactNode {
   if (terms.length === 0) return value;
   const pattern = new RegExp(
@@ -427,6 +443,10 @@ export function AIChatMarkdownMessage({
       li: ({ children, ...props }) => (
         <li {...props}>{renderChildren(children)}</li>
       ),
+      img: ({ alt = "", src, ...props }) =>
+        isSafeMarkdownImageSrc(src) ? (
+          <img alt={alt} src={src} {...props} />
+        ) : null,
       ol: ({ children, ...props }) => (
         <ol {...props}>{renderChildren(children)}</ol>
       ),

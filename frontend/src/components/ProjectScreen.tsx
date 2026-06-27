@@ -411,9 +411,56 @@ const getOtherEditorTabIds = (tabs: Tab[], tabId: string): string[] => {
   return tabIds;
 };
 
-const readStoredEditorTabs = (storageKey: string): Tab[] => {
+const normalizeProjectStoragePath = (
+  projectPath: string | null | undefined,
+): string =>
+  (projectPath ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/\/+$/, "");
+
+const stableProjectStorageHash = (value: string): string => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+};
+
+const projectScopedStorageKey = (
+  prefix: string,
+  projectPath: string | null | undefined,
+): string => {
+  const normalizedProjectPath = normalizeProjectStoragePath(projectPath);
+  return normalizedProjectPath
+    ? `${prefix}:project:${stableProjectStorageHash(normalizedProjectPath)}`
+    : `${prefix}:global`;
+};
+
+const legacyProjectScopedStorageKey = (
+  prefix: string,
+  projectPath: string | null | undefined,
+): string => `${prefix}:${projectPath ?? ""}`;
+
+const readProjectScopedStorageItem = (
+  storageKey: string,
+  legacyStorageKey: string,
+): string | null => {
+  const current = localStorage.getItem(storageKey);
+  if (current || legacyStorageKey === storageKey) {
+    return current;
+  }
+  return localStorage.getItem(legacyStorageKey);
+};
+
+const readStoredEditorTabs = (
+  storageKey: string,
+  legacyStorageKey: string,
+): Tab[] => {
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = readProjectScopedStorageItem(storageKey, legacyStorageKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as { tabs?: unknown };
     if (!Array.isArray(parsed.tabs)) {
@@ -450,9 +497,12 @@ const readStoredEditorTabs = (storageKey: string): Tab[] => {
   }
 };
 
-const readStoredActiveEditorTabId = (storageKey: string): string | null => {
+const readStoredActiveEditorTabId = (
+  storageKey: string,
+  legacyStorageKey: string,
+): string | null => {
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = readProjectScopedStorageItem(storageKey, legacyStorageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { activeTabId?: unknown };
     return typeof parsed.activeTabId === "string" ? parsed.activeTabId : null;
@@ -614,14 +664,21 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
   const { copyAbsolutePath, revealEntry } = useProjectEntryActions();
 
-  const tabStorageKey = `editorTabs:${projectPath}`;
+  const tabStorageKey = React.useMemo(
+    () => projectScopedStorageKey("editorTabs", projectPath),
+    [projectPath],
+  );
+  const legacyTabStorageKey = React.useMemo(
+    () => legacyProjectScopedStorageKey("editorTabs", projectPath),
+    [projectPath],
+  );
 
   const [tabs, setTabs] = useState<Tab[]>(() =>
-    readStoredEditorTabs(tabStorageKey),
+    readStoredEditorTabs(tabStorageKey, legacyTabStorageKey),
   );
 
   const [activeTab, setActiveTab] = useState<string | null>(() =>
-    readStoredActiveEditorTabId(tabStorageKey),
+    readStoredActiveEditorTabId(tabStorageKey, legacyTabStorageKey),
   );
 
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
@@ -1101,6 +1158,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     const timeout = window.setTimeout(() => {
       if (tabs.length === 0) {
         localStorage.removeItem(tabStorageKey);
+        if (legacyTabStorageKey !== tabStorageKey) {
+          localStorage.removeItem(legacyTabStorageKey);
+        }
         return;
       }
 
@@ -1112,12 +1172,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           activeTabId: activeTab,
         }),
       );
+      if (legacyTabStorageKey !== tabStorageKey) {
+        localStorage.removeItem(legacyTabStorageKey);
+      }
     }, 120);
 
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [tabs, activeTab, tabStorageKey]);
+  }, [tabs, activeTab, tabStorageKey, legacyTabStorageKey]);
 
   const lastFileToOpenRef = useRef<string | null>(null);
 

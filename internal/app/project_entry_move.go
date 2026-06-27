@@ -41,30 +41,27 @@ var jsTSImportExtensions = []string{
 }
 
 func (a *App) MoveProjectEntry(path string, targetDirectory string) (ProjectEntryMoveResult, error) {
-	entryPath, projectPath, err := a.resolveProjectEntryPath(path)
+	root, err := resolveProjectEntryRootFromPath(a.currentProjectPath())
 	if err != nil {
 		return ProjectEntryMoveResult{}, err
 	}
-	targetDir, err := normalizeRequiredPath(targetDirectory, "target directory")
+	entry, err := resolveProjectEntryPathInRoot(root, path, true)
 	if err != nil {
 		return ProjectEntryMoveResult{}, err
 	}
-	if err := ensurePathWithinProject(projectPath, targetDir); err != nil {
+	target, err := resolveProjectEntryPathInRoot(root, targetDirectory, true)
+	if err != nil {
 		return ProjectEntryMoveResult{}, err
 	}
-	if entryPath == projectPath {
+	entryPath := entry.Path
+	targetDir := target.Path
+	projectPath := root.Abs
+	if entryPath == root.Abs || entry.Resolved == root.Resolved {
 		return ProjectEntryMoveResult{}, fmt.Errorf("cannot move project root")
 	}
 
-	info, err := os.Stat(entryPath)
-	if err != nil {
-		return ProjectEntryMoveResult{}, err
-	}
-	targetInfo, err := os.Stat(targetDir)
-	if err != nil {
-		return ProjectEntryMoveResult{}, fmt.Errorf("target directory unavailable: %w", err)
-	}
-	if !targetInfo.IsDir() {
+	info := entry.Info
+	if !target.IsDirectory {
 		return ProjectEntryMoveResult{}, fmt.Errorf("target is not a directory: %s", targetDir)
 	}
 	if info.IsDir() && pathWithinRoot(targetDir, entryPath) {

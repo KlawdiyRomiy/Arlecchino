@@ -1,6 +1,5 @@
 import React from "react";
 import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
 import { openExternalUrlWithCapability } from "../shell/browser";
@@ -22,6 +21,22 @@ const isAbsoluteHttpUrl = (href: string | undefined): href is string => {
     return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
   } catch {
     return false;
+  }
+};
+
+const isSafeMarkdownImageSrc = (src: string | undefined): src is string => {
+  const value = src?.trim();
+  if (!value || value.startsWith("//")) {
+    return false;
+  }
+  if (/^data:image\/(avif|gif|jpeg|jpg|png|webp);/i.test(value)) {
+    return true;
+  }
+  try {
+    const parsedUrl = new URL(value);
+    return parsedUrl.protocol === "blob:";
+  } catch {
+    return !/^[a-z][a-z0-9+.-]*:/i.test(value);
   }
 };
 
@@ -103,14 +118,20 @@ const markdownComponents = {
   td: (props: React.TdHTMLAttributes<HTMLTableCellElement>) => (
     <td className="border border-[var(--shell-border)] px-3 py-2" {...props} />
   ),
-  img: ({ alt = "", ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
-    <img
-      alt={alt}
-      className="my-4 max-w-full rounded-md border border-[var(--shell-border)]"
-      draggable={false}
-      {...props}
-    />
-  ),
+  img: ({
+    alt = "",
+    src,
+    ...props
+  }: React.ImgHTMLAttributes<HTMLImageElement>) =>
+    isSafeMarkdownImageSrc(src) ? (
+      <img
+        alt={alt}
+        className="my-4 max-w-full rounded-md border border-[var(--shell-border)]"
+        draggable={false}
+        src={src}
+        {...props}
+      />
+    ) : null,
 };
 
 export const MarkdownPreviewPanelContent: React.FC<
@@ -178,11 +199,7 @@ export const MarkdownPreviewPanelContent: React.FC<
       data-source-path={source.path}
     >
       <div className="mx-auto max-w-[860px] px-6 py-5 text-sm">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]}
-          components={components}
-        >
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
           {source.content}
         </ReactMarkdown>
       </div>

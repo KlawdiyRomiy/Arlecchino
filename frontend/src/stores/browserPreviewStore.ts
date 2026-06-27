@@ -51,24 +51,35 @@ export const useBrowserPreviewStore = create<BrowserPreviewStoreState>()(
         set({ closeAutoOpenedOnTerminalExit: value }),
       setMarkdownLinkOpenMode: (value) => set({ markdownLinkOpenMode: value }),
       rememberProjectTarget: (projectPath, target) => {
-        const key = normalizeProjectPathKey(projectPath);
-        if (!key || !isAllowedPreviewUrl(target.url)) {
+        const legacyKey = normalizeProjectPathKey(projectPath);
+        const key = projectPathStorageKey(projectPath);
+        const persistedTarget = sanitizePreviewTargetForStorage(target);
+        if (!key || !persistedTarget) {
           return;
         }
 
-        set((state) => ({
-          lastKnownTargetByProject: {
-            ...state.lastKnownTargetByProject,
-            [key]: target,
-          },
-        }));
+        set((state) => {
+          const { [legacyKey]: _legacy, ...rest } =
+            state.lastKnownTargetByProject;
+          return {
+            lastKnownTargetByProject: {
+              ...rest,
+              [key]: persistedTarget,
+            },
+          };
+        });
       },
       getLastKnownTarget: (projectPath) => {
-        const key = normalizeProjectPathKey(projectPath);
+        const key = projectPathStorageKey(projectPath);
         if (!key) {
           return null;
         }
-        return get().lastKnownTargetByProject[key] ?? null;
+        const legacyKey = normalizeProjectPathKey(projectPath);
+        const targets = get().lastKnownTargetByProject;
+        return (
+          sanitizePreviewTargetForStorage(targets[key]) ??
+          sanitizePreviewTargetForStorage(targets[legacyKey])
+        );
       },
     }),
     {
@@ -79,7 +90,9 @@ export const useBrowserPreviewStore = create<BrowserPreviewStoreState>()(
         closeAutoOpenedOnTerminalExit: state.closeAutoOpenedOnTerminalExit,
         markdownLinkOpenMode: state.markdownLinkOpenMode,
         allowedOrigins: state.allowedOrigins,
-        lastKnownTargetByProject: state.lastKnownTargetByProject,
+        lastKnownTargetByProject: sanitizedPersistedTargets(
+          state.lastKnownTargetByProject,
+        ),
       }),
     },
   ),
@@ -95,6 +108,27 @@ export function normalizeProjectPathKey(projectPath: string): string {
   return withoutTrailingSeparators || "/";
 }
 
+export function projectPathStorageKey(projectPath: string): string {
+  const normalized = normalizeProjectPathKey(projectPath);
+  if (!normalized) {
+    return "";
+  }
+  return `project:${stablePathHash(normalized)}`;
+}
+
+function isProjectPathStorageKey(key: string): boolean {
+  return key.startsWith("project:");
+}
+
+function stablePathHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+}
+
 export function isAllowedPreviewUrl(
   url: string,
   allowedOrigins: string[] = DEFAULT_ALLOWED_ORIGINS,
@@ -107,5 +141,41 @@ export function isAllowedPreviewUrl(
     return allowedOrigins.includes(parsed.hostname);
   } catch {
     return false;
+  }
+}
+
+function sanitizedPersistedTargets(
+  targets: Record<string, BrowserPreviewTarget>,
+): Record<string, BrowserPreviewTarget> {
+  return Object.fromEntries(
+    Object.entries(targets).flatMap(([key, target]) => {
+      if (!isProjectPathStorageKey(key)) {
+        return [];
+      }
+      const sanitized = sanitizePreviewTargetForStorage(target);
+      return sanitized ? [[key, sanitized]] : [];
+    }),
+  );
+}
+
+function sanitizePreviewTargetForStorage(
+  target: BrowserPreviewTarget | undefined,
+): BrowserPreviewTarget | null {
+  if (!target || !isAllowedPreviewUrl(target.url)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(target.url);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return {
+      url: parsed.toString(),
+      source: target.source,
+      updatedAt: target.updatedAt,
+    };
+  } catch {
+    return null;
   }
 }

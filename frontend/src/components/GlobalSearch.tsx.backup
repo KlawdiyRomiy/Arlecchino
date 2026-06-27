@@ -20,6 +20,16 @@ interface GlobalSearchProps {
   onFileOpen: (path: string, line: number) => void;
 }
 
+const GLOBAL_SEARCH_STORAGE_KEY = "last-global-search";
+
+interface CachedGlobalSearchState {
+  query?: string;
+  caseSensitive?: boolean;
+  useRegex?: boolean;
+  wholeWord?: boolean;
+  fileTypeFilter?: string;
+}
+
 export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   isOpen,
   onClose,
@@ -42,14 +52,15 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   // Load cached search on mount
   useEffect(() => {
     if (isOpen) {
-      const cached = localStorage.getItem("last-global-search");
+      const cached = localStorage.getItem(GLOBAL_SEARCH_STORAGE_KEY);
       if (cached) {
         try {
-          const data = JSON.parse(cached);
+          const data = JSON.parse(cached) as CachedGlobalSearchState;
           setQuery(data.query || "");
-          setResults(data.results || []);
           setCaseSensitive(data.caseSensitive || false);
           setUseRegex(data.useRegex || false);
+          setWholeWord(data.wholeWord ?? true);
+          setFileTypeFilter(data.fileTypeFilter || "all");
         } catch (e) {
           console.error("Failed to load cached search", e);
         }
@@ -105,17 +116,17 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   const handleClose = () => {
     if (query.trim()) {
       localStorage.setItem(
-        "last-global-search",
+        GLOBAL_SEARCH_STORAGE_KEY,
         JSON.stringify({
           query,
-          results,
           caseSensitive,
           useRegex,
           wholeWord,
+          fileTypeFilter,
         }),
       );
     } else {
-      localStorage.removeItem("last-global-search");
+      localStorage.removeItem(GLOBAL_SEARCH_STORAGE_KEY);
     }
     onClose();
   };

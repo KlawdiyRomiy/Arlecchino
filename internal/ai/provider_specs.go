@@ -366,6 +366,9 @@ func endpointClassForSpec(setting providers.AIProviderSettings, spec providerSpe
 	if spec.Frontier {
 		return "frontier"
 	}
+	if spec.AuthMode == providers.ProviderAuthModeOAuth {
+		return "remote_oauth"
+	}
 	if !spec.Local && spec.RequiresAuth {
 		return "remote_byok"
 	}
@@ -382,6 +385,8 @@ func billingModeForSpec(spec providerSpec) string {
 	switch {
 	case spec.Local:
 		return "local"
+	case spec.AuthMode == providers.ProviderAuthModeOAuth:
+		return "oauth"
 	case !spec.Frontier && spec.RequiresAuth:
 		return "byok"
 	case spec.Frontier:
@@ -395,6 +400,8 @@ func legalBasisForSpec(spec providerSpec) string {
 	switch {
 	case spec.Local:
 		return "local_runtime"
+	case spec.AuthMode == providers.ProviderAuthModeOAuth:
+		return "user_authorized_oauth"
 	case !spec.Frontier && spec.RequiresAuth:
 		return "user_supplied_api_key"
 	case spec.Frontier && spec.Factory != nil:
@@ -410,6 +417,8 @@ func riskTierForSpec(spec providerSpec) string {
 	switch {
 	case spec.Local:
 		return "local"
+	case spec.AuthMode == providers.ProviderAuthModeOAuth:
+		return "remote_oauth"
 	case !spec.Frontier && spec.RequiresAuth:
 		return "remote_byok"
 	case spec.Frontier && spec.Factory != nil:
@@ -431,6 +440,9 @@ func firstNonEmptyCapabilities(values ...[]providers.AIProviderCapability) []pro
 }
 
 func reasonForProviderSpec(spec providerSpec) string {
+	if spec.AuthMode == providers.ProviderAuthModeOAuth {
+		return "OAuth authorization required"
+	}
 	if spec.RequiresAuth && spec.Factory != nil {
 		return "API key required"
 	}

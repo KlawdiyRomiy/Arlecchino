@@ -341,8 +341,15 @@ func (p *ProjectSession) Close() error {
 }
 
 func (s *Service) Status(projectID string) AIStatus {
+	return s.statusForProject(s.project(projectID))
+}
+
+func (s *Service) StatusWithoutProject() AIStatus {
+	return s.statusForProject(nil)
+}
+
+func (s *Service) statusForProject(project *ProjectSession) AIStatus {
 	settings := s.currentSettings()
-	project := s.project(projectID)
 	status := AIStatus{
 		Enabled:            settings.Enabled,
 		MnemonicEnabled:    settings.MnemonicDefaultEnabled,
@@ -528,6 +535,9 @@ func (s *Service) SaveProviderSettings(ctx context.Context, providerSettings pro
 		providerSettings.SecretValue = ""
 		providerSettings.ClearSecret = false
 	}
+	if err := s.validateProviderActivationSettings(providerSettings); err != nil {
+		return providers.AIProviderDescriptor{}, err
+	}
 	if strings.TrimSpace(providerSettings.SecretValue) != "" {
 		ref := providerSettings.SecretRef
 		if ref == "" {
@@ -538,9 +548,6 @@ func (s *Service) SaveProviderSettings(ctx context.Context, providerSettings pro
 		}
 		providerSettings.SecretRef = ref
 		providerSettings.SecretValue = ""
-	}
-	if err := validateProviderActivationSettings(providerSettings); err != nil {
-		return providers.AIProviderDescriptor{}, err
 	}
 
 	s.mu.Lock()
@@ -667,6 +674,7 @@ func (s *Service) refreshLocalProviders(ctx context.Context, candidates []provid
 func (s *Service) TestProvider(ctx context.Context, providerID string) (providers.AIProviderDescriptor, error) {
 	providerID = strings.TrimSpace(providerID)
 	provider, ok := s.provider(providerID)
+	var descriptor providers.AIProviderDescriptor
 	if !ok {
 		s.mu.RLock()
 		var setting providers.AIProviderSettings
@@ -687,9 +695,16 @@ func (s *Service) TestProvider(ctx context.Context, providerID string) (provider
 	if !ok {
 		return providers.AIProviderDescriptor{}, fmt.Errorf("provider %q is not configured", providerID)
 	}
+	descriptor = providers.EnrichProviderDescriptorModels(provider.Descriptor())
+	if descriptor.ID == "" {
+		return providers.AIProviderDescriptor{}, fmt.Errorf("provider %q is not configured", providerID)
+	}
+	if reason := providerConsentBlockReason(s.currentSettings(), descriptor); reason != "" {
+		return descriptor, fmt.Errorf("%s", reason)
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	descriptor := providers.EnrichProviderDescriptorModels(provider.HealthCheck(checkCtx))
+	descriptor = providers.EnrichProviderDescriptorModels(provider.HealthCheck(checkCtx))
 	s.mu.Lock()
 	s.descriptors[descriptor.ID] = descriptor
 	s.mu.Unlock()
@@ -1623,6 +1638,9 @@ func providerConsentBlockReason(settings Settings, descriptor providers.AIProvid
 		}
 		return ""
 	}
+	if descriptor.AuthMode == providers.ProviderAuthModeOAuth {
+		return ""
+	}
 	if descriptor.EndpointClass == "remote_byok" || (!descriptor.Frontier && descriptor.RequiresAuth) {
 		if !consent.RemoteBYOKProvidersAccepted {
 			return "remote BYOK provider disclosure is not accepted"
@@ -1680,6 +1698,7 @@ func predictionProviderBlockReason(settings Settings, descriptor providers.AIPro
 		if !consent.LocalProvidersAccepted {
 			return "local AI provider disclosure is not accepted"
 		}
+	} else if descriptor.AuthMode == providers.ProviderAuthModeOAuth {
 	} else if descriptor.EndpointClass == "remote_byok" || (!descriptor.Local && !descriptor.Frontier) {
 		if !consent.RemoteBYOKProvidersAccepted {
 			return "remote BYOK provider disclosure is not accepted"
@@ -1814,7 +1833,7 @@ func validateProviderSettings(setting providers.AIProviderSettings) error {
 	return nil
 }
 
-func validateProviderActivationSettings(setting providers.AIProviderSettings) error {
+func (s *Service) validateProviderActivationSettings(setting providers.AIProviderSettings) error {
 	if !setting.Enabled {
 		return nil
 	}
@@ -1824,6 +1843,15 @@ func validateProviderActivationSettings(setting providers.AIProviderSettings) er
 	}
 	if strings.TrimSpace(setting.SecretRef) == "" && strings.TrimSpace(setting.SecretValue) == "" {
 		return fmt.Errorf("AI provider %q requires an API key before it can be enabled", setting.ID)
+	}
+	if spec.AuthMode == providers.ProviderAuthModeOAuth {
+		return nil
+	}
+	if providerSettingsCanBecomeActive(setting) {
+		descriptor := providers.EnrichProviderDescriptorModels(descriptorFromSettings(setting))
+		if reason := providerConsentBlockReason(s.currentSettings(), descriptor); reason != "" {
+			return fmt.Errorf("%s", reason)
+		}
 	}
 	return nil
 }

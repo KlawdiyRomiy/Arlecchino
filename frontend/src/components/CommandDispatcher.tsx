@@ -43,7 +43,6 @@ import {
   GetDispatcherSuggestions,
   ExpandTag,
   PredictTerminalCommand,
-  GetTerminalHistory,
 } from "../wails/app";
 
 interface DispatcherItem {
@@ -93,6 +92,51 @@ const backendSearchAction = (action: string | undefined): string =>
   action === "error" ? "error" : "open";
 
 type InputMode = "default" | "ide" | "file" | "grep" | "symbol" | "ai" | "tag";
+
+const DISPATCHER_HISTORY_STORAGE_KEY = "dispatcher_history";
+const MAX_DISPATCHER_HISTORY_ITEMS = 100;
+const SENSITIVE_HISTORY_PATTERNS = [
+  /\b(token|secret|password|passwd|apikey|api[_-]?key|authorization)\b/i,
+  /\b[A-Za-z0-9_]*_TOKEN=/,
+  /\b[A-Za-z0-9_]*_SECRET=/,
+  /\b[A-Za-z0-9_]*_KEY=/,
+  /\b(github_pat|ghp|sk-[A-Za-z0-9_-]{12,})/i,
+];
+
+const readDispatcherHistory = (): string[] => {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(DISPATCHER_HISTORY_STORAGE_KEY) || "[]",
+    );
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const looksSensitiveDispatcherHistory = (value: string): boolean =>
+  SENSITIVE_HISTORY_PATTERNS.some((pattern) => pattern.test(value));
+
+const rememberDispatcherHistory = (value: string) => {
+  const normalized = value.trim();
+  if (!normalized || looksSensitiveDispatcherHistory(normalized)) {
+    return;
+  }
+  const history = readDispatcherHistory();
+  const nextHistory = [
+    normalized,
+    ...history.filter((item) => item !== normalized),
+  ].slice(0, MAX_DISPATCHER_HISTORY_ITEMS);
+  localStorage.setItem(
+    DISPATCHER_HISTORY_STORAGE_KEY,
+    JSON.stringify(nextHistory),
+  );
+};
+
+const shouldRememberDispatcherItem = (item: DispatcherItem): boolean =>
+  item.action !== "terminal" && !item.filePath;
 
 const GREP_QUOTE_CLOSERS: Record<string, string> = {
   '"': '"',
@@ -176,6 +220,8 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   const [savedInput, setSavedInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const predictionRequestSeqRef = useRef(0);
+  const itemsRequestSeqRef = useRef(0);
 
   const mode = getModeFromInput(input);
   const hasResults = items.length > 0;
@@ -331,31 +377,17 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       setHistoryIndex(-1);
       setSavedInput("");
 
-      const loadHistory = async () => {
-        const localHistory = JSON.parse(
-          localStorage.getItem("dispatcher_history") || "[]",
-        ) as string[];
-
-        try {
-          const shellHistory = await GetTerminalHistory(100);
-          const terminalCommands = (shellHistory || []).map(
-            (cmd: string) => "@t " + cmd,
-          );
-          const combined = [...localHistory, ...terminalCommands];
-          const unique = [...new Set(combined)];
-          setHistoryList(unique);
-        } catch {
-          setHistoryList(localHistory);
-        }
-      };
-
-      loadHistory();
+      setHistoryList(readDispatcherHistory());
     }
   }, [isOpen]);
 
   // Debounced terminal prediction
   useEffect(() => {
+    const requestId = predictionRequestSeqRef.current + 1;
+    predictionRequestSeqRef.current = requestId;
+
     if (!isTerminalMode) {
+      setGhostText("");
       return;
     }
 
@@ -371,6 +403,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
           workDir: projectPath,
           projectID: "",
         });
+        if (predictionRequestSeqRef.current !== requestId) {
+          return;
+        }
 
         if (response.predictions && response.predictions.length > 0) {
           const prediction = response.predictions[0];
@@ -385,13 +420,16 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
           setGhostText("");
         }
       } catch (e) {
+        if (predictionRequestSeqRef.current !== requestId) {
+          return;
+        }
         console.error("[Dispatcher] PredictTerminalCommand error:", e);
         setGhostText("");
       }
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [isTerminalMode, terminalCommand]);
+  }, [isTerminalMode, terminalCommand, projectPath]);
 
   // Clear suggestion items when entering direct terminal mode.
   useEffect(() => {
@@ -401,6 +439,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   }, [isTerminalMode]);
 
   useEffect(() => {
+    const requestId = itemsRequestSeqRef.current + 1;
+    itemsRequestSeqRef.current = requestId;
+
     // Skip items loading entirely in terminal mode
     if (isTerminalMode) {
       return;
@@ -547,6 +588,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
         }
       }
 
+      if (itemsRequestSeqRef.current !== requestId) {
+        return;
+      }
       setItems(newItems);
       setSelectedIndex(0);
     };
@@ -559,6 +603,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
     recentItems,
     isTerminalMode,
     historyIndex,
+    projectPath,
     buildAIInputItems,
     buildLocalAIActionItems,
   ]);
@@ -754,54 +799,16 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
         case "Enter":
           e.preventDefault();
           if (isTerminalMode && terminalCommand && onTerminalCommand) {
-            // Save terminal command to history
-            if (input.trim()) {
-              const history = JSON.parse(
-                localStorage.getItem("dispatcher_history") || "[]",
-              ) as string[];
-              const newHistory = [
-                input,
-                ...history.filter((h) => h !== input),
-              ].slice(0, 100);
-              localStorage.setItem(
-                "dispatcher_history",
-                JSON.stringify(newHistory),
-              );
-            }
             onTerminalCommand(terminalCommand);
             onClose();
             return;
           }
           if (items[selectedIndex]) {
-            // Save the full item title to history, not partial input
-            const itemTitle = items[selectedIndex].title;
-            const history = JSON.parse(
-              localStorage.getItem("dispatcher_history") || "[]",
-            ) as string[];
-            const newHistory = [
-              itemTitle,
-              ...history.filter((h) => h !== itemTitle),
-            ].slice(0, 100);
-            localStorage.setItem(
-              "dispatcher_history",
-              JSON.stringify(newHistory),
-            );
+            if (shouldRememberDispatcherItem(items[selectedIndex])) {
+              rememberDispatcherHistory(items[selectedIndex].title);
+            }
             void executeItem(items[selectedIndex]);
           } else if (input) {
-            // Save raw input to history only when no item selected
-            if (input.trim()) {
-              const history = JSON.parse(
-                localStorage.getItem("dispatcher_history") || "[]",
-              ) as string[];
-              const newHistory = [
-                input,
-                ...history.filter((h) => h !== input),
-              ].slice(0, 100);
-              localStorage.setItem(
-                "dispatcher_history",
-                JSON.stringify(newHistory),
-              );
-            }
             if (mode === "ai") {
               const parsed = parseAICommandInput(input);
               if (parsed.kind === "start") {

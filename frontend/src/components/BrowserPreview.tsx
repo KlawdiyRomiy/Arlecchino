@@ -483,7 +483,9 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
           onPointerEnter={focusPreviewFrame}
           onWheel={focusPreviewFrame}
           onLoad={() => setIsLoading(false)}
-          sandbox="allow-scripts allow-forms allow-popups"
+          sandbox={
+            inlineDocument ? "" : "allow-scripts allow-forms allow-popups"
+          }
         />
       </div>
 

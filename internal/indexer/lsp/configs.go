@@ -81,7 +81,6 @@ func NormalizeServerConfig(cfg ServerConfig) ServerConfig {
 func serverGroupForServer(language string, serverID string, command string) string {
 	serverID = strings.ToLower(strings.TrimSpace(serverID))
 	command = strings.ToLower(filepath.Base(strings.TrimSpace(command)))
-	language = lspregistry.NormalizeLanguageToken(language)
 	switch {
 	case serverID == "typescript-language-server" || command == "typescript-language-server":
 		return "tsserver"

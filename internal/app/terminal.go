@@ -25,17 +25,36 @@ func (a *App) CreateTerminal(id, name string) error {
 func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 	projectSession := a.activeProjectSession()
 	projectSessionID := "main"
+	activeProjectPath := strings.TrimSpace(a.GetCurrentProjectPath())
 	if projectSession != nil {
 		projectSessionID = projectSession.ID
+		activeProjectPath = strings.TrimSpace(projectSession.currentProjectPath())
 	}
 	termManager := a.activeTerminalManager()
 	if termManager == nil {
 		return fmt.Errorf("terminal manager not initialized")
 	}
-	workingDir := projectPath
+	workingDir := strings.TrimSpace(projectPath)
 	if workingDir == "" {
-		home, _ := os.UserHomeDir()
-		workingDir = home
+		workingDir = activeProjectPath
+		if workingDir == "" {
+			home, _ := os.UserHomeDir()
+			workingDir = home
+		}
+	}
+	if activeProjectPath != "" {
+		resolved, err := a.resolveRendererProjectPath(workingDir, "terminal working directory", true)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("terminal working directory is not a directory: %s", resolved)
+		}
+		workingDir = resolved
 	}
 
 	session, err := termManager.Create(id, name, workingDir)

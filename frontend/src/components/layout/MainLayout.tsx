@@ -250,6 +250,66 @@ type FullscreenPanelId =
 
 const CLOSED_PANEL_SURFACE_STACK_LIMIT = 24;
 
+const normalizeProjectStoragePath = (
+  projectPath: string | null | undefined,
+): string =>
+  (projectPath ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/")
+    .replace(/\/+$/, "");
+
+const stableProjectStorageHash = (value: string): string => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+};
+
+const projectScopedStorageKey = (
+  prefix: string,
+  projectPath: string | null | undefined,
+): string | null => {
+  const normalizedProjectPath = normalizeProjectStoragePath(projectPath);
+  return normalizedProjectPath
+    ? `${prefix}:project:${stableProjectStorageHash(normalizedProjectPath)}`
+    : null;
+};
+
+const legacyProjectScopedStorageKey = (
+  prefix: string,
+  projectPath: string | null | undefined,
+): string | null => (projectPath ? `${prefix}:${projectPath}` : null);
+
+const hasLocalStorageItem = (storageKey: string | null): boolean => {
+  if (!storageKey) {
+    return false;
+  }
+  try {
+    return localStorage.getItem(storageKey) !== null;
+  } catch {
+    return false;
+  }
+};
+
+const loadProjectPanelLayoutState = (
+  panelStorageKey: string | null,
+  legacyPanelStorageKey: string | null,
+): HydratedPanelLayoutState => {
+  if (
+    panelStorageKey &&
+    legacyPanelStorageKey &&
+    legacyPanelStorageKey !== panelStorageKey &&
+    !hasLocalStorageItem(panelStorageKey) &&
+    hasLocalStorageItem(legacyPanelStorageKey)
+  ) {
+    return loadPersistedPanelLayoutState(legacyPanelStorageKey);
+  }
+  return loadPersistedPanelLayoutState(panelStorageKey);
+};
+
 type ClosedPanelSurfaceEntry =
   | {
       kind: "panel";
@@ -858,12 +918,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const dispatcher = useDispatcher();
   const { activeModal, closeModal } = usePluginModal();
 
-  const panelStorageKey = activeProjectId
-    ? `panelState:${activeProjectId}`
-    : null;
+  const panelStorageKey = projectScopedStorageKey(
+    "panelState",
+    activeProjectId,
+  );
+  const legacyPanelStorageKey = legacyProjectScopedStorageKey(
+    "panelState",
+    activeProjectId,
+  );
   const initialPanelLayoutState = React.useMemo(
-    () => loadPersistedPanelLayoutState(panelStorageKey),
-    [panelStorageKey],
+    () => loadProjectPanelLayoutState(panelStorageKey, legacyPanelStorageKey),
+    [legacyPanelStorageKey, panelStorageKey],
   );
 
   const [panels, setPanels] = useState<PanelVisibility>(() => {
@@ -1231,11 +1296,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           zenPinnedPanels,
         }),
       );
+      if (legacyPanelStorageKey && legacyPanelStorageKey !== panelStorageKey) {
+        localStorage.removeItem(legacyPanelStorageKey);
+      }
     } catch {
       /* quota */
     }
   }, [
     panelConfigs,
+    legacyPanelStorageKey,
     panelStorageKey,
     panels,
     rememberedSnappedPositions,
