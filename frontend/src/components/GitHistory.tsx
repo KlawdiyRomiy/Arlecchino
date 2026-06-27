@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -14,10 +14,23 @@ import * as AppFunctions from "../wails/app";
 import type { GitCommitInfo } from "../../bindings/arlecchino/internal/app/models";
 import { useTheme } from "../hooks/useTheme";
 import { radius, transitions, zIndex } from "../styles/colors";
+import { toErrorMessage } from "../utils/errorMessages";
+import { GitDiffViewer } from "./GitDiffViewer";
 
 interface ParsedCommitStat {
   path: string;
   summary: string;
+}
+
+interface ParsedCommitDiffFile {
+  path: string;
+  diff: string;
+}
+
+interface CommitFileDetail {
+  path: string;
+  summary: string;
+  diff: string;
 }
 
 interface GitHistoryProps {
@@ -87,6 +100,87 @@ const parseCommitStats = (output: string): ParsedCommitStat[] =>
     })
     .filter((line) => line.path);
 
+const unquoteGitDiffPath = (path: string): string =>
+  path.trim().replace(/^"|"$/g, "").replace(/^a\//, "").replace(/^b\//, "");
+
+const parseCommitDiffPath = (header: string): string => {
+  const quotedMatch = header.match(/^diff --git "a\/(.+)" "b\/(.+)"$/);
+  if (quotedMatch) {
+    return unquoteGitDiffPath(quotedMatch[2] ?? quotedMatch[1] ?? "");
+  }
+
+  const plainMatch = header.match(/^diff --git a\/(.+) b\/(.+)$/);
+  if (plainMatch) {
+    return unquoteGitDiffPath(plainMatch[2] ?? plainMatch[1] ?? "");
+  }
+
+  return "";
+};
+
+const parseCommitDiffFiles = (diffText: string): ParsedCommitDiffFile[] => {
+  const files: ParsedCommitDiffFile[] = [];
+  let currentPath = "";
+  let currentLines: string[] = [];
+
+  const flushCurrent = () => {
+    if (!currentPath || currentLines.length === 0) {
+      return;
+    }
+    files.push({
+      path: currentPath,
+      diff: currentLines.join("\n"),
+    });
+  };
+
+  diffText.split("\n").forEach((line) => {
+    if (line.startsWith("diff --git ")) {
+      flushCurrent();
+      currentPath = parseCommitDiffPath(line);
+      currentLines = [line];
+      return;
+    }
+
+    if (currentLines.length > 0) {
+      currentLines.push(line);
+    }
+  });
+
+  flushCurrent();
+  return files;
+};
+
+const pathsMatch = (first: string, second: string): boolean =>
+  first === second ||
+  first.endsWith(`/${second}`) ||
+  second.endsWith(`/${first}`);
+
+const buildCommitFileDetails = (
+  stats: ParsedCommitStat[],
+  diffFiles: ParsedCommitDiffFile[],
+): CommitFileDetail[] => {
+  if (stats.length === 0) {
+    return diffFiles.map((file) => ({
+      path: file.path,
+      summary: "",
+      diff: file.diff,
+    }));
+  }
+
+  return stats.map((entry, index) => {
+    const matchedDiff =
+      diffFiles.find((file) => pathsMatch(file.path, entry.path)) ??
+      diffFiles[index];
+    return {
+      path: entry.path,
+      summary: entry.summary,
+      diff: matchedDiff?.diff ?? "",
+    };
+  });
+};
+
+const hasRecordKey = <T,>(record: Record<string, T>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
 export const GitHistory: React.FC<GitHistoryProps> = ({
   commits,
   loading,
@@ -96,6 +190,16 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
   const { isDark } = useTheme();
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitStats, setCommitStats] = useState<Record<string, string>>({});
+  const [commitDiffs, setCommitDiffs] = useState<Record<string, string>>({});
+  const [commitDetailsLoading, setCommitDetailsLoading] = useState<
+    Record<string, boolean>
+  >({});
+  const [commitDetailsErrors, setCommitDetailsErrors] = useState<
+    Record<string, string>
+  >({});
+  const [selectedCommitFileIndex, setSelectedCommitFileIndex] = useState<
+    Record<string, number>
+  >({});
   const [search, setSearch] = useState("");
 
   const panelVars = useMemo(
@@ -134,24 +238,87 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
     });
   }, [commits, search]);
 
-  const toggleExpand = async (hash: string) => {
+  const loadCommitDetails = useCallback(
+    async (hash: string) => {
+      if (
+        commitDetailsLoading[hash] ||
+        (hasRecordKey(commitStats, hash) && hasRecordKey(commitDiffs, hash))
+      ) {
+        return;
+      }
+
+      setCommitDetailsLoading((prev) => ({ ...prev, [hash]: true }));
+      setCommitDetailsErrors((prev) => {
+        const next = { ...prev };
+        delete next[hash];
+        return next;
+      });
+
+      const [statsResult, diffResult] = await Promise.allSettled([
+        AppFunctions.GetGitShow(hash),
+        AppFunctions.GetGitCommitDiff(hash),
+      ]);
+
+      if (statsResult.status === "fulfilled") {
+        setCommitStats((prev) => ({
+          ...prev,
+          [hash]: statsResult.value ?? "",
+        }));
+      } else {
+        setCommitStats((prev) => ({ ...prev, [hash]: "" }));
+      }
+
+      if (diffResult.status === "fulfilled") {
+        setCommitDiffs((prev) => ({
+          ...prev,
+          [hash]: diffResult.value ?? "",
+        }));
+      } else {
+        setCommitDiffs((prev) => ({ ...prev, [hash]: "" }));
+      }
+
+      if (
+        statsResult.status === "rejected" ||
+        diffResult.status === "rejected"
+      ) {
+        const error =
+          statsResult.status === "rejected"
+            ? statsResult.reason
+            : diffResult.status === "rejected"
+              ? diffResult.reason
+              : null;
+        setCommitDetailsErrors((prev) => ({
+          ...prev,
+          [hash]: toErrorMessage(error),
+        }));
+      }
+
+      setCommitDetailsLoading((prev) => ({ ...prev, [hash]: false }));
+    },
+    [commitDetailsLoading, commitDiffs, commitStats],
+  );
+
+  const toggleExpand = (hash: string) => {
     if (expandedCommit === hash) {
       setExpandedCommit(null);
       return;
     }
 
     setExpandedCommit(hash);
-    if (commitStats[hash]) {
+    setSelectedCommitFileIndex((prev) =>
+      hasRecordKey(prev, hash) ? prev : { ...prev, [hash]: 0 },
+    );
+    void loadCommitDetails(hash);
+  };
+
+  useEffect(() => {
+    if (!expandedCommit) {
       return;
     }
-
-    try {
-      const stats = await AppFunctions.GetGitShow(hash);
-      setCommitStats((prev) => ({ ...prev, [hash]: stats }));
-    } catch {
-      setCommitStats((prev) => ({ ...prev, [hash]: "" }));
+    if (!commits.some((commit) => commit.hash === expandedCommit)) {
+      setExpandedCommit(null);
     }
-  };
+  }, [commits, expandedCommit]);
 
   return (
     <div
@@ -204,6 +371,24 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
             {filteredCommits.map((commit, index) => {
               const isExpanded = expandedCommit === commit.hash;
               const stats = parseCommitStats(commitStats[commit.hash] ?? "");
+              const diff = commitDiffs[commit.hash] ?? "";
+              const diffFiles = parseCommitDiffFiles(diff);
+              const commitFiles = buildCommitFileDetails(stats, diffFiles);
+              const maxFileIndex = Math.max(0, commitFiles.length - 1);
+              const activeFileIndex = Math.min(
+                selectedCommitFileIndex[commit.hash] ?? 0,
+                maxFileIndex,
+              );
+              const activeFile = commitFiles[activeFileIndex] ?? null;
+              const detailsLoading = commitDetailsLoading[commit.hash] ?? false;
+              const detailsError = commitDetailsErrors[commit.hash] ?? "";
+              const selectCommitFile = (index: number) => {
+                setSelectedCommitFileIndex((prev) => ({
+                  ...prev,
+                  [commit.hash]: Math.max(0, Math.min(index, maxFileIndex)),
+                }));
+              };
+
               return (
                 <div key={commit.hash} className="pb-2 last:pb-0">
                   <div
@@ -298,26 +483,109 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                         </div>
                       )}
 
-                      {stats.length > 0 && (
-                        <div className="space-y-1.5">
-                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
-                            Changed files
-                          </div>
-                          {stats.slice(0, 8).map((entry) => (
-                            <div
-                              key={`${commit.hash}:${entry.path}`}
-                              className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-2"
-                            >
-                              <div className="truncate text-[11px] text-[var(--git-text)]">
-                                {entry.path}
-                              </div>
-                              <div className="text-[10px] text-[var(--git-text-secondary)]">
-                                {entry.summary}
-                              </div>
-                            </div>
-                          ))}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                          <span>Changed files</span>
+                          <span className="rounded-full border border-[var(--git-border)] px-2.5 py-1 text-[12px] tracking-normal">
+                            {commitFiles.length}
+                          </span>
                         </div>
-                      )}
+
+                        {detailsLoading && commitFiles.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-3 text-[13px] text-[var(--git-text-secondary)]">
+                            Loading changed files...
+                          </div>
+                        ) : commitFiles.length > 0 ? (
+                          <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                            {commitFiles.map((entry, fileIndex) => {
+                              const fileSelected =
+                                fileIndex === activeFileIndex;
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => selectCommitFile(fileIndex)}
+                                  key={`${commit.hash}:${entry.path}`}
+                                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors hover:border-[#ef4444] hover:bg-[var(--git-bg-hover)]"
+                                  style={{
+                                    borderColor: fileSelected
+                                      ? "#ef4444"
+                                      : "var(--git-border)",
+                                    background: fileSelected
+                                      ? "var(--git-bg-hover)"
+                                      : "var(--git-bg-tertiary)",
+                                  }}
+                                  title={entry.path}
+                                >
+                                  <div className="truncate text-[15px] text-[var(--git-text)]">
+                                    {entry.path}
+                                  </div>
+                                  <div className="text-[14px] text-[var(--git-text-secondary)]">
+                                    {entry.summary}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-dashed border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-3 text-[13px] text-[var(--git-text-secondary)]">
+                            No changed-file summary is available for this
+                            commit.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                          <span>Diff</span>
+                          {onViewDiff && (
+                            <button
+                              type="button"
+                              onClick={() => onViewDiff(commit.hash)}
+                              className="rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[11px] normal-case tracking-normal text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                            >
+                              Open detail
+                            </button>
+                          )}
+                        </div>
+
+                        {detailsLoading && !activeFile?.diff ? (
+                          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 text-[13px] text-[var(--git-text-secondary)]">
+                            Loading diff...
+                          </div>
+                        ) : activeFile?.diff ? (
+                          <div className="h-[460px] min-h-[320px] overflow-hidden rounded-lg border border-[var(--git-border)]">
+                            <GitDiffViewer
+                              diff={activeFile.diff}
+                              fileName={activeFile.path}
+                              onClose={() => setExpandedCommit(null)}
+                              onPrevFile={
+                                activeFileIndex > 0
+                                  ? () => selectCommitFile(activeFileIndex - 1)
+                                  : undefined
+                              }
+                              onNextFile={
+                                activeFileIndex < commitFiles.length - 1
+                                  ? () => selectCommitFile(activeFileIndex + 1)
+                                  : undefined
+                              }
+                              hasPrev={activeFileIndex > 0}
+                              hasNext={activeFileIndex < commitFiles.length - 1}
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 text-[13px] text-[var(--git-text-secondary)]">
+                            {activeFile
+                              ? "No diff is available for the selected file."
+                              : "No diff is available for this commit."}
+                          </div>
+                        )}
+
+                        {detailsError && (
+                          <div className="rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2 text-[12px] text-[#ef4444]">
+                            {detailsError}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

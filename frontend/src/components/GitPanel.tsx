@@ -601,6 +601,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const attachGitConsumer = useGitStore((state) => state.attachConsumer);
   const setGitProjectPath = useGitStore((state) => state.setProjectPath);
   const refreshGit = useGitStore((state) => state.refresh);
+  const loadGitHistory = useGitStore((state) => state.loadHistory);
   const loadGitStashes = useGitStore((state) => state.loadStashes);
   const panelProjectPath = useMemo(
     () => normalizeProjectPath(projectPath),
@@ -650,6 +651,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const [prBaseOverride, setPrBaseOverride] = useState("");
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const lastStoreErrorRef = useRef<string | null>(null);
+  const lastHistoryAutoLoadProjectRef = useRef<string | null>(null);
   const isDiffFocused =
     presentationMode === "compact" && detailOpen && detailTab === "diff";
 
@@ -677,7 +679,20 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     setPrBaseOverride("");
     setPrUrl(null);
     lastStoreErrorRef.current = null;
+    lastHistoryAutoLoadProjectRef.current = null;
   }, [panelProjectPath]);
+
+  useEffect(() => {
+    if (detailTab !== "history" || !canUseGitProject || !panelProjectPath) {
+      return;
+    }
+    if (lastHistoryAutoLoadProjectRef.current === panelProjectPath) {
+      return;
+    }
+
+    lastHistoryAutoLoadProjectRef.current = panelProjectPath;
+    void loadGitHistory();
+  }, [canUseGitProject, detailTab, loadGitHistory, panelProjectPath]);
 
   useEffect(() => {
     onDiffFocusChange?.(isDiffFocused);
@@ -828,10 +843,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         setDetailOpen(true);
       }
       if (tab === "history" && canUseGitProject) {
-        void git.loadHistory();
+        lastHistoryAutoLoadProjectRef.current = panelProjectPath;
+        void loadGitHistory();
       }
     },
-    [canUseGitProject, git, presentationMode],
+    [canUseGitProject, loadGitHistory, panelProjectPath, presentationMode],
   );
 
   const handleCommit = useCallback(async () => {
@@ -1723,7 +1739,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
           loading={git.historyLoading}
           onRefresh={() => {
             if (canUseGitProject) {
-              void git.loadHistory();
+              void loadGitHistory();
             }
           }}
           onViewDiff={viewCommitDiff}

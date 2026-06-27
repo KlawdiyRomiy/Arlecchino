@@ -1500,7 +1500,7 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 
 // GetGitShow returns details of a specific commit
 func (a *App) GetGitShow(commitHash string) (string, error) {
-	return a.RunGitCommand([]string{"show", "--no-color", "--stat", commitHash})
+	return a.RunGitCommand([]string{"show", "--no-color", "--stat=240,180,10000", commitHash})
 }
 
 // GetGitCommitDiff returns the diff for a specific commit
