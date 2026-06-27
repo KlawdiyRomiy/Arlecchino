@@ -157,7 +157,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   );
 
   const tabClassName = (tab: Tab) => `
-    group relative flex min-w-[120px] max-w-[200px] items-center gap-2 self-stretch px-3 py-2 text-[12px] font-mono
+    group relative flex min-w-[120px] max-w-[200px] items-center gap-2 self-stretch px-3 py-2 text-[12px]
     ${
       activeTab === tab.id
         ? "bg-[var(--bg-secondary)] text-[var(--text-primary)]"

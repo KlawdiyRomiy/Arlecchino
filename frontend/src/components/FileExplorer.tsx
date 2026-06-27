@@ -1247,8 +1247,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
                 fontWeight: 700,
                 fontSize: "11px",
                 letterSpacing: "0.3px",
-                fontFamily:
-                  "'SF Mono', 'JetBrains Mono', 'Fira Code', monospace",
               }}
             >
               {displayParts.suffixLabel}

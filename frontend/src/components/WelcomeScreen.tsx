@@ -173,9 +173,7 @@ const WelcomeScreen: React.FC<{
                     Choose a project folder or file.
                   </div>
                 </div>
-                <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
-                  ⌘O
-                </span>
+                <span className="shell-kbd text-[10px]">⌘O</span>
               </button>
 
               <button
@@ -194,9 +192,7 @@ const WelcomeScreen: React.FC<{
                     Create a fresh workspace with the current defaults.
                   </div>
                 </div>
-                <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
-                  ⌘N
-                </span>
+                <span className="shell-kbd text-[10px]">⌘N</span>
               </button>
 
               <button
@@ -234,14 +230,14 @@ const WelcomeScreen: React.FC<{
                       onClick={() => onProjectOpen(project.path)}
                       className="flex w-full items-center gap-3 border-b border-[var(--border-subtle)] px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)] last:border-b-0"
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-2)] font-mono text-[11px] text-[var(--text-primary)]">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[11px] text-[var(--text-primary)]">
                         {project.name.slice(0, 2).toUpperCase()}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-[var(--text-primary)]">
                           {project.name}
                         </div>
-                        <div className="mt-1 truncate font-mono text-[11px] text-[var(--text-muted)]">
+                        <div className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
                           {project.path}
                         </div>
                       </div>

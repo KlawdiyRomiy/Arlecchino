@@ -1,19 +1,21 @@
 import type { ITerminalOptions } from "@xterm/xterm";
 import { getThemeTerminalById, type ThemeId } from "../styles/themes";
+import { DEFAULT_TERMINAL_FONT_FAMILY } from "./fontFamilyZones";
+
+export { DEFAULT_TERMINAL_FONT_FAMILY };
 
 export const TERMINAL_INTERACTIVE_WRITE_MAX_CHARS = 2048;
-export const TERMINAL_FONT_FAMILY =
-  "'JetBrains Mono', 'SF Mono', Menlo, Monaco, 'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', Consolas, monospace";
 
 export const buildTerminalOptions = (
   themeId: ThemeId,
   terminalFontSize: number,
+  terminalFontFamily = DEFAULT_TERMINAL_FONT_FAMILY,
 ): ITerminalOptions => ({
   cursorBlink: true,
   cursorStyle: "bar",
   cursorInactiveStyle: "outline",
   fontSize: terminalFontSize,
-  fontFamily: TERMINAL_FONT_FAMILY,
+  fontFamily: terminalFontFamily,
   fontWeight: 400,
   fontWeightBold: 700,
   lineHeight: 1,

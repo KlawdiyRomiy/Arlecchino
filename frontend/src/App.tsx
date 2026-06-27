@@ -143,6 +143,12 @@ const App: React.FC = () => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const uiFontFamily = useEditorSettingsStore((state) => state.uiFontFamily);
   const uiFontSize = useEditorSettingsStore((state) => state.uiFontSize);
+  const editorFontFamily = useEditorSettingsStore(
+    (state) => state.editorFontFamily,
+  );
+  const terminalFontFamily = useEditorSettingsStore(
+    (state) => state.terminalFontFamily,
+  );
   const customFonts = useEditorSettingsStore((state) => state.customFonts);
   const confirmBeforeClose = useEditorSettingsStore(
     (state) => state.confirmBeforeClose,
@@ -188,10 +194,24 @@ const App: React.FC = () => {
       "--ui-font-family",
       uiFontFamily,
     );
+    document.documentElement.style.setProperty(
+      "--editor-font-family",
+      editorFontFamily,
+    );
+    document.documentElement.style.setProperty(
+      "--terminal-font-family",
+      terminalFontFamily,
+    );
     return () => {
       document.documentElement.style.removeProperty("--ui-font-family");
+      document.documentElement.style.removeProperty("--editor-font-family");
+      document.documentElement.style.removeProperty("--terminal-font-family");
     };
-  }, [uiFontFamily]);
+  }, [editorFontFamily, terminalFontFamily, uiFontFamily]);
+
+  useEffect(() => {
+    useTerminalStore.getState().setTerminalFontFamily(terminalFontFamily);
+  }, [terminalFontFamily]);
 
   useEffect(
     () => createSystemFontSizeScaler(uiFontSize, DEFAULT_UI_FONT_SIZE),

@@ -203,7 +203,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
 
   return (
     <div
-      className="z-50 flex h-10 select-none items-center rounded-t-[18px] border-t border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3 py-1.5 font-mono tracking-[0.08em]"
+      className="z-50 flex h-10 select-none items-center rounded-t-[18px] border-t border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3 py-1.5 tracking-[0.08em] tabular-nums"
       data-testid="statusbar"
     >
       <div className="flex items-center gap-2">
@@ -235,7 +235,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       <div className="flex items-center gap-2">
         <div
           data-testid="statusbar-file"
-          className="shell-cluster-soft max-w-[360px] overflow-hidden whitespace-nowrap px-3 font-mono text-[11px]"
+          className="shell-cluster-soft max-w-[360px] overflow-hidden whitespace-nowrap px-3 text-[11px]"
         >
           {activeFileSegments.directory ? (
             <>

@@ -19,8 +19,9 @@ export default {
         'laravel-red': '#EF4444',
       },
       fontFamily: {
-        sans: ['Inter', 'SF Pro', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        sans: ['var(--ui-font-family)'],
+        mono: ['var(--editor-font-family)'],
+        terminal: ['var(--terminal-font-family)'],
       },
       animation: {
         'fade-in': 'fadeIn 200ms ease-out',

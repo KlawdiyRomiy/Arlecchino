@@ -64,7 +64,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
             >
               <FolderOpen size={16} />
               <span className="flex-1">Open...</span>
-              <span className="shell-kbd font-mono">⌘O</span>
+              <span className="shell-kbd">⌘O</span>
             </DropdownMenu.Item>
 
             <DropdownMenu.Item
@@ -73,7 +73,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
             >
               <Sparkles size={16} />
               <span className="flex-1">New Project</span>
-              <span className="shell-kbd font-mono">⌘N</span>
+              <span className="shell-kbd">⌘N</span>
             </DropdownMenu.Item>
 
             <DropdownMenu.Separator className="my-1 h-px bg-[var(--shell-inline-divider)]" />

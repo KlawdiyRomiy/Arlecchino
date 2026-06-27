@@ -83,14 +83,14 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate font-mono text-[17px] leading-6 text-[var(--text-primary)]">
+                      <span className="truncate text-[17px] leading-6 text-[var(--text-primary)]">
                         {tab.label}
                       </span>
                       {tab.isDirty ? (
                         <span className="h-2 w-2 rounded-full bg-[var(--text-primary)]" />
                       ) : null}
                     </div>
-                    <div className="mt-0.5 truncate font-mono text-[12px] text-[var(--text-secondary)]">
+                    <div className="mt-0.5 truncate text-[12px] text-[var(--text-secondary)]">
                       {getTabDirectoryLabel(tab, projectPath)}
                     </div>
                   </div>
@@ -98,7 +98,7 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
                   {isActive ? (
                     <div
                       className={[
-                        "shrink-0 rounded-[999px] border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em]",
+                        "shrink-0 rounded-[999px] border px-2.5 py-1 text-[10px] uppercase tracking-[0.16em]",
                         isSelected
                           ? "border-[var(--border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)]"
                           : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]",

@@ -7,6 +7,20 @@ import {
   clampUiScale,
   getUiScaleStepOffset,
 } from "../utils/uiScale";
+import {
+  DEFAULT_EDITOR_FONT_FAMILY,
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  DEFAULT_UI_FONT_FAMILY,
+  normalizeEditorFontFamily,
+  normalizeTerminalFontFamily,
+  normalizeUiFontFamily,
+} from "../utils/fontFamilyZones";
+
+export {
+  DEFAULT_EDITOR_FONT_FAMILY,
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  DEFAULT_UI_FONT_FAMILY,
+};
 
 export type ProjectWindowMode = "projects" | "windows";
 export type AppIconAppearance = "system" | "light" | "dark";
@@ -103,6 +117,7 @@ interface EditorSettingsState {
   customFonts: CustomFontFaceDefinition[];
   editorFontFamily: string;
   editorFontSize: number;
+  terminalFontFamily: string;
   minFontSize: number;
   maxFontSize: number;
   showCompactDiagnostics: boolean;
@@ -132,6 +147,8 @@ interface EditorSettingsState {
   setEditorFontFamily: (fontFamily: string) => void;
   resetEditorFontFamily: () => void;
   setEditorFontSize: (size: number) => void;
+  setTerminalFontFamily: (fontFamily: string) => void;
+  resetTerminalFontFamily: () => void;
   setUiScale: (scale: number) => void;
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowFoldGutter: (value: boolean) => void;
@@ -166,17 +183,12 @@ interface EditorSettingsState {
 }
 
 const EDITOR_SETTINGS_STORAGE_VERSION = 1;
-export const DEFAULT_UI_FONT_FAMILY =
-  '"Inter", "SF Pro", -apple-system, BlinkMacSystemFont, sans-serif';
-export const DEFAULT_EDITOR_FONT_FAMILY =
-  '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace';
 export const DEFAULT_UI_FONT_SIZE = 14;
 export const MIN_UI_FONT_SIZE = 11;
 export const MAX_UI_FONT_SIZE = 22;
 const DEFAULT_EDITOR_FONT_SIZE = 14;
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 48;
-const MAX_EDITOR_FONT_FAMILY_LENGTH = 240;
 const MAX_CUSTOM_FONTS = 16;
 const MAX_CUSTOM_FONT_DATA_URL_LENGTH = 7_000_000;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
@@ -225,6 +237,7 @@ type PersistedEditorSettingsState = Partial<
     | "customFonts"
     | "editorFontFamily"
     | "editorFontSize"
+    | "terminalFontFamily"
     | "showCompactDiagnostics"
     | "showFoldGutter"
     | "showIndentGuides"
@@ -252,22 +265,6 @@ const clampEditorFontSize = (size: number): number =>
 
 const clampUiFontSize = (size: number): number =>
   Math.min(Math.max(size, MIN_UI_FONT_SIZE), MAX_UI_FONT_SIZE);
-
-export const normalizeEditorFontFamily = (fontFamily: string): string => {
-  const normalized = fontFamily.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return DEFAULT_EDITOR_FONT_FAMILY;
-  }
-  return normalized.slice(0, MAX_EDITOR_FONT_FAMILY_LENGTH).trim();
-};
-
-export const normalizeUiFontFamily = (fontFamily: string): string => {
-  const normalized = fontFamily.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return DEFAULT_UI_FONT_FAMILY;
-  }
-  return normalized.slice(0, MAX_EDITOR_FONT_FAMILY_LENGTH).trim();
-};
 
 const normalizeCustomFonts = (fonts: unknown): CustomFontFaceDefinition[] => {
   if (!Array.isArray(fonts)) {
@@ -403,6 +400,12 @@ const sanitizePersistedEditorSettings = (
     );
   }
 
+  if (typeof persistedState.terminalFontFamily === "string") {
+    nextState.terminalFontFamily = normalizeTerminalFontFamily(
+      persistedState.terminalFontFamily,
+    );
+  }
+
   if (typeof persistedState.showCompactDiagnostics === "boolean") {
     nextState.showCompactDiagnostics = persistedState.showCompactDiagnostics;
   }
@@ -503,6 +506,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       customFonts: [],
       editorFontFamily: DEFAULT_EDITOR_FONT_FAMILY,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
+      terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       minFontSize: MIN_FONT_SIZE,
       maxFontSize: MAX_FONT_SIZE,
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
@@ -588,6 +592,16 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       setEditorFontSize: (size: number) =>
         set(() => ({
           editorFontSize: clampEditorFontSize(size),
+        })),
+
+      setTerminalFontFamily: (fontFamily: string) =>
+        set(() => ({
+          terminalFontFamily: normalizeTerminalFontFamily(fontFamily),
+        })),
+
+      resetTerminalFontFamily: () =>
+        set(() => ({
+          terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
         })),
 
       setUiScale: (scale: number) =>

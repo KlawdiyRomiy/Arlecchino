@@ -17,6 +17,11 @@
   --ui-font-scale: 1;
   --ui-font-family:
     "Inter", "SF Pro", -apple-system, BlinkMacSystemFont, sans-serif;
+  --editor-font-family:
+    "Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+  --terminal-font-family:
+    "JetBrains Mono", "SF Mono", Menlo, Monaco, "MesloLGS NF", "Hack Nerd Font",
+    "FiraCode Nerd Font", Consolas, monospace;
 
   /* BLACKPRINT Color Scheme */
   --bg-blackprint: #0a0a0a;
@@ -232,7 +237,7 @@ body > [data-radix-portal] > * {
   border-radius: 10px;
   background: var(--surface-1);
   color: var(--text-secondary);
-  font-family: "Arlecchino Fira Code", "SF Mono", monospace;
+  font-family: var(--editor-font-family);
   font-size: 11px;
   line-height: 1.5;
   padding: 12px;
@@ -460,6 +465,7 @@ body > [data-radix-portal] > * {
   border: 1px solid var(--shell-border);
   background: color-mix(in srgb, var(--surface-1) 96%, transparent);
   padding: 0 10px;
+  font-family: var(--ui-font-family);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -624,7 +630,7 @@ body > [data-radix-portal] > * {
   flex: 0 0 auto;
   margin-left: calc(16px * var(--shell-context-menu-scale));
   color: color-mix(in srgb, var(--text-secondary) 84%, var(--text-primary));
-  font-family: "Arlecchino Fira Code", "SF Mono", Monaco, Consolas, monospace;
+  font-family: var(--ui-font-family);
   font-size: calc(12px * var(--shell-context-menu-scale));
   font-weight: 500;
   line-height: 1;
@@ -1092,7 +1098,7 @@ body > [data-radix-portal] > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+  font-family: var(--ui-font-family);
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -1241,7 +1247,7 @@ body,
   background: rgba(17, 17, 17, 0.96);
   padding: 0 11px;
   color: #66758a;
-  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-family: var(--editor-font-family);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.12em;
@@ -1360,7 +1366,7 @@ body,
 .monaco-editor .suggest-widget .monaco-list .monaco-list-row .icon::after {
   content: "fn";
   color: #8f98a6;
-  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-family: var(--editor-font-family);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1476,7 +1482,7 @@ body,
   background-color: rgba(0, 0, 0, 0.05) !important;
   padding: 2px 6px !important;
   border-radius: 4px !important;
-  font-family: "JetBrains Mono", "Fira Code", monospace !important;
+  font-family: var(--editor-font-family) !important;
 }
 
 .dark .monaco-editor .monaco-hover .hover-contents code {

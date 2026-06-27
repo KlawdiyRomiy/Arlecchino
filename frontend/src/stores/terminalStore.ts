@@ -6,8 +6,10 @@ import { SearchAddon } from "@xterm/addon-search";
 import { recordTerminalPerf } from "../utils/terminalPerf";
 import {
   buildTerminalOptions,
+  DEFAULT_TERMINAL_FONT_FAMILY,
   TERMINAL_INTERACTIVE_WRITE_MAX_CHARS,
 } from "../utils/terminalOptions";
+import { normalizeTerminalFontFamily } from "../utils/fontFamilyZones";
 import { usePerformanceStore } from "./performanceStore";
 import { normalizeTUIAssistAnchor } from "../utils/terminalLayout";
 import {
@@ -151,6 +153,7 @@ interface TerminalState {
   isArlePaused: boolean;
   isLSPPaused: boolean;
   terminalFontSize: number;
+  terminalFontFamily: string;
   closedTabsStack: ClosedTerminalTab[];
   securityPolicy: TerminalSecurityPolicy;
   sessionShellState: Map<string, TerminalShellState>;
@@ -178,6 +181,7 @@ interface TerminalActions {
   terminalZoomIn: () => void;
   terminalZoomOut: () => void;
   terminalZoomReset: () => void;
+  setTerminalFontFamily: (fontFamily: string) => void;
   reopenLastClosedTab: (themeId: ThemeId) => Promise<string | null>;
   setSessionMode: (event: {
     id: string;
@@ -348,10 +352,11 @@ const createLocalTerminalSession = (
   name: string,
   themeId: ThemeId,
   terminalFontSize: number,
+  terminalFontFamily: string,
   projectPath: string,
 ): TerminalSession => {
   const terminal = new Terminal(
-    buildTerminalOptions(themeId, terminalFontSize),
+    buildTerminalOptions(themeId, terminalFontSize, terminalFontFamily),
   );
 
   const fitAddon = new FitAddon();
@@ -826,6 +831,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
     isArlePaused: false,
     isLSPPaused: false,
     terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
+    terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
     closedTabsStack: [],
     sessionShellState: new Map(),
     sessionSemanticEntries: new Map(),
@@ -1062,12 +1068,14 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const name = terminalName?.trim() || "Terminal";
       const state = get();
       const terminalFontSize = state.terminalFontSize;
+      const terminalFontFamily = state.terminalFontFamily;
       const projectPath = state.activeProjectPath ?? "";
       const session = createLocalTerminalSession(
         id,
         name,
         themeId,
         terminalFontSize,
+        terminalFontFamily,
         projectPath,
       );
 
@@ -1151,6 +1159,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         name?.trim() || "Terminal",
         themeId,
         state.terminalFontSize,
+        state.terminalFontFamily,
         state.activeProjectPath ?? "",
       );
 
@@ -1451,6 +1460,25 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
 
         return {
           terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
+          sessions: new Map(state.sessions),
+        };
+      });
+    },
+
+    setTerminalFontFamily: (fontFamily) => {
+      const nextFontFamily = normalizeTerminalFontFamily(fontFamily);
+      set((state) => {
+        if (nextFontFamily === state.terminalFontFamily) {
+          return {};
+        }
+
+        state.sessions.forEach((session) => {
+          session.terminal.options.fontFamily = nextFontFamily;
+          session.fitAddon.fit();
+        });
+
+        return {
+          terminalFontFamily: nextFontFamily,
           sessions: new Map(state.sessions),
         };
       });

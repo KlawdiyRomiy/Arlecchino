@@ -1215,7 +1215,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     gap: "8px",
     padding: "6px 14px",
     fontSize: "12px",
-    fontFamily: "'JetBrains Mono', monospace",
+    fontFamily: "var(--ui-font-family)",
     fontWeight: isActive ? 500 : 400,
     color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
     backgroundColor: isActive
@@ -1702,7 +1702,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                     alignItems: "center",
                     gap: "8px",
                     fontSize: "11px",
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: "var(--ui-font-family)",
                   }}
                 >
                   <span style={{ color: severityColor, minWidth: "56px" }}>
@@ -1798,9 +1798,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     // Get font settings directly from xterm options
     const termOptions = activeSession.terminal.options;
     const fontSize = termOptions?.fontSize || 13;
-    const fontFamily =
-      termOptions?.fontFamily ||
-      "'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace";
+    const fontFamily = termOptions?.fontFamily || "var(--terminal-font-family)";
 
     // Position in CSS pixels relative to xterm-screen
     const left = cursorX * cellW;
@@ -1950,7 +1948,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               color: theme.textPrimary,
               padding: "0 10px",
               fontSize: "12px",
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: "var(--ui-font-family)",
             }}
           />
           {searchStatusText && (
@@ -1961,7 +1959,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                 textAlign: "center",
                 fontSize: "11px",
                 color: searchStatusColor,
-                fontFamily: "'JetBrains Mono', monospace",
+                fontFamily: "var(--ui-font-family)",
               }}
             >
               {searchStatusText}

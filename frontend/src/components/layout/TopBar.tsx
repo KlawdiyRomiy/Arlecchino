@@ -220,16 +220,15 @@ const replaceTopbarSideOrder = (
 const topbarFadeTransition = { duration: 0.16, ease: "easeOut" } as const;
 const topbarFadeInitial = { opacity: 0, y: -2 };
 const topbarFadeAnimate = { opacity: 1, y: 0 };
-const topbarCenterChipClass =
-  "shell-pill font-mono text-[10px] tracking-[0.14em]";
+const topbarCenterChipClass = "shell-pill text-[10px] tracking-[0.14em]";
 const topbarContextPathRootClass =
-  "flex min-w-0 max-w-[520px] items-center gap-0 overflow-hidden font-mono leading-none";
+  "flex min-w-0 max-w-[520px] items-center gap-0 overflow-hidden leading-none";
 const topbarContextPathParentClass =
   "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-muted)]";
 const topbarContextPathNameClass =
   "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-primary)]";
 const topbarIndexingBubbleClass =
-  "flex min-w-[188px] items-center justify-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
+  "flex min-w-[188px] items-center justify-center gap-3 leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
 
 interface PanelVisibility {
   explorer: boolean;
