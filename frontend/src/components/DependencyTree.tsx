@@ -91,9 +91,7 @@ function FileCardNode({ data: rawData }: NodeProps) {
           color: data.isRoot ? theme.textPrimary : theme.text,
           cursor: "pointer",
           background: data.isRoot
-            ? isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.04)"
+            ? "color-mix(in srgb, var(--accent-primary) 8%, transparent)"
             : "transparent",
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -225,6 +223,37 @@ const NODE_TYPES = { fileCard: FileCardNode };
 const EDGE_TYPES = { dependency: DependencyEdge };
 
 const ANIM_STYLES = `
+.dependency-tree-flow {
+  --xy-background-color: var(--surface-canvas);
+  --xy-background-pattern-color: var(--grid-dot);
+  --xy-edge-stroke: var(--border-default);
+  --xy-edge-stroke-selected: var(--text-secondary);
+  --xy-selection-background-color: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  --xy-selection-border: 1px dotted color-mix(in srgb, var(--accent-primary) 68%, transparent);
+  --xy-minimap-background-color: var(--surface-elevated);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--surface-canvas) 68%, transparent);
+  --xy-minimap-mask-stroke-color: transparent;
+  --xy-minimap-node-background-color: color-mix(in srgb, var(--text-muted) 46%, var(--surface-2));
+  --xy-minimap-node-stroke-color: color-mix(in srgb, var(--border-default) 78%, transparent);
+  --xy-controls-button-background-color: color-mix(in srgb, var(--surface-elevated) 96%, transparent);
+  --xy-controls-button-background-color-hover: var(--surface-hover);
+  --xy-controls-button-color: var(--text-secondary);
+  --xy-controls-button-color-hover: var(--text-primary);
+  --xy-controls-button-border-color: var(--border-subtle);
+  --xy-controls-box-shadow: var(--shadow-soft);
+}
+.dependency-tree-flow .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-elevated) 96%, transparent);
+}
+.dependency-tree-flow .react-flow__controls-button {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
 @keyframes perspOverlayIn {
   from { opacity: 0 }
   to   { opacity: 1 }
@@ -294,6 +323,7 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
         }}
       >
         <ReactFlow
+          className="dependency-tree-flow"
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
@@ -316,7 +346,6 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
               border: `1px solid ${theme.border}`,
               zIndex: 10,
             }}
-            maskColor={isDark ? "rgba(0,0,0,0.7)" : "rgba(255,255,255,0.7)"}
           />
         </ReactFlow>
 
@@ -373,7 +402,8 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
                   style={{
                     width: 200,
                     height: 3,
-                    background: "rgba(255,255,255,0.08)",
+                    background:
+                      "color-mix(in srgb, var(--text-primary) 8%, transparent)",
                     borderRadius: 9999,
                     overflow: "hidden",
                     position: "relative",
@@ -384,9 +414,10 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
                       position: "absolute",
                       inset: 0,
                       width: "40%",
-                      background: "white",
+                      background: "var(--accent-primary)",
                       borderRadius: 9999,
-                      boxShadow: "0 0 8px rgba(255,255,255,0.3)",
+                      boxShadow:
+                        "0 0 8px color-mix(in srgb, var(--accent-primary) 32%, transparent)",
                       animation: "perspShimmer 1s ease-in-out infinite",
                     }}
                   />
