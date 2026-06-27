@@ -187,18 +187,13 @@ func (a *App) scheduleNativeWindowControlsRefresh(window application.Window) {
 }
 
 func (a *App) refreshNativeWindowControlsDuringMove(window application.Window) {
-	seq := a.setNativeWindowControlsTransientHidden(window, true)
 	a.scheduleNativeWindowControlsRefresh(window)
-	time.AfterFunc(nativeWindowControlsTransientWatchdogDelay, func() {
-		a.clearNativeWindowControlsTransientHidden(window, seq)
-	})
 }
 
 func (a *App) refreshNativeWindowControlsAfterMove(window application.Window) {
-	seq := a.setNativeWindowControlsTransientHidden(window, true)
 	a.scheduleNativeWindowControlsRefresh(window)
 	time.AfterFunc(nativeWindowControlsTransientSettleDelay, func() {
-		a.clearNativeWindowControlsTransientHidden(window, seq)
+		a.refreshNativeWindowControlsForWindow(window)
 	})
 }
 

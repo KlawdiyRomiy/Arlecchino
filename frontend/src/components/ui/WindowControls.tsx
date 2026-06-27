@@ -57,9 +57,6 @@ const MAC_BUBBLE_Y_OFFSET = 1;
 const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
 const NATIVE_WINDOW_CONTROLS_TRANSIENT_EVENT =
   "shell:native-window-controls-transient";
-export const NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT =
-  "arlecchino:native-window-controls-drag-prime";
-const NATIVE_WINDOW_CONTROLS_GESTURE_SETTLE_DELAY_MS = 900;
 
 const macControlsOuterStyle = {
   "--wails-draggable": "no-drag",
@@ -331,16 +328,12 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   const minimizeRef = useRef<HTMLSpanElement>(null);
   const fullscreenRef = useRef<HTMLSpanElement>(null);
   const nativePositionInFlightRef = useRef(false);
-  const nativeGestureSettleTimerRef = useRef<number | null>(null);
   const controlsVisible = visible && backdropVisible;
   const nativeControlsEnabled = nativeEnabled ?? controlsVisible;
   const nativeBackdropHidden = !projectSwitchFrameMotion.active;
   const [nativeControlsRuntimeTransient, setNativeControlsRuntimeTransient] =
     useState(false);
-  const [nativeControlsGestureTransient, setNativeControlsGestureTransient] =
-    useState(false);
-  const nativeControlsTransient =
-    nativeControlsRuntimeTransient || nativeControlsGestureTransient;
+  const nativeControlsTransient = nativeControlsRuntimeTransient;
 
   const handleClose = useCallback(() => {
     window.dispatchEvent(new Event(APP_CLOSE_REQUEST_EVENT));
@@ -353,83 +346,16 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   useEffect(() => {
     if (!useNativeMacControls) {
       setNativeControlsRuntimeTransient(false);
-      setNativeControlsGestureTransient(false);
       return;
     }
 
     return EventsOn<[NativeWindowControlsTransientPayload | undefined]>(
       NATIVE_WINDOW_CONTROLS_TRANSIENT_EVENT,
       (payload) => {
-        const active = Boolean(payload?.active);
-        setNativeControlsRuntimeTransient(active);
-        if (!active) {
-          setNativeControlsGestureTransient(false);
-        }
+        setNativeControlsRuntimeTransient(Boolean(payload?.active));
       },
     );
   }, [useNativeMacControls]);
-
-  useEffect(() => {
-    if (!useNativeMacControls || !controlsVisible || !nativeControlsEnabled) {
-      setNativeControlsGestureTransient(false);
-      return;
-    }
-
-    const clearSettleTimer = () => {
-      if (nativeGestureSettleTimerRef.current === null) {
-        return;
-      }
-
-      window.clearTimeout(nativeGestureSettleTimerRef.current);
-      nativeGestureSettleTimerRef.current = null;
-    };
-
-    const releaseGestureTransient = () => {
-      clearSettleTimer();
-      setNativeControlsGestureTransient(false);
-      void SetNativeWindowControlsVisible(true)
-        .then((enabled) => {
-          if (!enabled) {
-            return undefined;
-          }
-
-          return RefreshNativeWindowControls();
-        })
-        .catch(() => undefined);
-    };
-
-    const scheduleGestureRelease = () => {
-      clearSettleTimer();
-      nativeGestureSettleTimerRef.current = window.setTimeout(
-        releaseGestureTransient,
-        NATIVE_WINDOW_CONTROLS_GESTURE_SETTLE_DELAY_MS,
-      );
-    };
-
-    const primeGestureTransient = () => {
-      setNativeControlsGestureTransient(true);
-      void SetNativeWindowControlsVisible(false).catch(() => undefined);
-      scheduleGestureRelease();
-    };
-
-    window.addEventListener(
-      NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT,
-      primeGestureTransient,
-    );
-    window.addEventListener("mouseup", releaseGestureTransient);
-    window.addEventListener("blur", releaseGestureTransient);
-
-    return () => {
-      window.removeEventListener(
-        NATIVE_WINDOW_CONTROLS_DRAG_PRIME_EVENT,
-        primeGestureTransient,
-      );
-      window.removeEventListener("mouseup", releaseGestureTransient);
-      window.removeEventListener("blur", releaseGestureTransient);
-      clearSettleTimer();
-      setNativeControlsGestureTransient(false);
-    };
-  }, [controlsVisible, nativeControlsEnabled, useNativeMacControls]);
 
   const positionNativeControls = useCallback(
     async ({
