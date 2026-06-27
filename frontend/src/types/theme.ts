@@ -6,9 +6,18 @@ import type {
 
 export type Theme = ThemePreference;
 
+export interface ThemeTransitionOrigin {
+  x: number;
+  y: number;
+}
+
+export interface ThemeTransitionOptions {
+  transitionOrigin?: ThemeTransitionOrigin;
+}
+
 export interface ThemeContextType {
   theme: Theme;
-  setTheme: (theme: Theme) => void;
+  setTheme: (theme: Theme, options?: ThemeTransitionOptions) => void;
   previewTheme: (theme: Theme | null) => void;
   customThemes: IDEThemeDefinition[];
   addCustomTheme: (value: unknown, sourceName?: string) => IDEThemeDefinition;

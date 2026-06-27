@@ -174,6 +174,35 @@ body,
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 14px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+option,
+[contenteditable="true"],
+[contenteditable="plaintext-only"],
+.cm-content,
+.cm-line,
+.cm-line *,
+.xterm,
+.xterm *,
+[data-testid="markdown-preview-panel-content"],
+[data-testid="markdown-preview-panel-content"] *,
+.ai-chat-markdown,
+.ai-chat-markdown *,
+[data-testid="git-diff-viewer"] .font-mono,
+[data-testid="git-diff-viewer"] .font-mono *,
+pre,
+pre *,
+code,
+code *,
+.app-boot-error__message,
+.app-boot-error__stack {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 html.dark,
@@ -181,6 +210,105 @@ html.dark body,
 html.dark #root {
   background: transparent;
   color: white;
+}
+
+@property --theme-spatial-reveal-radius {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+.theme-spatial-transition-overlay {
+  --theme-spatial-origin-x: 50vw;
+  --theme-spatial-origin-y: 50vh;
+  --theme-spatial-max-radius: 150vmax;
+  --theme-spatial-reveal-radius: 0px;
+  --theme-spatial-reveal-duration: 900ms;
+  --theme-spatial-feather: 76px;
+  --theme-spatial-feather-soft: 18px;
+  --theme-spatial-feather-mid: 44px;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  overflow: hidden;
+  border-radius: var(--radius-window);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  pointer-events: none;
+  contain: layout paint style;
+  transform: translateZ(0);
+  animation:
+    themeSpatialFallbackReveal var(--theme-spatial-reveal-duration)
+      cubic-bezier(0.42, 0, 0.24, 1) forwards,
+    themeSpatialOverlaySettle var(--theme-spatial-reveal-duration) linear
+      forwards;
+  will-change: -webkit-mask-image, mask-image, opacity;
+  -webkit-mask-image: radial-gradient(
+    circle at var(--theme-spatial-origin-x) var(--theme-spatial-origin-y),
+    transparent 0,
+    transparent var(--theme-spatial-reveal-radius),
+    rgba(0, 0, 0, 0.16)
+      calc(
+        var(--theme-spatial-reveal-radius) + var(--theme-spatial-feather-soft)
+      ),
+    rgba(0, 0, 0, 0.55)
+      calc(
+        var(--theme-spatial-reveal-radius) + var(--theme-spatial-feather-mid)
+      ),
+    #000 calc(var(--theme-spatial-reveal-radius) + var(--theme-spatial-feather))
+  );
+  mask-image: radial-gradient(
+    circle at var(--theme-spatial-origin-x) var(--theme-spatial-origin-y),
+    transparent 0,
+    transparent var(--theme-spatial-reveal-radius),
+    rgba(0, 0, 0, 0.16)
+      calc(
+        var(--theme-spatial-reveal-radius) + var(--theme-spatial-feather-soft)
+      ),
+    rgba(0, 0, 0, 0.55)
+      calc(
+        var(--theme-spatial-reveal-radius) + var(--theme-spatial-feather-mid)
+      ),
+    #000 calc(var(--theme-spatial-reveal-radius) + var(--theme-spatial-feather))
+  );
+}
+
+.theme-spatial-transition-overlay,
+.theme-spatial-transition-overlay * {
+  pointer-events: none !important;
+}
+
+.theme-spatial-transition-overlay > [data-radix-portal] {
+  position: fixed;
+  inset: 0;
+  width: calc(100% * var(--ui-inverse-scale));
+  height: calc(100% * var(--ui-inverse-scale));
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+  overflow: hidden;
+  border-radius: var(--radius-window);
+  clip-path: inset(0 round var(--radius-window));
+}
+
+@keyframes themeSpatialFallbackReveal {
+  from {
+    --theme-spatial-reveal-radius: 0px;
+  }
+
+  to {
+    --theme-spatial-reveal-radius: var(--theme-spatial-max-radius);
+  }
+}
+
+@keyframes themeSpatialOverlaySettle {
+  0%,
+  78% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
 }
 
 body > [data-radix-portal] {

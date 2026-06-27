@@ -100,7 +100,7 @@ import {
 } from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
 import { themeOptions as builtInThemeOptions } from "../styles/themes";
-import type { Theme } from "../types/theme";
+import type { Theme, ThemeTransitionOrigin } from "../types/theme";
 import {
   eventToShortcut,
   formatShortcut,
@@ -143,6 +143,58 @@ const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
 const settingsInputClass =
   "h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+const themeDropdownOptionOriginOffsetPx = 35;
+
+const resolveThemeDropdownOptionOrigin = (
+  eventElement: HTMLElement,
+): ThemeTransitionOrigin | undefined => {
+  const rect = eventElement.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return undefined;
+  }
+
+  const inlineOffset = Math.min(
+    themeDropdownOptionOriginOffsetPx,
+    rect.width / 2,
+  );
+  const isRtl = getComputedStyle(eventElement).direction === "rtl";
+
+  return {
+    x: isRtl ? rect.right - inlineOffset : rect.left + inlineOffset,
+    y: rect.top + rect.height / 2,
+  };
+};
+
+const resolveThemeDropdownSelectOrigin = (
+  event: Event,
+): ThemeTransitionOrigin | undefined => {
+  const eventElement =
+    event.currentTarget instanceof HTMLElement
+      ? event.currentTarget
+      : event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>('[role="menuitem"]')
+        : null;
+
+  return eventElement
+    ? resolveThemeDropdownOptionOrigin(eventElement)
+    : undefined;
+};
+
+const resolveThemeDropdownValueOrigin = (
+  value: Theme,
+): ThemeTransitionOrigin | undefined => {
+  const optionElement = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-theme-option-value]"),
+  ).find((element) => element.dataset.themeOptionValue === value);
+
+  return optionElement
+    ? resolveThemeDropdownOptionOrigin(optionElement)
+    : undefined;
+};
+
+const isThemeSpatialTransitionActive = () =>
+  document.body.dataset.themeSpatialTransitionActive === "true" ||
+  document.querySelector(".theme-spatial-transition-overlay") !== null;
 
 const autocompleteTierOrder = [
   "native",
@@ -1361,11 +1413,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     useState<ShortcutActionId | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const settingsHighlightTimeoutRef = useRef<number | null>(null);
+  const themeDropdownOptionElementsRef = useRef<Map<Theme, HTMLElement>>(
+    new Map(),
+  );
+  const themeDropdownOptionOriginsRef = useRef<
+    Map<Theme, ThemeTransitionOrigin>
+  >(new Map());
+  const themeDropdownSelectionOriginRef = useRef<{
+    value: Theme;
+    origin: ThemeTransitionOrigin;
+  } | null>(null);
   const customThemeInputRef = useRef<HTMLInputElement | null>(null);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const customFontTargetRef = useRef<"ui" | "editor">("ui");
   const handleDialogInteractOutside = useCallback((event: Event) => {
-    if (isAppNotificationInteractionEvent(event)) {
+    if (
+      isAppNotificationInteractionEvent(event) ||
+      isThemeSpatialTransitionActive()
+    ) {
       event.preventDefault();
     }
   }, []);
@@ -1374,8 +1439,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setSettingsSearchFocused(false);
   }, []);
 
-  const { theme, setTheme, previewTheme, customThemes, addCustomTheme } =
-    useTheme();
+  const { theme, setTheme, customThemes, addCustomTheme } = useTheme();
   const {
     uiScale,
     uiFontFamily,
@@ -2326,12 +2390,118 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     refreshPredictionStatus,
   ]);
 
-  const clearThemePreview = () => {
-    previewTheme(null);
+  const rememberThemeDropdownOptionElement = (
+    value: Theme,
+    element: HTMLElement | null,
+  ) => {
+    if (!element) {
+      return;
+    }
+
+    themeDropdownOptionElementsRef.current.set(value, element);
+    const rememberOrigin = () => {
+      const origin = resolveThemeDropdownOptionOrigin(element);
+      if (origin) {
+        themeDropdownOptionOriginsRef.current.set(value, origin);
+      }
+    };
+
+    rememberOrigin();
+    window.requestAnimationFrame(rememberOrigin);
   };
 
-  const handleThemeSelect = (nextTheme: Theme) => {
-    setTheme(nextTheme);
+  const rememberThemeDropdownSelectionOrigin = (
+    value: Theme,
+    element: HTMLElement,
+  ) => {
+    const origin = resolveThemeDropdownOptionOrigin(element);
+    if (origin) {
+      themeDropdownSelectionOriginRef.current = { value, origin };
+      themeDropdownOptionOriginsRef.current.set(value, origin);
+    }
+  };
+
+  const rememberThemeDropdownCursorOrigin = (
+    value: Theme,
+    event: React.PointerEvent<HTMLElement>,
+  ) => {
+    if (!event.isPrimary) {
+      return;
+    }
+
+    const origin = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    themeDropdownSelectionOriginRef.current = { value, origin };
+    themeDropdownOptionOriginsRef.current.set(value, origin);
+  };
+
+  const rememberThemeDropdownSelectionOriginFromEvent = (
+    event: React.PointerEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>,
+  ) => {
+    const optionElement =
+      event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>("[data-theme-option-value]")
+        : null;
+    const optionValue = optionElement?.dataset.themeOptionValue as
+      | Theme
+      | undefined;
+
+    if (optionElement && optionValue) {
+      rememberThemeDropdownSelectionOrigin(optionValue, optionElement);
+    }
+  };
+
+  const rememberThemeDropdownCursorOriginFromEvent = (
+    event: React.PointerEvent<HTMLElement>,
+  ) => {
+    const optionElement =
+      event.target instanceof HTMLElement
+        ? event.target.closest<HTMLElement>("[data-theme-option-value]")
+        : null;
+    const optionValue = optionElement?.dataset.themeOptionValue as
+      | Theme
+      | undefined;
+
+    if (optionValue) {
+      rememberThemeDropdownCursorOrigin(optionValue, event);
+    }
+  };
+
+  const resolveThemeDropdownSelectionOrigin = (
+    value: Theme,
+  ): ThemeTransitionOrigin | undefined => {
+    const selectionOrigin = themeDropdownSelectionOriginRef.current;
+    return selectionOrigin?.value === value
+      ? selectionOrigin.origin
+      : undefined;
+  };
+
+  const resolveStoredThemeDropdownOrigin = (
+    value: Theme,
+  ): ThemeTransitionOrigin | undefined => {
+    const element = themeDropdownOptionElementsRef.current.get(value);
+    const elementOrigin = element
+      ? resolveThemeDropdownOptionOrigin(element)
+      : undefined;
+
+    return (
+      elementOrigin ??
+      resolveThemeDropdownValueOrigin(value) ??
+      themeDropdownOptionOriginsRef.current.get(value)
+    );
+  };
+
+  const handleThemeSelect = (nextTheme: Theme, event?: Event) => {
+    const transitionOrigin =
+      resolveThemeDropdownSelectionOrigin(nextTheme) ??
+      resolveStoredThemeDropdownOrigin(nextTheme) ??
+      (event ? resolveThemeDropdownSelectOrigin(event) : undefined);
+
+    themeDropdownSelectionOriginRef.current = null;
+
+    setTheme(nextTheme, transitionOrigin ? { transitionOrigin } : undefined);
   };
 
   const handleCustomThemeFile = async (
@@ -3656,7 +3826,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog.Root
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && !isThemeSpatialTransitionActive()) {
+          onClose();
+        }
+      }}
+    >
       <Dialog.Portal forceMount>
         <AnimatePresence>
           {isOpen ? (
@@ -3664,7 +3841,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Dialog.Overlay forceMount asChild>
                 <motion.div
                   key="settings-overlay"
-                  className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[10px]"
+                  className="fixed inset-0 z-[110] bg-black/55"
                   initial={reduceSettingsMotion ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={reduceSettingsMotion ? { opacity: 1 } : { opacity: 0 }}
@@ -4140,12 +4317,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                               <DropdownMenu.Root
                                 open={themeDropdownOpen}
-                                onOpenChange={(open) => {
-                                  setThemeDropdownOpen(open);
-                                  if (!open) {
-                                    clearThemePreview();
-                                  }
-                                }}
+                                onOpenChange={setThemeDropdownOpen}
                               >
                                 <DropdownMenu.Trigger asChild>
                                   <button
@@ -4171,7 +4343,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     className={settingsDropdownContentClass}
                                     data-testid="theme-dropdown-content"
                                     data-shell-menu-content
-                                    onPointerLeave={clearThemePreview}
+                                    onPointerDownCapture={
+                                      rememberThemeDropdownCursorOriginFromEvent
+                                    }
+                                    onKeyDownCapture={(event) => {
+                                      if (
+                                        event.key === "Enter" ||
+                                        event.key === " "
+                                      ) {
+                                        rememberThemeDropdownSelectionOriginFromEvent(
+                                          event,
+                                        );
+                                      }
+                                    }}
                                     style={{
                                       width:
                                         "var(--radix-dropdown-menu-trigger-width)",
@@ -4185,14 +4369,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     {settingsThemeOptions.map((option) => (
                                       <DropdownMenu.Item
                                         key={option.value}
-                                        onPointerEnter={() =>
-                                          previewTheme(option.value)
+                                        data-theme-option-value={option.value}
+                                        ref={(element) =>
+                                          rememberThemeDropdownOptionElement(
+                                            option.value,
+                                            element,
+                                          )
                                         }
-                                        onFocus={() =>
-                                          previewTheme(option.value)
+                                        onPointerDown={(event) =>
+                                          rememberThemeDropdownCursorOrigin(
+                                            option.value,
+                                            event,
+                                          )
                                         }
-                                        onSelect={() =>
-                                          handleThemeSelect(option.value)
+                                        onKeyDown={(event) => {
+                                          if (
+                                            event.key === "Enter" ||
+                                            event.key === " "
+                                          ) {
+                                            rememberThemeDropdownSelectionOrigin(
+                                              option.value,
+                                              event.currentTarget,
+                                            );
+                                          }
+                                        }}
+                                        onSelect={(event) =>
+                                          handleThemeSelect(option.value, event)
                                         }
                                         className={settingsDropdownItemClass}
                                       >
@@ -4221,14 +4423,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                       customThemeOptions.map((option) => (
                                         <DropdownMenu.Item
                                           key={option.value}
-                                          onPointerEnter={() =>
-                                            previewTheme(option.value)
+                                          data-theme-option-value={option.value}
+                                          ref={(element) =>
+                                            rememberThemeDropdownOptionElement(
+                                              option.value,
+                                              element,
+                                            )
                                           }
-                                          onFocus={() =>
-                                            previewTheme(option.value)
+                                          onPointerDown={(event) =>
+                                            rememberThemeDropdownCursorOrigin(
+                                              option.value,
+                                              event,
+                                            )
                                           }
-                                          onSelect={() =>
-                                            handleThemeSelect(option.value)
+                                          onKeyDown={(event) => {
+                                            if (
+                                              event.key === "Enter" ||
+                                              event.key === " "
+                                            ) {
+                                              rememberThemeDropdownSelectionOrigin(
+                                                option.value,
+                                                event.currentTarget,
+                                              );
+                                            }
+                                          }}
+                                          onSelect={(event) =>
+                                            handleThemeSelect(
+                                              option.value,
+                                              event,
+                                            )
                                           }
                                           className={settingsDropdownItemClass}
                                         >
