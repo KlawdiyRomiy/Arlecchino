@@ -8,8 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -145,7 +148,220 @@ func TestCompareAutoUpdateTargetUsesBuildWhenVersionMatches(t *testing.T) {
 	}
 }
 
+func TestAutoUpdateCheckRejectsRollbackBelowPersistedSequence(t *testing.T) {
+	withAutoUpdateBuildInfo(t, "0.2.14-beta", "134", "beta")
+	t.Setenv(autoUpdateStateDirEnv, t.TempDir())
+
+	if err := recordVerifiedAutoUpdateSequence("beta", PackagedOSAutoUpdateManifest{
+		Version:  "0.2.15-beta",
+		Build:    "136",
+		Sequence: 136,
+	}); err != nil {
+		t.Fatalf("record high-watermark: %v", err)
+	}
+
+	manifestPath := writeAutoUpdateManifestFixture(t, PackagedOSAutoUpdateManifest{
+		Channel:  "beta",
+		Version:  "0.2.15-beta",
+		Build:    "135",
+		Sequence: 135,
+		Artifacts: []PackagedOSAutoUpdateArtifact{{
+			Platform:  runtime.GOOS,
+			Arch:      "universal",
+			Kind:      "zip",
+			URL:       "file:///tmp/arlecchino-135.zip",
+			SHA256:    strings.Repeat("a", 64),
+			Signature: "placeholder",
+		}},
+	})
+	t.Setenv(autoUpdateManifestURLEnv, (&url.URL{Scheme: "file", Path: manifestPath}).String())
+
+	status := NewAutoUpdateService().check()
+	if status.State != AutoUpdateStateNotAvailable {
+		t.Fatalf("State = %q, want not-available: %s", status.State, status.Reason)
+	}
+	if !strings.Contains(status.Reason, "older than previously accepted sequence 136") {
+		t.Fatalf("Reason = %q, want rollback rejection", status.Reason)
+	}
+}
+
+func TestAutoUpdateCheckUsesBuildAsLegacyRollbackSequence(t *testing.T) {
+	withAutoUpdateBuildInfo(t, "0.2.14-beta", "134", "beta")
+	t.Setenv(autoUpdateStateDirEnv, t.TempDir())
+
+	if err := recordVerifiedAutoUpdateSequence("beta", PackagedOSAutoUpdateManifest{
+		Version:  "0.2.15-beta",
+		Build:    "136",
+		Sequence: 136,
+	}); err != nil {
+		t.Fatalf("record high-watermark: %v", err)
+	}
+
+	manifestPath := writeAutoUpdateManifestFixture(t, PackagedOSAutoUpdateManifest{
+		Channel: "beta",
+		Version: "0.2.15-beta",
+		Build:   "135",
+		Artifacts: []PackagedOSAutoUpdateArtifact{{
+			Platform:  runtime.GOOS,
+			Arch:      "universal",
+			Kind:      "zip",
+			URL:       "file:///tmp/arlecchino-135.zip",
+			SHA256:    strings.Repeat("a", 64),
+			Signature: "placeholder",
+		}},
+	})
+	t.Setenv(autoUpdateManifestURLEnv, (&url.URL{Scheme: "file", Path: manifestPath}).String())
+
+	status := NewAutoUpdateService().check()
+	if status.State != AutoUpdateStateNotAvailable {
+		t.Fatalf("State = %q, want not-available: %s", status.State, status.Reason)
+	}
+	if !strings.Contains(status.Reason, "sequence 135 is older than previously accepted sequence 136") {
+		t.Fatalf("Reason = %q, want legacy build rollback rejection", status.Reason)
+	}
+}
+
+func TestAutoUpdateCheckAllowsSamePersistedSequenceForRetry(t *testing.T) {
+	withAutoUpdateBuildInfo(t, "0.2.14-beta", "134", "beta")
+	t.Setenv(autoUpdateStateDirEnv, t.TempDir())
+
+	if err := recordVerifiedAutoUpdateSequence("beta", PackagedOSAutoUpdateManifest{
+		Version:  "0.2.15-beta",
+		Build:    "136",
+		Sequence: 136,
+	}); err != nil {
+		t.Fatalf("record high-watermark: %v", err)
+	}
+
+	manifestPath := writeAutoUpdateManifestFixture(t, PackagedOSAutoUpdateManifest{
+		Channel:  "beta",
+		Version:  "0.2.15-beta",
+		Build:    "136",
+		Sequence: 136,
+		Artifacts: []PackagedOSAutoUpdateArtifact{{
+			Platform:  runtime.GOOS,
+			Arch:      "universal",
+			Kind:      "zip",
+			URL:       "file:///tmp/arlecchino-136.zip",
+			SHA256:    strings.Repeat("a", 64),
+			Signature: "placeholder",
+		}},
+	})
+	t.Setenv(autoUpdateManifestURLEnv, (&url.URL{Scheme: "file", Path: manifestPath}).String())
+
+	status := NewAutoUpdateService().check()
+	if status.State != AutoUpdateStateAvailable {
+		t.Fatalf("State = %q, want available: %s", status.State, status.Reason)
+	}
+}
+
+func TestDownloadAutoUpdateRecordsVerifiedSequence(t *testing.T) {
+	withAutoUpdateBuildInfo(t, "0.2.14-beta", "134", "beta")
+	t.Setenv(autoUpdateStateDirEnv, t.TempDir())
+	t.Setenv(autoUpdateCacheDirEnv, t.TempDir())
+
+	zipPath := filepath.Join(t.TempDir(), "Arlecchino.zip")
+	zipData := buildTestUpdateZipWithVersion(t, true, "0.2.15-beta", "136")
+	if err := os.WriteFile(zipPath, zipData, 0o600); err != nil {
+		t.Fatalf("write update zip: %v", err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(packagedOSAutoUpdatePublicKeyEnv, base64.StdEncoding.EncodeToString(publicKey))
+	sum := sha256.Sum256(zipData)
+	signature := ed25519.Sign(privateKey, zipData)
+
+	manifestPath := writeAutoUpdateManifestFixture(t, PackagedOSAutoUpdateManifest{
+		Channel:  "beta",
+		Version:  "0.2.15-beta",
+		Build:    "136",
+		Sequence: 136,
+		Artifacts: []PackagedOSAutoUpdateArtifact{{
+			Platform:  runtime.GOOS,
+			Arch:      "universal",
+			Kind:      "zip",
+			URL:       (&url.URL{Scheme: "file", Path: zipPath}).String(),
+			SHA256:    hex.EncodeToString(sum[:]),
+			Signature: base64.StdEncoding.EncodeToString(signature),
+		}},
+	})
+	t.Setenv(autoUpdateManifestURLEnv, (&url.URL{Scheme: "file", Path: manifestPath}).String())
+
+	service := NewAutoUpdateService()
+	service.inspectCodeIdentity = testStableCodeIdentityInspector
+	if status := service.check(); status.State != AutoUpdateStateAvailable {
+		t.Fatalf("check state = %q, want available: %s", status.State, status.Reason)
+	}
+	status := service.downloadAndStage()
+	if status.State == AutoUpdateStateFailed {
+		t.Fatalf("downloadAndStage failed: %s", status.Reason)
+	}
+
+	state, err := readAutoUpdateRollbackState()
+	if err != nil {
+		t.Fatalf("read rollback state: %v", err)
+	}
+	entry := state.Channels["beta"]
+	if entry.Sequence != 136 || entry.Version != "0.2.15-beta" || entry.Build != "136" {
+		t.Fatalf("rollback state = %#v, want sequence 136 version/build", entry)
+	}
+}
+
+func TestDownloadAutoUpdateRejectsManifestVersionBuildMismatch(t *testing.T) {
+	withAutoUpdateBuildInfo(t, "0.2.14-beta", "134", "beta")
+	t.Setenv(autoUpdateStateDirEnv, t.TempDir())
+	t.Setenv(autoUpdateCacheDirEnv, t.TempDir())
+
+	zipPath := filepath.Join(t.TempDir(), "Arlecchino.zip")
+	zipData := buildTestUpdateZipWithVersion(t, true, "0.2.15-beta", "135")
+	if err := os.WriteFile(zipPath, zipData, 0o600); err != nil {
+		t.Fatalf("write update zip: %v", err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(packagedOSAutoUpdatePublicKeyEnv, base64.StdEncoding.EncodeToString(publicKey))
+	sum := sha256.Sum256(zipData)
+	signature := ed25519.Sign(privateKey, zipData)
+
+	manifestPath := writeAutoUpdateManifestFixture(t, PackagedOSAutoUpdateManifest{
+		Channel:  "beta",
+		Version:  "0.2.15-beta",
+		Build:    "136",
+		Sequence: 136,
+		Artifacts: []PackagedOSAutoUpdateArtifact{{
+			Platform:  runtime.GOOS,
+			Arch:      "universal",
+			Kind:      "zip",
+			URL:       (&url.URL{Scheme: "file", Path: zipPath}).String(),
+			SHA256:    hex.EncodeToString(sum[:]),
+			Signature: base64.StdEncoding.EncodeToString(signature),
+		}},
+	})
+	t.Setenv(autoUpdateManifestURLEnv, (&url.URL{Scheme: "file", Path: manifestPath}).String())
+
+	service := NewAutoUpdateService()
+	service.inspectCodeIdentity = testStableCodeIdentityInspector
+	if status := service.check(); status.State != AutoUpdateStateAvailable {
+		t.Fatalf("check state = %q, want available before artifact validation: %s", status.State, status.Reason)
+	}
+	status := service.downloadAndStage()
+	if status.State != AutoUpdateStateFailed {
+		t.Fatalf("downloadAndStage state = %q, want failed", status.State)
+	}
+	if !strings.Contains(status.Reason, `build "135" does not match manifest build "136"`) {
+		t.Fatalf("Reason = %q, want staged build mismatch", status.Reason)
+	}
+}
+
 func buildTestUpdateZip(t *testing.T, includeApp bool, extraEntries ...string) []byte {
+	return buildTestUpdateZipWithVersion(t, includeApp, "0.2.0", "2", extraEntries...)
+}
+
+func buildTestUpdateZipWithVersion(t *testing.T, includeApp bool, version string, build string, extraEntries ...string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
@@ -155,9 +371,9 @@ func buildTestUpdateZip(t *testing.T, includeApp bool, extraEntries ...string) [
 <plist version="1.0">
 <dict>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.0</string>
+  <string>`+version+`</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>`+build+`</string>
 </dict>
 </plist>
 `)
@@ -174,6 +390,48 @@ func buildTestUpdateZip(t *testing.T, includeApp bool, extraEntries ...string) [
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+func writeAutoUpdateManifestFixture(t *testing.T, manifest PackagedOSAutoUpdateManifest) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "update.json")
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return path
+}
+
+func withAutoUpdateBuildInfo(t *testing.T, version string, build string, channel string) {
+	t.Helper()
+	oldVersion := buildVersion
+	oldBuild := buildNumber
+	oldChannel := buildChannel
+	oldManifestURL := buildManifestURL
+	buildVersion = version
+	buildNumber = build
+	buildChannel = channel
+	buildManifestURL = ""
+	t.Setenv(packagedOSAutoUpdateChannelEnv, channel)
+	t.Cleanup(func() {
+		buildVersion = oldVersion
+		buildNumber = oldBuild
+		buildChannel = oldChannel
+		buildManifestURL = oldManifestURL
+	})
+}
+
+func testStableCodeIdentityInspector(string) (macOSCodeIdentity, error) {
+	return macOSCodeIdentity{
+		BundleID:                     "com.arlecchino.app",
+		IdentityKind:                 macOSCodeIdentityLocalCertificate,
+		PermissionStability:          macOSPermissionStabilityLocalMachineStable,
+		DesignatedRequirement:        "designated => identifier \"com.arlecchino.app\"",
+		StableRequirementFingerprint: "test-stable-requirement",
+	}, nil
 }
 
 func buildTestUpdateZipWithoutRuntimeAssets(t *testing.T) []byte {

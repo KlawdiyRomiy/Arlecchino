@@ -26,8 +26,10 @@ const (
 	autoUpdateStatusEvent       = "auto-update:status"
 	autoUpdateStatusVersion     = 1
 	autoUpdateCacheDirEnv       = "ARLECCHINO_AUTO_UPDATE_CACHE_DIR"
+	autoUpdateStateDirEnv       = "ARLECCHINO_AUTO_UPDATE_STATE_DIR"
 	autoUpdateGitHubReleasesURL = "https://github.com/KlawdiyRomiy/Arlecchino/releases"
 	autoUpdateMaxManifestBytes  = 1024 * 1024
+	autoUpdateStateVersion      = 1
 )
 
 type AutoUpdateState string
@@ -59,6 +61,7 @@ type AutoUpdateStatus struct {
 	StagedAppPath  string                           `json:"stagedAppPath,omitempty"`
 	TargetVersion  string                           `json:"targetVersion,omitempty"`
 	TargetBuild    string                           `json:"targetBuild,omitempty"`
+	TargetSequence int64                            `json:"targetSequence,omitempty"`
 	ReleaseNotes   string                           `json:"releaseNotes,omitempty"`
 	Mandatory      bool                             `json:"mandatory"`
 	Progress       float64                          `json:"progress"`
@@ -80,6 +83,20 @@ type AutoUpdateService struct {
 type autoUpdateStageResult struct {
 	StagingDir    string
 	StagedAppPath string
+	Version       string
+	Build         string
+}
+
+type autoUpdateRollbackState struct {
+	Version  int                                       `json:"version"`
+	Channels map[string]autoUpdateRollbackChannelState `json:"channels,omitempty"`
+}
+
+type autoUpdateRollbackChannelState struct {
+	Sequence  int64  `json:"sequence"`
+	Version   string `json:"version,omitempty"`
+	Build     string `json:"build,omitempty"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 type autoUpdateApplyPlan struct {
@@ -228,6 +245,7 @@ func (s *AutoUpdateService) check() AutoUpdateStatus {
 	status.Manifest = &manifest
 	status.TargetVersion = manifest.Version
 	status.TargetBuild = manifest.Build
+	status.TargetSequence = autoUpdateManifestSequence(manifest)
 	status.ReleaseNotes = manifest.ReleaseNotes
 	status.Mandatory = manifest.Mandatory
 	status.Verification.Version = manifest.Version
@@ -258,6 +276,12 @@ func (s *AutoUpdateService) check() AutoUpdateStatus {
 	if artifact.Kind != "" && artifact.Kind != "zip" {
 		status.State = AutoUpdateStateManualRequired
 		status.Reason = fmt.Sprintf("Update artifact kind %q requires manual installer flow.", artifact.Kind)
+		return s.setStatus(status)
+	}
+
+	if err := enforceAutoUpdateRollbackFloor(status.Channel, status.Current, manifest); err != nil {
+		status.State = AutoUpdateStateNotAvailable
+		status.Reason = err.Error()
 		return s.setStatus(status)
 	}
 
@@ -342,6 +366,15 @@ func (s *AutoUpdateService) downloadAndStage() AutoUpdateStatus {
 		status.Reason = err.Error()
 		return s.setStatus(status)
 	}
+	if err := validateAutoUpdateStagedTarget(stage, *status.Manifest); err != nil {
+		_ = os.RemoveAll(stageRoot)
+		status.StagingDir = ""
+		status.StagedAppPath = ""
+		status.ApplyAvailable = false
+		status.State = AutoUpdateStateFailed
+		status.Reason = err.Error()
+		return s.setStatus(status)
+	}
 
 	transitionNote := ""
 	currentBundle := currentAppBundlePath()
@@ -357,6 +390,16 @@ func (s *AutoUpdateService) downloadAndStage() AutoUpdateStatus {
 		} else {
 			transitionNote = note
 		}
+	}
+
+	if err := recordVerifiedAutoUpdateSequence(status.Channel, *status.Manifest); err != nil {
+		_ = os.RemoveAll(stageRoot)
+		status.StagingDir = ""
+		status.StagedAppPath = ""
+		status.ApplyAvailable = false
+		status.State = AutoUpdateStateFailed
+		status.Reason = err.Error()
+		return s.setStatus(status)
 	}
 
 	status.StagingDir = stage.StagingDir
@@ -642,7 +685,9 @@ func stageAutoUpdateZip(data []byte, stageRoot string, verifyStagedApp func(stri
 	if err := validateStagedAppBundle(appPath, verifyStagedApp); err != nil {
 		return autoUpdateStageResult{}, err
 	}
-	return autoUpdateStageResult{StagingDir: stagingDir, StagedAppPath: appPath}, nil
+	version := readPlistRaw(filepath.Join(appPath, "Contents", "Info.plist"), "CFBundleShortVersionString")
+	build := readPlistRaw(filepath.Join(appPath, "Contents", "Info.plist"), "CFBundleVersion")
+	return autoUpdateStageResult{StagingDir: stagingDir, StagedAppPath: appPath, Version: version, Build: build}, nil
 }
 
 func shouldSkipAutoUpdateZipEntry(name string) bool {
@@ -793,6 +838,187 @@ func autoUpdateCacheDir() (string, error) {
 		return "", fmt.Errorf("user cache directory is unavailable: %w", err)
 	}
 	return filepath.Join(cacheRoot, "Arlecchino", "updates"), nil
+}
+
+func autoUpdateStateDir() (string, error) {
+	if value := strings.TrimSpace(os.Getenv(autoUpdateStateDirEnv)); value != "" {
+		return value, nil
+	}
+	configRoot, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("user config directory is unavailable: %w", err)
+	}
+	return filepath.Join(configRoot, "Arlecchino"), nil
+}
+
+func autoUpdateRollbackStatePath() (string, error) {
+	stateDir, err := autoUpdateStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateDir, "auto-update-state.json"), nil
+}
+
+func readAutoUpdateRollbackState() (autoUpdateRollbackState, error) {
+	state := autoUpdateRollbackState{Version: autoUpdateStateVersion, Channels: map[string]autoUpdateRollbackChannelState{}}
+	path, err := autoUpdateRollbackStatePath()
+	if err != nil {
+		return state, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return state, nil
+		}
+		return state, fmt.Errorf("auto-update rollback state could not be read: %w", err)
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return autoUpdateRollbackState{}, fmt.Errorf("auto-update rollback state is invalid: %w", err)
+	}
+	if state.Channels == nil {
+		state.Channels = map[string]autoUpdateRollbackChannelState{}
+	}
+	for channel, entry := range state.Channels {
+		if entry.Sequence < 0 {
+			return autoUpdateRollbackState{}, fmt.Errorf("auto-update rollback state has invalid sequence for channel %q", channel)
+		}
+	}
+	if state.Version == 0 {
+		state.Version = autoUpdateStateVersion
+	}
+	return state, nil
+}
+
+func writeAutoUpdateRollbackState(state autoUpdateRollbackState) error {
+	path, err := autoUpdateRollbackStatePath()
+	if err != nil {
+		return err
+	}
+	if state.Version == 0 {
+		state.Version = autoUpdateStateVersion
+	}
+	if state.Channels == nil {
+		state.Channels = map[string]autoUpdateRollbackChannelState{}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("auto-update rollback state directory could not be created: %w", err)
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("auto-update rollback state could not be encoded: %w", err)
+	}
+	data = append(data, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".auto-update-state-*.json")
+	if err != nil {
+		return fmt.Errorf("auto-update rollback state temp file could not be created: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("auto-update rollback state could not be written: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("auto-update rollback state permissions could not be set: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("auto-update rollback state could not be closed: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("auto-update rollback state could not be replaced: %w", err)
+	}
+	return nil
+}
+
+func normalizeAutoUpdateChannelKey(channel string) string {
+	return strings.ToLower(strings.TrimSpace(channel))
+}
+
+func autoUpdateBuildSequence(build string) int64 {
+	build = strings.TrimSpace(build)
+	if build == "" {
+		return 0
+	}
+	sequence, err := strconv.ParseInt(build, 10, 64)
+	if err != nil || sequence <= 0 {
+		return 0
+	}
+	return sequence
+}
+
+func autoUpdateManifestSequence(manifest PackagedOSAutoUpdateManifest) int64 {
+	if manifest.Sequence > 0 {
+		return manifest.Sequence
+	}
+	return autoUpdateBuildSequence(manifest.Build)
+}
+
+func autoUpdateCurrentSequence(current BuildInfo) int64 {
+	if current.Version == "" || current.Version == "0.0.0-dev" {
+		return 0
+	}
+	return autoUpdateBuildSequence(current.Build)
+}
+
+func enforceAutoUpdateRollbackFloor(channel string, current BuildInfo, manifest PackagedOSAutoUpdateManifest) error {
+	targetSequence := autoUpdateManifestSequence(manifest)
+	floorSequence := autoUpdateCurrentSequence(current)
+	state, err := readAutoUpdateRollbackState()
+	if err != nil {
+		return err
+	}
+	if entry, ok := state.Channels[normalizeAutoUpdateChannelKey(channel)]; ok && entry.Sequence > floorSequence {
+		floorSequence = entry.Sequence
+	}
+	if floorSequence <= 0 {
+		return nil
+	}
+	if targetSequence <= 0 {
+		return fmt.Errorf("Auto-update manifest has no monotonic sequence or numeric build; refusing update after sequence %d.", floorSequence)
+	}
+	if targetSequence < floorSequence {
+		return fmt.Errorf("Auto-update manifest sequence %d is older than previously accepted sequence %d.", targetSequence, floorSequence)
+	}
+	return nil
+}
+
+func recordVerifiedAutoUpdateSequence(channel string, manifest PackagedOSAutoUpdateManifest) error {
+	sequence := autoUpdateManifestSequence(manifest)
+	if sequence <= 0 {
+		return fmt.Errorf("Auto-update manifest has no monotonic sequence or numeric build; verified update was not accepted.")
+	}
+	state, err := readAutoUpdateRollbackState()
+	if err != nil {
+		return err
+	}
+	channelKey := normalizeAutoUpdateChannelKey(channel)
+	if current, ok := state.Channels[channelKey]; ok && sequence < current.Sequence {
+		return fmt.Errorf("Auto-update manifest sequence %d is older than previously accepted sequence %d.", sequence, current.Sequence)
+	}
+	state.Channels[channelKey] = autoUpdateRollbackChannelState{
+		Sequence:  sequence,
+		Version:   strings.TrimSpace(manifest.Version),
+		Build:     strings.TrimSpace(manifest.Build),
+		UpdatedAt: time.Now().UnixMilli(),
+	}
+	if err := writeAutoUpdateRollbackState(state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAutoUpdateStagedTarget(stage autoUpdateStageResult, manifest PackagedOSAutoUpdateManifest) error {
+	if strings.TrimSpace(stage.Version) != strings.TrimSpace(manifest.Version) {
+		return fmt.Errorf("staged Arlecchino.app version %q does not match manifest version %q", stage.Version, manifest.Version)
+	}
+	if strings.TrimSpace(stage.Build) != strings.TrimSpace(manifest.Build) {
+		return fmt.Errorf("staged Arlecchino.app build %q does not match manifest build %q", stage.Build, manifest.Build)
+	}
+	return nil
 }
 
 func artifactCacheName(version string, artifact PackagedOSAutoUpdateArtifact) string {

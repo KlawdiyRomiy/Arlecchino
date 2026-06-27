@@ -86,6 +86,14 @@ func validateAutoUpdateManifest(manifest PackagedOSAutoUpdateManifest) string {
 	if !isValidAutoUpdateVersion(manifest.Version) {
 		return "Auto-update manifest has invalid version."
 	}
+	if manifest.Sequence < 0 {
+		return "Auto-update manifest has invalid sequence."
+	}
+	if manifest.Sequence > 0 {
+		if buildSequence := autoUpdateBuildSequence(manifest.Build); buildSequence > 0 && manifest.Sequence != buildSequence {
+			return "Auto-update manifest sequence does not match build."
+		}
+	}
 	if len(manifest.Artifacts) == 0 {
 		return "Auto-update manifest has no platform artifacts."
 	}

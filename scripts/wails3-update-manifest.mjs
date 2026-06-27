@@ -20,6 +20,7 @@ const usage = () => {
 Options:
   --version <version>       Release version. Default: 0.0.0-beta
   --build <build>           Release build number. Optional.
+  --sequence <number>       Monotonic anti-rollback sequence. Default: numeric build.
   --channel <channel>       Update channel. Default: beta
   --platform <platform>     Artifact platform. Default: darwin
   --arch <arch>             arm64, amd64, universal, or empty. Default: universal
@@ -62,6 +63,7 @@ if (!artifactPath || !privateKeyPath || !outPath) {
 
 const version = readOption("--version") || "0.0.0-beta";
 const build = readOption("--build");
+const sequenceInput = readOption("--sequence") || build;
 const channel = readOption("--channel") || "beta";
 const platform = (readOption("--platform") || "darwin").toLowerCase();
 const archInput = readOption("--arch") || "universal";
@@ -79,6 +81,25 @@ const allowPermissionUnstable =
   args.includes("--allow-permission-unstable") ||
   process.env.ARLE_WAILS3_ALLOW_PERMISSION_UNSTABLE_UPDATES === "1";
 const publicKeyOut = readOption("--public-key-out");
+
+const parsePositiveSequence = (value, label) => {
+  value = String(value || "").trim();
+  if (!value) return 0;
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`${label} is too large`);
+  }
+  return parsed;
+};
+
+const sequence = parsePositiveSequence(sequenceInput, "--sequence");
+const buildSequence = parsePositiveSequence(build, "--build");
+if (sequence > 0 && buildSequence > 0 && sequence !== buildSequence) {
+  throw new Error("--sequence must match numeric --build for updater rollback protection");
+}
 
 const artifact = fs.readFileSync(artifactPath);
 let macOSCodeIdentity = null;
@@ -114,6 +135,7 @@ const manifest = {
   channel,
   version,
   ...(build ? { build } : {}),
+  ...(sequence > 0 ? { sequence } : {}),
   releaseNotes,
   mandatory,
   ...(macOSCodeIdentity
@@ -154,6 +176,7 @@ console.log(
       channel,
       version,
       build,
+      sequence,
       platform,
       arch,
       kind,
