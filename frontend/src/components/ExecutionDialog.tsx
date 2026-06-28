@@ -4,10 +4,13 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Play, Bug, TerminalSquare, Globe, X } from "lucide-react";
 
 import { Input } from "./ui";
+import { interactiveSurfaceOverlayStyle } from "./ui/interactiveSurfaceMotion";
 import {
-  interactiveSurfaceOverlayStyle,
-  useInteractiveSurfaceMotion,
-} from "./ui/interactiveSurfaceMotion";
+  SHELL_DIALOG_PANEL_TRANSITION,
+  SHELL_MODAL_PANEL_ANIMATE,
+  SHELL_MODAL_PANEL_EXIT,
+  SHELL_MODAL_PANEL_INITIAL,
+} from "./ui/motionContracts";
 import type { ExecutionProfile } from "../utils/executionProfiles";
 
 interface ExecutionDialogProps {
@@ -41,15 +44,8 @@ export const ExecutionDialog: React.FC<ExecutionDialogProps> = ({
   onExecuteProfile,
   onExecuteCustomCommand,
 }) => {
-  const reduceDialogMotion = useReducedMotion();
-  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-    "dialog",
-    {
-      preserveTransform: true,
-      reduceMotion: Boolean(reduceDialogMotion),
-    },
-  );
   const [customCommand, setCustomCommand] = useState("");
+  const reduceDialogMotion = useReducedMotion();
 
   const sectionLabelClass =
     "text-[15px] font-semibold text-[var(--text-secondary)]";
@@ -92,173 +88,172 @@ export const ExecutionDialog: React.FC<ExecutionDialogProps> = ({
             <>
               <Dialog.Overlay forceMount asChild>
                 <motion.div
-                  className="fixed inset-0 z-[110] bg-black/45"
-                  initial={reduceDialogMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={{ duration: reduceDialogMotion ? 0 : 0.12 }}
-                  onAnimationStart={markMotionStart}
+                  className="fixed inset-0 z-[110]"
                   style={interactiveSurfaceOverlayStyle}
                 />
               </Dialog.Overlay>
               <Dialog.Content forceMount asChild>
                 <motion.div
-                  initial={
-                    reduceDialogMotion ? false : { opacity: 0, scale: 0.95 }
-                  }
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={
-                    reduceDialogMotion
-                      ? { opacity: 1, scale: 1 }
-                      : { opacity: 0, scale: 0.97 }
-                  }
-                  transition={{
-                    duration: reduceDialogMotion ? 0 : 0.14,
-                    ease: "easeOut",
-                  }}
-                  className="fixed left-1/2 top-1/2 z-[111] w-[min(760px,calc(100vw-40px))] -translate-x-1/2 -translate-y-1/2 rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
+                  className="fixed left-1/2 top-1/2 z-[111] w-[min(760px,calc(100vw-40px))] -translate-x-1/2 -translate-y-1/2 outline-none"
                   data-testid="execution-dialog"
-                  onAnimationStart={markMotionStart}
-                  style={surfaceStyle}
                 >
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="min-w-0">
-                      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent">
-                        {actionIcon}
+                  <motion.div
+                    className="shell-modal-surface rounded-[28px] bg-[var(--bg-secondary)] p-8"
+                    initial={
+                      reduceDialogMotion ? false : SHELL_MODAL_PANEL_INITIAL
+                    }
+                    animate={SHELL_MODAL_PANEL_ANIMATE}
+                    exit={
+                      reduceDialogMotion
+                        ? SHELL_MODAL_PANEL_ANIMATE
+                        : SHELL_MODAL_PANEL_EXIT
+                    }
+                    transition={
+                      reduceDialogMotion
+                        ? { duration: 0 }
+                        : SHELL_DIALOG_PANEL_TRANSITION
+                    }
+                  >
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="min-w-0">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent">
+                          {actionIcon}
+                        </div>
+                        <Dialog.Title className="text-[28px] font-semibold text-[var(--text-primary)]">
+                          {title}
+                        </Dialog.Title>
+                        <Dialog.Description className="mt-2 text-[16px] text-[var(--text-secondary)]">
+                          {activeFileName
+                            ? `Current context: ${activeFileName}`
+                            : "Choose a profile or enter a command"}
+                        </Dialog.Description>
                       </div>
-                      <Dialog.Title className="text-[28px] font-semibold text-[var(--text-primary)]">
-                        {title}
-                      </Dialog.Title>
-                      <Dialog.Description className="mt-2 text-[16px] text-[var(--text-secondary)]">
-                        {activeFileName
-                          ? `Current context: ${activeFileName}`
-                          : "Choose a profile or enter a command"}
-                      </Dialog.Description>
+
+                      <Dialog.Close asChild>
+                        <button
+                          type="button"
+                          className={bubbleIconButtonClass}
+                          aria-label="Close execution dialog"
+                        >
+                          <X size={20} />
+                        </button>
+                      </Dialog.Close>
                     </div>
 
-                    <Dialog.Close asChild>
-                      <button
-                        type="button"
-                        className={bubbleIconButtonClass}
-                        aria-label="Close execution dialog"
+                    <div className="mt-8 space-y-5">
+                      <div>
+                        <div className={sectionLabelClass}>Profiles</div>
+                        <div className="mt-2">
+                          {actionProfiles.length > 0 ? (
+                            <div className="space-y-2">
+                              {actionProfiles.map((profile) => {
+                                const missingTools = profile.missingTools ?? [];
+                                const isUnavailable = missingTools.length > 0;
+
+                                return (
+                                  <button
+                                    key={profile.id}
+                                    type="button"
+                                    disabled={isUnavailable}
+                                    onClick={() => {
+                                      if (isUnavailable) {
+                                        return;
+                                      }
+                                      onExecuteProfile(profile);
+                                    }}
+                                    className={`w-full ${rowClass} ${
+                                      isUnavailable
+                                        ? "cursor-not-allowed opacity-70"
+                                        : ""
+                                    }`}
+                                  >
+                                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
+                                      {getProfileIcon(profile)}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <div className="text-sm font-medium text-[var(--text-primary)]">
+                                          {profile.label}
+                                        </div>
+                                        <span className="rounded-full border border-[var(--border-subtle)] bg-transparent px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                                          {profile.kind}
+                                        </span>
+                                      </div>
+                                      <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                        {profile.description}
+                                      </div>
+                                      {profile.command && (
+                                        <div className="mt-2 truncate font-mono text-[11px] text-[var(--text-secondary)]">
+                                          {profile.command}
+                                        </div>
+                                      )}
+                                      {isUnavailable && (
+                                        <div className="mt-2 text-[11px] text-[var(--status-warning)]">
+                                          Missing tools:{" "}
+                                          {missingTools.join(", ")}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {!isUnavailable && (
+                                      <div className="mt-0.5 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                                        Enter
+                                      </div>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded-[18px] border border-dashed border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-4 text-sm text-[var(--text-muted)]">
+                              No suggested {title.toLowerCase()} profiles for
+                              the current context.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          handleExecuteCustom();
+                        }}
                       >
-                        <X size={20} />
-                      </button>
-                    </Dialog.Close>
-                  </div>
-
-                  <div className="mt-8 space-y-5">
-                    <div>
-                      <div className={sectionLabelClass}>Profiles</div>
-                      <div className="mt-2">
-                        {actionProfiles.length > 0 ? (
-                          <div className="space-y-2">
-                            {actionProfiles.map((profile) => {
-                              const missingTools = profile.missingTools ?? [];
-                              const isUnavailable = missingTools.length > 0;
-
-                              return (
-                                <button
-                                  key={profile.id}
-                                  type="button"
-                                  disabled={isUnavailable}
-                                  onClick={() => {
-                                    if (isUnavailable) {
-                                      return;
-                                    }
-                                    onExecuteProfile(profile);
-                                  }}
-                                  className={`w-full ${rowClass} ${
-                                    isUnavailable
-                                      ? "cursor-not-allowed opacity-70"
-                                      : ""
-                                  }`}
-                                >
-                                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
-                                    {getProfileIcon(profile)}
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <div className="text-sm font-medium text-[var(--text-primary)]">
-                                        {profile.label}
-                                      </div>
-                                      <span className="rounded-full border border-[var(--border-subtle)] bg-transparent px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                                        {profile.kind}
-                                      </span>
-                                    </div>
-                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
-                                      {profile.description}
-                                    </div>
-                                    {profile.command && (
-                                      <div className="mt-2 truncate font-mono text-[11px] text-[var(--text-secondary)]">
-                                        {profile.command}
-                                      </div>
-                                    )}
-                                    {isUnavailable && (
-                                      <div className="mt-2 text-[11px] text-[var(--status-warning)]">
-                                        Missing tools: {missingTools.join(", ")}
-                                      </div>
-                                    )}
-                                  </div>
-                                  {!isUnavailable && (
-                                    <div className="mt-0.5 shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                                      Enter
-                                    </div>
-                                  )}
-                                </button>
-                              );
-                            })}
+                        <div className={sectionLabelClass}>Custom Command</div>
+                        <div className="mt-2">
+                          <div className="mb-3 text-[13px] text-[var(--text-muted)]">
+                            Run a one-off command in the current execution mode.
                           </div>
-                        ) : (
-                          <div className="rounded-[18px] border border-dashed border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-4 text-sm text-[var(--text-muted)]">
-                            No suggested {title.toLowerCase()} profiles for the
-                            current context.
+                          <Input
+                            value={customCommand}
+                            onChange={(event) =>
+                              setCustomCommand(event.target.value)
+                            }
+                            placeholder={
+                              mode === "debug"
+                                ? "dlv debug ./cmd/api"
+                                : "go run ./cmd/api/main.go"
+                            }
+                            className={`${inputShellClass} min-h-12 w-full px-4 text-[16px]`}
+                          />
+                          <div className="mt-5 flex justify-end">
+                            <button
+                              type="submit"
+                              disabled={!mode || customCommand.trim() === ""}
+                              className={bubbleActionButtonClass}
+                            >
+                              {mode === "debug"
+                                ? "Start Debug Command"
+                                : "Run Command"}
+                            </button>
                           </div>
-                        )}
+                        </div>
+                      </form>
+
+                      <div className="flex justify-end text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        <span>{actionProfiles.length} suggested profiles</span>
                       </div>
                     </div>
-
-                    <form
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        handleExecuteCustom();
-                      }}
-                    >
-                      <div className={sectionLabelClass}>Custom Command</div>
-                      <div className="mt-2">
-                        <div className="mb-3 text-[13px] text-[var(--text-muted)]">
-                          Run a one-off command in the current execution mode.
-                        </div>
-                        <Input
-                          value={customCommand}
-                          onChange={(event) =>
-                            setCustomCommand(event.target.value)
-                          }
-                          placeholder={
-                            mode === "debug"
-                              ? "dlv debug ./cmd/api"
-                              : "go run ./cmd/api/main.go"
-                          }
-                          className={`${inputShellClass} min-h-12 w-full px-4 text-[16px]`}
-                        />
-                        <div className="mt-5 flex justify-end">
-                          <button
-                            type="submit"
-                            disabled={!mode || customCommand.trim() === ""}
-                            className={bubbleActionButtonClass}
-                          >
-                            {mode === "debug"
-                              ? "Start Debug Command"
-                              : "Run Command"}
-                          </button>
-                        </div>
-                      </div>
-                    </form>
-
-                    <div className="flex justify-end text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                      <span>{actionProfiles.length} suggested profiles</span>
-                    </div>
-                  </div>
+                  </motion.div>
                 </motion.div>
               </Dialog.Content>
             </>

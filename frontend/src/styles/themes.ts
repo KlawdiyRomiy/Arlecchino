@@ -391,6 +391,10 @@ const createThemeCssVariables = (
   "--shell-inner-highlight": options.shellInnerHighlight,
   "--shell-shadow": options.shellShadow,
   "--shell-shadow-active": options.shellShadowActive,
+  "--shell-modal-border":
+    "color-mix(in srgb, var(--shell-border-strong) 86%, var(--border-default))",
+  "--shell-modal-shadow":
+    "inset 0 1px 0 var(--shell-inner-highlight), 0 0 0 1px color-mix(in srgb, var(--shell-border-strong) 74%, transparent), 0 16px 34px -24px rgba(0, 0, 0, 0.34), 0 30px 76px -34px rgba(0, 0, 0, 0.38), 0 54px 128px -58px rgba(0, 0, 0, 0.34)",
   "--shadow-soft": options.shadowSoft,
   "--shadow-overlay": options.shadowOverlay,
   "--shadow-drag": options.shadowDrag,

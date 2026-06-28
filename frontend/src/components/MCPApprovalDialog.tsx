@@ -10,10 +10,13 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Clock, ShieldAlert, ShieldCheck, X } from "lucide-react";
 
 import { Button } from "./ui";
+import { interactiveSurfaceOverlayStyle } from "./ui/interactiveSurfaceMotion";
 import {
-  interactiveSurfaceOverlayStyle,
-  useInteractiveSurfaceMotion,
-} from "./ui/interactiveSurfaceMotion";
+  SHELL_DIALOG_PANEL_TRANSITION,
+  SHELL_MODAL_PANEL_ANIMATE,
+  SHELL_MODAL_PANEL_EXIT,
+  SHELL_MODAL_PANEL_INITIAL,
+} from "./ui/motionContracts";
 import { EventsEmit, EventsOn } from "../wails/runtime";
 
 interface MCPApprovalRequest {
@@ -96,13 +99,6 @@ export const MCPApprovalDialog: React.FC = () => {
   const queueRef = useRef<MCPApprovalRequest[]>([]);
   const activeRequest = queue[0] ?? null;
   const reduceDialogMotion = useReducedMotion();
-  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-    "dialog",
-    {
-      preserveTransform: true,
-      reduceMotion: Boolean(reduceDialogMotion),
-    },
-  );
 
   useEffect(() => {
     queueRef.current = queue;
@@ -182,109 +178,110 @@ export const MCPApprovalDialog: React.FC = () => {
             <React.Fragment key={activeRequest.requestId}>
               <Dialog.Overlay forceMount asChild>
                 <motion.div
-                  className="fixed inset-0 z-[120] bg-black/55"
-                  initial={reduceDialogMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={{ duration: reduceDialogMotion ? 0 : 0.12 }}
-                  onAnimationStart={markMotionStart}
+                  className="fixed inset-0 z-[120]"
                   style={interactiveSurfaceOverlayStyle}
                 />
               </Dialog.Overlay>
               <Dialog.Content forceMount asChild>
                 <motion.div
-                  className="fixed left-1/2 top-1/2 z-[121] w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[18px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)] outline-none"
+                  className="fixed left-1/2 top-1/2 z-[121] w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 outline-none"
                   data-testid="mcp-approval-dialog"
-                  initial={
-                    reduceDialogMotion ? false : { opacity: 0, scale: 0.97 }
-                  }
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={
-                    reduceDialogMotion
-                      ? { opacity: 1, scale: 1 }
-                      : { opacity: 0, scale: 0.985 }
-                  }
-                  transition={{ duration: reduceDialogMotion ? 0 : 0.14 }}
-                  onAnimationStart={markMotionStart}
-                  style={surfaceStyle}
                 >
-                  <div className="flex items-start justify-between gap-4 border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-5 py-4">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--status-warning)]">
-                        <ShieldAlert size={17} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                          MCP Approval
+                  <motion.div
+                    className="shell-modal-surface overflow-hidden rounded-[18px] bg-[var(--surface-elevated)]"
+                    initial={
+                      reduceDialogMotion ? false : SHELL_MODAL_PANEL_INITIAL
+                    }
+                    animate={SHELL_MODAL_PANEL_ANIMATE}
+                    exit={
+                      reduceDialogMotion
+                        ? SHELL_MODAL_PANEL_ANIMATE
+                        : SHELL_MODAL_PANEL_EXIT
+                    }
+                    transition={
+                      reduceDialogMotion
+                        ? { duration: 0 }
+                        : SHELL_DIALOG_PANEL_TRANSITION
+                    }
+                  >
+                    <div className="flex items-start justify-between gap-4 border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-5 py-4">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--status-warning)]">
+                          <ShieldAlert size={17} />
                         </div>
-                        <Dialog.Title className="text-[15px] font-semibold text-[var(--text-primary)]">
-                          Agent requests IDE control
-                        </Dialog.Title>
-                        <Dialog.Description className="mt-1 text-xs text-[var(--text-muted)]">
-                          Approve only if this action matches the work you
-                          requested.
-                        </Dialog.Description>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="topbar-control-button flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-subtle)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
-                      aria-label="Deny MCP request"
-                      onClick={() => respond(false)}
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-
-                  <div className="space-y-4 px-5 py-5">
-                    <div className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)] p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                          Tool
-                        </div>
-                        {riskLabel ? (
-                          <div className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                            {riskLabel}
+                        <div className="min-w-0">
+                          <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                            MCP Approval
                           </div>
-                        ) : null}
+                          <Dialog.Title className="text-[15px] font-semibold text-[var(--text-primary)]">
+                            Agent requests IDE control
+                          </Dialog.Title>
+                          <Dialog.Description className="mt-1 text-xs text-[var(--text-muted)]">
+                            Approve only if this action matches the work you
+                            requested.
+                          </Dialog.Description>
+                        </div>
                       </div>
-                      <div className="break-all font-mono text-[13px] text-[var(--text-primary)]">
-                        {activeRequest?.toolName ?? ""}
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                      <Clock size={14} />
-                      <span>
-                        Approval grants a temporary session for{" "}
-                        {Math.max(
-                          1,
-                          Math.round((activeRequest?.ttlSeconds ?? 0) / 60),
-                        )}{" "}
-                        minutes.
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--border-subtle)] pt-4">
-                      <Button
-                        variant="secondary"
-                        size="sm"
+                      <button
+                        type="button"
+                        className="topbar-control-button flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-[var(--text-muted)] transition-colors hover:border-[var(--border-subtle)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
+                        aria-label="Deny MCP request"
                         onClick={() => respond(false)}
                       >
-                        Deny
-                      </Button>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        className="inline-flex items-center gap-2"
-                        onClick={() => respond(true)}
-                      >
-                        <ShieldCheck size={14} />
-                        {approveLabel}
-                      </Button>
+                        <X size={16} />
+                      </button>
                     </div>
-                  </div>
+
+                    <div className="space-y-4 px-5 py-5">
+                      <div className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)] p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                            Tool
+                          </div>
+                          {riskLabel ? (
+                            <div className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                              {riskLabel}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="break-all font-mono text-[13px] text-[var(--text-primary)]">
+                          {activeRequest?.toolName ?? ""}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                        <Clock size={14} />
+                        <span>
+                          Approval grants a temporary session for{" "}
+                          {Math.max(
+                            1,
+                            Math.round((activeRequest?.ttlSeconds ?? 0) / 60),
+                          )}{" "}
+                          minutes.
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--border-subtle)] pt-4">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => respond(false)}
+                        >
+                          Deny
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="inline-flex items-center gap-2"
+                          onClick={() => respond(true)}
+                        >
+                          <ShieldCheck size={14} />
+                          {approveLabel}
+                        </Button>
+                      </div>
+                    </div>
+                  </motion.div>
                 </motion.div>
               </Dialog.Content>
             </React.Fragment>

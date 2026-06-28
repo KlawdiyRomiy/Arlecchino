@@ -151,16 +151,14 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         alignItems: "center",
         justifyContent: "center",
         zIndex: 50,
-        backgroundColor: isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.3)",
       }}
       onClick={onClose}
     >
       <div
+        className="shell-modal-surface"
         style={{
           backgroundColor: "var(--surface-elevated)",
           borderRadius: radius.lg,
-          boxShadow:
-            "0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)",
           width: "800px",
           maxHeight: "80vh",
           overflow: "hidden",

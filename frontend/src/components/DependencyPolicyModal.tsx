@@ -23,14 +23,13 @@ import {
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { isAppNotificationInteractionEvent } from "../utils/appNotificationTargets";
 import { shortcuts } from "../utils/keyboard";
+import { interactiveSurfaceOverlayStyle } from "./ui/interactiveSurfaceMotion";
 import {
-  SHELL_DIALOG_OVERLAY_TRANSITION,
   SHELL_DIALOG_PANEL_TRANSITION,
+  SHELL_MODAL_PANEL_ANIMATE,
+  SHELL_MODAL_PANEL_EXIT,
+  SHELL_MODAL_PANEL_INITIAL,
 } from "./ui/motionContracts";
-import {
-  interactiveSurfaceOverlayStyle,
-  useInteractiveSurfaceMotion,
-} from "./ui/interactiveSurfaceMotion";
 
 interface DependencyPolicyModalProps {
   isOpen: boolean;
@@ -159,11 +158,6 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
 }) => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const reduceDialogMotion = useReducedMotion();
-  const { markMotionStart: markDialogMotion, surfaceStyle } =
-    useInteractiveSurfaceMotion("dialog", {
-      preserveTransform: true,
-      reduceMotion: Boolean(reduceDialogMotion),
-    });
   const [consentMode, setConsentMode] = useState<ConsentMode>(
     ConsentMode.ConsentModeConfirmOncePerProject,
   );
@@ -414,16 +408,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
             <React.Fragment key="dependency-policy-modal-motion">
               <Dialog.Overlay forceMount asChild>
                 <motion.div
-                  className="fixed inset-0 z-[110] bg-black/55"
-                  initial={reduceDialogMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={
-                    reduceDialogMotion
-                      ? { duration: 0 }
-                      : SHELL_DIALOG_OVERLAY_TRANSITION
-                  }
-                  onAnimationStart={markDialogMotion}
+                  className="fixed inset-0 z-[110]"
                   style={interactiveSurfaceOverlayStyle}
                 />
               </Dialog.Overlay>
@@ -441,17 +426,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                 <motion.div
                   className="fixed left-1/2 top-1/2 z-[111] outline-none"
                   data-testid="dependency-policy-modal"
-                  initial={reduceDialogMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={
-                    reduceDialogMotion
-                      ? { duration: 0 }
-                      : SHELL_DIALOG_OVERLAY_TRANSITION
-                  }
-                  onAnimationStart={markDialogMotion}
                   style={{
-                    ...surfaceStyle,
                     transform: `translate(-50%, -50%) scale(${uiScale})`,
                     transformOrigin: "center",
                     width: `min(${94 / uiScale}vw, 1180px)`,
@@ -459,23 +434,21 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                   }}
                 >
                   <motion.div
-                    className="flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)]"
+                    className="shell-modal-surface flex h-full w-full flex-col overflow-hidden rounded-[24px] bg-[var(--surface-canvas)]"
                     initial={
-                      reduceDialogMotion ? false : { y: 12, scale: 0.985 }
+                      reduceDialogMotion ? false : SHELL_MODAL_PANEL_INITIAL
                     }
-                    animate={{ y: 0, scale: 1 }}
+                    animate={SHELL_MODAL_PANEL_ANIMATE}
                     exit={
                       reduceDialogMotion
-                        ? { y: 0, scale: 1 }
-                        : { y: 8, scale: 0.99 }
+                        ? SHELL_MODAL_PANEL_ANIMATE
+                        : SHELL_MODAL_PANEL_EXIT
                     }
                     transition={
                       reduceDialogMotion
                         ? { duration: 0 }
                         : SHELL_DIALOG_PANEL_TRANSITION
                     }
-                    onAnimationStart={markDialogMotion}
-                    style={surfaceStyle}
                   >
                     <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-6 py-5">
                       <div className="flex items-center gap-3">

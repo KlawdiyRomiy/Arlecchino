@@ -94,6 +94,17 @@
   --shell-shadow-active:
     0 0 0 1px rgba(255, 255, 255, 0.04), 0 18px 44px -20px rgba(0, 0, 0, 0.72),
     0 30px 90px -34px rgba(0, 0, 0, 0.82);
+  --shell-modal-border: color-mix(
+    in srgb,
+    var(--shell-border-strong) 86%,
+    var(--border-default)
+  );
+  --shell-modal-shadow:
+    inset 0 1px 0 var(--shell-inner-highlight),
+    0 0 0 1px color-mix(in srgb, var(--shell-border-strong) 74%, transparent),
+    0 16px 34px -24px rgba(0, 0, 0, 0.34),
+    0 30px 76px -34px rgba(0, 0, 0, 0.38),
+    0 54px 128px -58px rgba(0, 0, 0, 0.34);
 
   /* Editor and terminal theme tokens */
   --editor-bg: #050505;
@@ -792,14 +803,21 @@ body > [data-radix-portal] > * {
 }
 
 .shell-overlay-card {
-  border: 1px solid var(--shell-border-strong);
+  border: 1px solid var(--shell-modal-border);
   border-radius: 28px;
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--surface-shell-soft) 97%, transparent),
     color-mix(in srgb, var(--surface-shell) 99%, transparent)
   );
-  box-shadow: var(--shell-shadow-active);
+  box-shadow: var(--shell-modal-shadow);
+}
+
+.shell-modal-surface {
+  --wails-draggable: no-drag;
+  border: 1px solid var(--shell-modal-border) !important;
+  box-shadow: var(--shell-modal-shadow) !important;
+  background-clip: padding-box;
 }
 
 .panel-control-button {

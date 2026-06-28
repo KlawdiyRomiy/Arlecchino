@@ -878,7 +878,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[110] bg-black/52" onClick={onClose}>
+    <div className="fixed inset-0 z-[110]" onClick={onClose}>
       <div
         className="absolute left-1/2 top-[43%] flex w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col items-center"
         onClick={(e) => e.stopPropagation()}

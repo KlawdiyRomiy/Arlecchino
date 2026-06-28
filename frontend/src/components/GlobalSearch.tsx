@@ -203,15 +203,14 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
         justifyContent: "center",
         paddingTop: "5rem",
         zIndex: 50,
-        backgroundColor: isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.3)",
       }}
       onClick={handleClose}
     >
       <div
+        className="shell-modal-surface"
         style={{
           backgroundColor: "var(--surface-elevated)",
           borderRadius: radius.lg,
-          boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
           width: "700px",
           maxHeight: "600px",
           overflow: "hidden",

@@ -56,14 +56,9 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
       className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center px-6"
       data-testid="tab-switcher-overlay"
     >
-      <div
-        className="absolute inset-0 bg-[color-mix(in_srgb,var(--surface-overlay)_70%,transparent)]"
-        data-testid="tab-switcher-backdrop"
-      />
-
       <div className="relative w-full max-w-[680px]">
         <div
-          className="overflow-hidden rounded-[16px] border border-[var(--shell-border-strong)] bg-[color-mix(in_srgb,var(--surface-overlay)_96%,transparent)] shadow-[var(--shadow-overlay)] backdrop-blur-[6px]"
+          className="shell-modal-surface overflow-hidden rounded-[16px] bg-[color-mix(in_srgb,var(--surface-overlay)_96%,transparent)] backdrop-blur-[6px]"
           data-testid="tab-switcher-panel"
         >
           <div ref={listRef} className="max-h-[420px] overflow-y-auto p-2">

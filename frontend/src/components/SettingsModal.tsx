@@ -118,8 +118,10 @@ import {
   useInteractiveSurfaceMotion,
 } from "./ui/interactiveSurfaceMotion";
 import {
-  SHELL_DIALOG_OVERLAY_TRANSITION,
   SHELL_DIALOG_PANEL_TRANSITION,
+  SHELL_MODAL_PANEL_ANIMATE,
+  SHELL_MODAL_PANEL_EXIT,
+  SHELL_MODAL_PANEL_INITIAL,
 } from "./ui/motionContracts";
 
 const settingsPanelClass =
@@ -3824,16 +3826,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Dialog.Overlay forceMount asChild>
                 <motion.div
                   key="settings-overlay"
-                  className="fixed inset-0 z-[110] bg-black/55"
-                  initial={reduceSettingsMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={reduceSettingsMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={
-                    reduceSettingsMotion
-                      ? { duration: 0 }
-                      : SHELL_DIALOG_OVERLAY_TRANSITION
-                  }
-                  onAnimationStart={markSettingsMotion}
+                  className="fixed inset-0 z-[110]"
                   style={interactiveSurfaceOverlayStyle}
                 />
               </Dialog.Overlay>
@@ -3852,33 +3845,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   key="settings-content"
                   className="fixed left-1/2 top-1/2 z-[111] outline-none"
                   data-testid="settings-modal"
-                  initial={reduceSettingsMotion ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={reduceSettingsMotion ? { opacity: 1 } : { opacity: 0 }}
-                  transition={
-                    reduceSettingsMotion
-                      ? { duration: 0 }
-                      : SHELL_DIALOG_OVERLAY_TRANSITION
-                  }
                   style={{
-                    ...surfaceStyle,
                     transform: `translate(-50%, -50%) scale(${uiScale})`,
                     transformOrigin: "center",
                     width: `min(${94 / uiScale}vw, 1080px)`,
                     height: `min(${86 / uiScale}vh, 800px)`,
                   }}
-                  onAnimationStart={markSettingsMotion}
                 >
                   <motion.div
-                    className="flex h-full w-full overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)]"
+                    className="shell-modal-surface flex h-full w-full overflow-hidden rounded-[24px] bg-[var(--surface-canvas)]"
                     initial={
-                      reduceSettingsMotion ? false : { y: 10, scale: 0.985 }
+                      reduceSettingsMotion ? false : SHELL_MODAL_PANEL_INITIAL
                     }
-                    animate={{ y: 0, scale: 1 }}
+                    animate={SHELL_MODAL_PANEL_ANIMATE}
                     exit={
                       reduceSettingsMotion
-                        ? { y: 0, scale: 1 }
-                        : { y: 6, scale: 0.99 }
+                        ? SHELL_MODAL_PANEL_ANIMATE
+                        : SHELL_MODAL_PANEL_EXIT
                     }
                     transition={
                       reduceSettingsMotion
@@ -3886,7 +3869,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : SHELL_DIALOG_PANEL_TRANSITION
                     }
                     onAnimationStart={markSettingsMotion}
-                    style={surfaceStyle}
                   >
                     <div className="flex w-[276px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] p-3">
                       <div className="shell-cluster-soft mb-3 flex min-h-[58px] w-full items-center gap-3 px-3 py-2">

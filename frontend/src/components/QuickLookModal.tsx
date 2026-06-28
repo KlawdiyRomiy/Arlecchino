@@ -25,6 +25,12 @@ import {
   interactiveSurfaceOverlayStyle,
   useInteractiveSurfaceMotion,
 } from "./ui/interactiveSurfaceMotion";
+import {
+  SHELL_DIALOG_PANEL_TRANSITION,
+  SHELL_MODAL_PANEL_ANIMATE,
+  SHELL_MODAL_PANEL_EXIT,
+  SHELL_MODAL_PANEL_INITIAL,
+} from "./ui/motionContracts";
 
 interface QuickLookModalProps {
   isOpen: boolean;
@@ -88,14 +94,11 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
   onClose,
   onExpand,
 }) => {
+  const { markMotionStart } = useInteractiveSurfaceMotion("modal", {
+    preserveTransform: true,
+    reduceMotion: true,
+  });
   const reduceModalMotion = useReducedMotion();
-  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-    "modal",
-    {
-      preserveTransform: true,
-      reduceMotion: Boolean(reduceModalMotion),
-    },
-  );
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<HTMLDivElement>(null);
@@ -243,18 +246,9 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={reduceModalMotion ? false : { opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={reduceModalMotion ? { opacity: 1 } : { opacity: 0 }}
-          transition={{ duration: reduceModalMotion ? 0 : 0.15 }}
           className="fixed inset-0 z-50 flex items-center justify-center"
           onClick={handleBackdropClick}
-          onAnimationStart={markMotionStart}
-          style={{
-            ...interactiveSurfaceOverlayStyle,
-            background:
-              "color-mix(in srgb, var(--surface-shell) 50%, rgba(0, 0, 0, 0.5))",
-          }}
+          style={interactiveSurfaceOverlayStyle}
           role="presentation"
           tabIndex={-1}
           onKeyDown={(e) => {
@@ -282,32 +276,27 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
           <motion.div
             ref={modalRef}
-            initial={
-              reduceModalMotion ? false : { opacity: 0, scale: 0.95, y: 20 }
-            }
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="shell-modal-surface relative flex flex-col overflow-hidden"
+            initial={reduceModalMotion ? false : SHELL_MODAL_PANEL_INITIAL}
+            animate={SHELL_MODAL_PANEL_ANIMATE}
             exit={
               reduceModalMotion
-                ? { opacity: 1, scale: 1, y: 0 }
-                : { opacity: 0, scale: 0.95, y: 20 }
+                ? SHELL_MODAL_PANEL_ANIMATE
+                : SHELL_MODAL_PANEL_EXIT
             }
-            transition={{
-              duration: reduceModalMotion ? 0 : 0.2,
-              ease: "easeOut",
-            }}
-            className="relative flex flex-col overflow-hidden"
+            transition={
+              reduceModalMotion
+                ? { duration: 0 }
+                : SHELL_DIALOG_PANEL_TRANSITION
+            }
             onAnimationStart={markMotionStart}
             style={{
-              ...surfaceStyle,
               width: modalSize.width,
               height: modalSize.height,
               borderRadius: "var(--radius-shell)",
-              border: "1px solid var(--shell-border-strong)",
               background:
                 "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 98%, transparent), color-mix(in srgb, var(--surface-shell) 99%, transparent))",
               color: "var(--text-primary)",
-              boxShadow:
-                "var(--shadow-overlay), inset 0 1px 0 var(--shell-inner-highlight)",
               backdropFilter: "blur(18px) saturate(1.08)",
             }}
           >
