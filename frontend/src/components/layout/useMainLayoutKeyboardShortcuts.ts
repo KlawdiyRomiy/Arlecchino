@@ -152,6 +152,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   executionDialogMode: unknown | null;
   finishHeldPanelShortcutOnKeyUp: (event: KeyboardEvent) => void;
   getShortcutEventCode: (event: KeyboardEvent) => string;
+  aiPanelEnabled: boolean;
   aiChatPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   handleHeldPanelShortcutMove: (event: KeyboardEvent) => boolean;
@@ -203,6 +204,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   executionDialogMode,
   finishHeldPanelShortcutOnKeyUp,
   getShortcutEventCode,
+  aiPanelEnabled,
   aiChatPreFullscreenRef,
   gitPreFullscreenRef,
   handleHeldPanelShortcutMove,
@@ -310,6 +312,7 @@ export const useMainLayoutKeyboardShortcuts = ({
 
       const aiChatFullscreenCommand = resolveAIChatFullscreenShortcut(e);
       if (
+        aiPanelEnabled &&
         aiChatFullscreenCommand &&
         isAIChatTopmostFullscreen() &&
         !isTerminalShortcutContext &&
@@ -536,7 +539,7 @@ export const useMainLayoutKeyboardShortcuts = ({
         return;
       }
 
-      if (shortcuts.toggleAI(e)) {
+      if (aiPanelEnabled && shortcuts.toggleAI(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
@@ -554,7 +557,7 @@ export const useMainLayoutKeyboardShortcuts = ({
         return;
       }
 
-      if (shortcuts.toggleAIFullscreen(e)) {
+      if (aiPanelEnabled && shortcuts.toggleAIFullscreen(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
@@ -860,6 +863,7 @@ export const useMainLayoutKeyboardShortcuts = ({
     executionDialogMode,
     finishHeldPanelShortcutOnKeyUp,
     getShortcutEventCode,
+    aiPanelEnabled,
     aiChatPreFullscreenRef,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { EventsOff, EventsOn } from "../wails/runtime";
 import { useAIChatStore } from "../stores/aiChatStore";
+import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useGitStore } from "../stores/gitStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
 import {
@@ -35,6 +36,7 @@ interface WailsWindow {
 
 interface ShellMenuStatePayload {
   hasSelection: boolean;
+  aiPanelEnabled: boolean;
   canCloseFullscreenPanel: boolean;
   aiChatFullscreenActive: boolean;
   canStopAgent: boolean;
@@ -65,8 +67,16 @@ const parseMenuActionId = (payload: unknown): ShortcutActionId | null => {
   return null;
 };
 
+const isAIApplicationMenuAction = (actionId: ShortcutActionId): boolean =>
+  actionId === "ai.toggle" ||
+  actionId === "ai.fullscreen" ||
+  actionId === "ai.history";
+
 export const useApplicationMenuBridge = (): void => {
   const overrides = useKeybindingsStore((state) => state.overrides);
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
+  );
   const runs = useAIChatStore((state) => state.runs);
   const activeRunId = useAIChatStore((state) => state.activeRunId);
   const gitBusy = useGitStore((state) => state.busy);
@@ -77,10 +87,18 @@ export const useApplicationMenuBridge = (): void => {
   const [canCloseFullscreenPanel, setCanCloseFullscreenPanel] = useState(false);
   const [aiChatFullscreenActive, setAIChatFullscreenActive] = useState(false);
   const menuShortcuts = useMemo(
-    () => getApplicationMenuShortcutPayload(overrides),
-    [overrides],
+    () =>
+      getApplicationMenuShortcutPayload(overrides).filter(
+        (shortcut) =>
+          aiPanelEnabled || !isAIApplicationMenuAction(shortcut.actionId),
+      ),
+    [aiPanelEnabled, overrides],
   );
   const canStopAgent = useMemo(() => {
+    if (!aiPanelEnabled) {
+      return false;
+    }
+
     const active = activeRunId
       ? runs.find((run) => run.id === activeRunId)
       : undefined;
@@ -90,7 +108,7 @@ export const useApplicationMenuBridge = (): void => {
       }
       return run.status === "running" || run.status === "queued";
     });
-  }, [activeRunId, runs]);
+  }, [activeRunId, aiPanelEnabled, runs]);
   const hasGitChanges =
     stagedFiles.length > 0 ||
     unstagedFiles.length > 0 ||
@@ -99,13 +117,15 @@ export const useApplicationMenuBridge = (): void => {
   const shellMenuState = useMemo<ShellMenuStatePayload>(
     () => ({
       hasSelection: false,
+      aiPanelEnabled,
       canCloseFullscreenPanel,
-      aiChatFullscreenActive,
+      aiChatFullscreenActive: aiPanelEnabled && aiChatFullscreenActive,
       canStopAgent,
       canCommit,
       hasGitChanges,
     }),
     [
+      aiPanelEnabled,
       aiChatFullscreenActive,
       canCloseFullscreenPanel,
       canCommit,
@@ -165,6 +185,10 @@ export const useApplicationMenuBridge = (): void => {
         return;
       }
 
+      if (!aiPanelEnabled && isAIApplicationMenuAction(actionId)) {
+        return;
+      }
+
       switch (actionId) {
         case "window.toggleFullscreen":
           void toggleWindowFullscreen();
@@ -182,5 +206,5 @@ export const useApplicationMenuBridge = (): void => {
 
     EventsOn("ide:menu:action", handleMenuAction);
     return () => EventsOff("ide:menu:action");
-  }, []);
+  }, [aiPanelEnabled]);
 };

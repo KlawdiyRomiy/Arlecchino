@@ -429,6 +429,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const topbarItemOrder = useEditorSettingsStore(
     (state) => state.topbarItemOrder,
   );
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
+  );
   const setTopbarItemOrder = useEditorSettingsStore(
     (state) => state.setTopbarItemOrder,
   );
@@ -454,8 +457,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   );
   const visibleTopbarOrder = React.useMemo(
     () =>
-      resolveVisibleTopbarOrder(normalizedTopbarItemOrder, compactTopbarMode),
-    [compactTopbarMode, normalizedTopbarItemOrder],
+      resolveVisibleTopbarOrder(
+        normalizedTopbarItemOrder,
+        compactTopbarMode,
+      ).filter((itemId) => aiPanelEnabled || itemId !== "aiChat"),
+    [aiPanelEnabled, compactTopbarMode, normalizedTopbarItemOrder],
   );
   const leftTopbarOrder = React.useMemo(
     () => resolveVisibleTopbarSideOrder(visibleTopbarOrder, "left"),
@@ -868,16 +874,18 @@ export const TopBar: React.FC<TopBarProps> = ({
             Panels
           </DropdownMenu.Label>
 
-          <DropdownMenu.Item
-            onSelect={() => onToggleAIChat?.()}
-            className={menuItemClass}
-          >
-            <MessageSquare size={menuIconSize} />
-            AI Chat
-            {panels.aiChat && (
-              <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
-            )}
-          </DropdownMenu.Item>
+          {aiPanelEnabled ? (
+            <DropdownMenu.Item
+              onSelect={() => onToggleAIChat?.()}
+              className={menuItemClass}
+            >
+              <MessageSquare size={menuIconSize} />
+              AI Chat
+              {panels.aiChat && (
+                <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+              )}
+            </DropdownMenu.Item>
+          ) : null}
 
           <DropdownMenu.Item
             onSelect={() => onToggleTerminal?.()}
@@ -1023,6 +1031,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           </button>
         );
       case "aiChat":
+        if (!aiPanelEnabled) {
+          return null;
+        }
         return (
           <button
             type="button"

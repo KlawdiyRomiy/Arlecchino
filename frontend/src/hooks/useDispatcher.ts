@@ -9,6 +9,7 @@ import {
   UnpinCommand,
   InitDispatcherForProject,
 } from "../wails/app";
+import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useTerminalStore } from "../stores/terminalStore";
 
 interface DispatcherItem {
@@ -33,9 +34,26 @@ interface DispatcherResult {
   shouldClose: boolean;
 }
 
+const isAIBackendDispatcherItem = (
+  title: string,
+  subtitle?: string,
+): boolean => {
+  const normalizedTitle = title.trim().toLowerCase();
+  const normalizedText = `${title} ${subtitle ?? ""}`.toLowerCase();
+  return (
+    normalizedTitle.startsWith("@ai") ||
+    normalizedTitle.startsWith("ai:") ||
+    normalizedText.includes("ai chat") ||
+    normalizedText.includes("ai panel")
+  );
+};
+
 export function useDispatcher() {
   const isDispatcherPaused = useTerminalStore(
     (state) => state.isDispatcherPaused,
+  );
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
   );
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -63,12 +81,28 @@ export function useDispatcher() {
         GetDispatcherPinned(),
         GetDispatcherRecent(),
       ]);
-      setPinnedItems(pinned?.map((p) => p.title) || []);
-      setRecentItems(recent?.map((r) => r.title) || []);
+      setPinnedItems(
+        (pinned || [])
+          .filter((item) =>
+            aiPanelEnabled
+              ? true
+              : !isAIBackendDispatcherItem(item.title, item.subtitle),
+          )
+          .map((item) => item.title),
+      );
+      setRecentItems(
+        (recent || [])
+          .filter((item) =>
+            aiPanelEnabled
+              ? true
+              : !isAIBackendDispatcherItem(item.title, item.subtitle),
+          )
+          .map((item) => item.title),
+      );
     } catch (err) {
       console.error("[Dispatcher] Load pinned/recent failed:", err);
     }
-  }, []);
+  }, [aiPanelEnabled]);
 
   const open = useCallback(() => {
     if (isDispatcherPaused) {
@@ -100,13 +134,19 @@ export function useDispatcher() {
       }
       try {
         const results = await GetDispatcherSuggestions(value);
-        setSuggestions(results || []);
+        setSuggestions(
+          (results || []).filter((item) =>
+            aiPanelEnabled
+              ? true
+              : !isAIBackendDispatcherItem(item.title, item.subtitle),
+          ),
+        );
       } catch (err) {
         console.error("[Dispatcher] Suggestions failed:", err);
         setSuggestions([]);
       }
     },
-    [isDispatcherPaused],
+    [aiPanelEnabled, isDispatcherPaused],
   );
 
   const execute = useCallback(
@@ -123,6 +163,18 @@ export function useDispatcher() {
         };
       }
 
+      if (!aiPanelEnabled && isAIBackendDispatcherItem(command)) {
+        return {
+          success: false,
+          output: "",
+          error: "AI Panel is disabled",
+          resultType: 0,
+          items: [],
+          preview: "",
+          shouldClose: true,
+        };
+      }
+
       try {
         const result = await DispatchCommand(command);
         await loadPinnedAndRecent();
@@ -132,7 +184,7 @@ export function useDispatcher() {
         return null;
       }
     },
-    [isDispatcherPaused, loadPinnedAndRecent],
+    [aiPanelEnabled, isDispatcherPaused, loadPinnedAndRecent],
   );
 
   useEffect(() => {

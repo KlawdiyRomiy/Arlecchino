@@ -155,6 +155,7 @@ interface UseMainLayoutPanelEventsOptions {
   handlePreviewWindowOpenEvent: UnknownEventHandler;
   handlePreviewWindowUpdateEvent: UnknownEventHandler;
   handleSurfacePromoteEvent: UnknownEventHandler;
+  aiPanelEnabled: boolean;
   isAIChatTopmostFullscreen: () => boolean;
   isSettingsOpen: boolean;
   logicalViewport: { width: number; height: number };
@@ -232,6 +233,7 @@ export const useMainLayoutPanelEvents = ({
   handlePreviewWindowOpenEvent,
   handlePreviewWindowUpdateEvent,
   handleSurfacePromoteEvent,
+  aiPanelEnabled,
   isAIChatTopmostFullscreen,
   isSettingsOpen,
   logicalViewport,
@@ -355,6 +357,9 @@ export const useMainLayoutPanelEvents = ({
           openRunDialog();
           return;
         case "panel":
+          if (action.panelId === "aiChat" && !aiPanelEnabled) {
+            return;
+          }
           applyPanelOpenState(action.panelId, { panel: action.panelId });
           if (action.panelId === "terminal") {
             setTimeout(
@@ -367,6 +372,7 @@ export const useMainLayoutPanelEvents = ({
     },
     [
       applyPanelOpenState,
+      aiPanelEnabled,
       openCommandDispatcher,
       openDebugDialog,
       openRunDialog,
@@ -460,6 +466,10 @@ export const useMainLayoutPanelEvents = ({
 
       const appAction = resolveAppSurfaceAction(request.panel);
       if (appAction?.kind === "panel") {
+        if (appAction.panelId === "aiChat" && !aiPanelEnabled) {
+          return { handled: false, reason: "AI Panel is disabled." };
+        }
+
         applyPanelOpenState(appAction.panelId, {
           ...request,
           panel: appAction.panelId,
@@ -470,6 +480,10 @@ export const useMainLayoutPanelEvents = ({
       const panelId = resolvePanelId(request.panel);
       if (!panelId) {
         return { handled: false, reason: "Unknown panel." };
+      }
+
+      if (panelId === "aiChat" && !aiPanelEnabled) {
+        return { handled: false, reason: "AI Panel is disabled." };
       }
 
       const terminalState = useTerminalStore.getState();
@@ -505,6 +519,7 @@ export const useMainLayoutPanelEvents = ({
     },
     [
       applyPanelOpenState,
+      aiPanelEnabled,
       moveBrowserPreviewToPosition,
       moveSnappedPanelBetweenSides,
     ],
@@ -527,6 +542,10 @@ export const useMainLayoutPanelEvents = ({
       const appAction = resolveAppSurfaceAction(request.panel);
       if (appAction) {
         if (appAction.kind === "panel") {
+          if (appAction.panelId === "aiChat" && !aiPanelEnabled) {
+            return { handled: false, reason: "AI Panel is disabled." };
+          }
+
           applyPanelOpenState(appAction.panelId, {
             ...request,
             panel: appAction.panelId,
@@ -546,6 +565,10 @@ export const useMainLayoutPanelEvents = ({
       const panelId = resolvePanelId(request.panel);
       if (!panelId) {
         return { handled: false, reason: "Unknown panel." };
+      }
+
+      if (panelId === "aiChat" && !aiPanelEnabled) {
+        return { handled: false, reason: "AI Panel is disabled." };
       }
 
       if (panelId === "code" && request.path) {
@@ -609,6 +632,7 @@ export const useMainLayoutPanelEvents = ({
     },
     [
       applyPanelOpenState,
+      aiPanelEnabled,
       executeAppSurfaceAction,
       handleFileOpenInPanel,
       logicalViewport.height,
@@ -732,6 +756,15 @@ export const useMainLayoutPanelEvents = ({
         return;
       }
 
+      if (
+        !aiPanelEnabled &&
+        (actionId === "ai.toggle" ||
+          actionId === "ai.fullscreen" ||
+          actionId === "ai.history")
+      ) {
+        return;
+      }
+
       const aiChatFullscreenCommand = AI_CHAT_FULLSCREEN_MENU_ACTIONS[actionId];
       if (aiChatFullscreenCommand && isAIChatTopmostFullscreen()) {
         dispatchAIChatFullscreenCommand(aiChatFullscreenCommand, "menu");
@@ -825,6 +858,7 @@ export const useMainLayoutPanelEvents = ({
       closeSettings,
       copyProjectPathFromShortcut,
       aiChatPreFullscreenRef,
+      aiPanelEnabled,
       gitPreFullscreenRef,
       isAIChatTopmostFullscreen,
       isSettingsOpen,
@@ -880,6 +914,9 @@ export const useMainLayoutPanelEvents = ({
               setTimeout(() => state.focusActiveTerminal(), 80);
               return;
             case "ai":
+              if (!aiPanelEnabled) {
+                return;
+              }
               toggleNamedPanel("aiChat");
               return;
           }
@@ -896,11 +933,19 @@ export const useMainLayoutPanelEvents = ({
             toggleNamedPanel("terminal");
             break;
           case "ai":
+            if (!aiPanelEnabled) {
+              return;
+            }
             toggleNamedPanel("aiChat");
             break;
         }
       },
-      [closeTUIAssistPanel, openCommandDispatcher, toggleNamedPanel],
+      [
+        aiPanelEnabled,
+        closeTUIAssistPanel,
+        openCommandDispatcher,
+        toggleNamedPanel,
+      ],
     ),
     onWindowOpen: handlePreviewWindowOpenEvent,
     onWindowUpdate: handlePreviewWindowUpdateEvent,

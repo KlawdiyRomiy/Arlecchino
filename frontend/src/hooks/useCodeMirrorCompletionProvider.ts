@@ -58,6 +58,7 @@ import {
   type MetricsHandle,
 } from "../extensions/metricsExtension";
 import { getEditorDocumentVersion } from "../stores/editorDocumentObserver";
+import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import type { AdaptiveEditorFeatureBudget } from "../stores/performanceStore";
 import {
   createCompletionSessionController,
@@ -1880,6 +1881,9 @@ export const useCodeMirrorCompletionProvider = ({
   const metricsRef = useRef<MetricsHandle>(NOOP_METRICS);
   const [predictionStatus, setPredictionStatus] =
     useState<AIPredictionStatus | null>(null);
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
+  );
 
   onTypingRef.current = onTyping;
   onGhostShownRef.current = onGhostShown;
@@ -1949,7 +1953,7 @@ export const useCodeMirrorCompletionProvider = ({
   }, [content, enabled, resetCompletionState]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !aiPanelEnabled) {
       setPredictionStatus(null);
       return;
     }
@@ -1983,7 +1987,7 @@ export const useCodeMirrorCompletionProvider = ({
       disposed = true;
       unsubscribe();
     };
-  }, [enabled]);
+  }, [aiPanelEnabled, enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -2107,6 +2111,10 @@ export const useCodeMirrorCompletionProvider = ({
         };
       },
       fetchAIPrediction: async (payload) => {
+        if (!aiPanelEnabled) {
+          return null;
+        }
+
         const status = predictionStatus;
         if (!status?.enabled || !status.providerReady) {
           return null;
@@ -2177,6 +2185,7 @@ export const useCodeMirrorCompletionProvider = ({
   }, [
     editorFeatureBudget.completions,
     editorFeatureBudget.ghostText,
+    aiPanelEnabled,
     enabled,
     filePath,
     handleProviderEscape,

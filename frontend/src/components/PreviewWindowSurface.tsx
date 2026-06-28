@@ -3,6 +3,7 @@ import React, { useEffect, useId, useMemo, useReducer } from "react";
 import { ReadFile } from "../wails/app";
 import { useTheme } from "../hooks/useTheme";
 import { useEditorStore } from "../stores/editorStore";
+import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useExplorerStore } from "../stores/explorerStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { getThemeColors } from "../styles/colors";
@@ -136,6 +137,9 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
 }) => {
   const { isDark } = useTheme();
   const palette = getThemeColors(isDark);
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
+  );
   const projectPath = useExplorerStore((state) => state.projectPath);
   const focusActiveTerminal = useTerminalStore(
     (state) => state.focusActiveTerminal,
@@ -309,9 +313,9 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   }
 
   if (previewWindow.surface === "chat") {
-    return (
+    return aiPanelEnabled ? (
       <AIChatPanelContent presentation="preview" projectPath={projectPath} />
-    );
+    ) : null;
   }
 
   if (previewWindow.surface === "terminal") {

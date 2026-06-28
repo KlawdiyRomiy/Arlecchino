@@ -44,6 +44,7 @@ import {
   ExpandTag,
   PredictTerminalCommand,
 } from "../wails/app";
+import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 
 interface DispatcherItem {
   id: string;
@@ -90,6 +91,20 @@ const dispatcherErrorItem = (
 
 const backendSearchAction = (action: string | undefined): string =>
   action === "error" ? "error" : "open";
+
+const isAIBackendDispatcherItem = (
+  title: string,
+  subtitle?: string,
+): boolean => {
+  const normalizedTitle = title.trim().toLowerCase();
+  const normalizedText = `${title} ${subtitle ?? ""}`.toLowerCase();
+  return (
+    normalizedTitle.startsWith("@ai") ||
+    normalizedTitle.startsWith("ai:") ||
+    normalizedText.includes("ai chat") ||
+    normalizedText.includes("ai panel")
+  );
+};
 
 type InputMode = "default" | "ide" | "file" | "grep" | "symbol" | "ai" | "tag";
 
@@ -211,6 +226,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
 }) => {
   const aiPendingApprovals = useAIChatStore((state) => state.pendingApprovals);
   const aiRuns = useAIChatStore((state) => state.runs);
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
+  );
   const [input, setInput] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [items, setItems] = useState<DispatcherItem[]>([]);
@@ -240,6 +258,10 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
 
   const buildLocalAIActionItems = useCallback(
     (query: string): DispatcherItem[] => {
+      if (!aiPanelEnabled) {
+        return [];
+      }
+
       const items: DispatcherItem[] = [
         {
           id: "ai-new-chat",
@@ -310,62 +332,69 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
         `${item.title} ${item.subtitle ?? ""}`.toLowerCase().includes(needle),
       );
     },
-    [hasRunningAIRun, pendingApprovalCount],
+    [aiPanelEnabled, hasRunningAIRun, pendingApprovalCount],
   );
 
-  const buildAIInputItems = useCallback((value: string): DispatcherItem[] => {
-    const parsed = parseAICommandInput(value);
-    switch (parsed.kind) {
-      case "empty":
-        return AI_WORKFLOW_MODES.map((mode) => ({
-          id: `ai-complete-${mode.slash}`,
-          icon: <Sparkles size={16} />,
-          title: `@ai ${mode.slash}`,
-          subtitle: mode.description,
-          action: "complete",
-          completion: `@ai ${mode.slash} `,
-          source: "local",
-        }));
-      case "unknown-mode":
-        return [
-          {
-            id: "ai-unknown-mode",
-            icon: <AlertCircle size={16} />,
-            title: `Unknown AI mode ${parsed.mode}`,
-            subtitle: `Use ${AI_WORKFLOW_MODES.map((mode) => mode.slash).join(", ")}`,
-            action: "error",
-            source: "local",
-          },
-        ];
-      case "empty-prompt":
-        return [
-          {
-            id: `ai-empty-${parsed.mode.slash}`,
-            icon: <Sparkles size={16} />,
-            title: `@ai ${parsed.mode.slash}`,
-            subtitle: `Type a prompt to start ${parsed.mode.label}`,
-            action: "complete",
-            completion: `@ai ${parsed.mode.slash} `,
-            source: "local",
-          },
-        ];
-      case "start":
-        return [
-          {
-            id: `ai-start-${parsed.mode.slash}`,
-            icon: <Sparkles size={16} />,
-            title: `Start ${parsed.mode.label} in AI Chat`,
-            subtitle: parsed.prompt,
-            action: "palette",
-            source: "local",
-            paletteActionId: "ai.startFromInput",
-            palettePayload: { input: value },
-          },
-        ];
-      default:
+  const buildAIInputItems = useCallback(
+    (value: string): DispatcherItem[] => {
+      if (!aiPanelEnabled) {
         return [];
-    }
-  }, []);
+      }
+
+      const parsed = parseAICommandInput(value);
+      switch (parsed.kind) {
+        case "empty":
+          return AI_WORKFLOW_MODES.map((mode) => ({
+            id: `ai-complete-${mode.slash}`,
+            icon: <Sparkles size={16} />,
+            title: `@ai ${mode.slash}`,
+            subtitle: mode.description,
+            action: "complete",
+            completion: `@ai ${mode.slash} `,
+            source: "local",
+          }));
+        case "unknown-mode":
+          return [
+            {
+              id: "ai-unknown-mode",
+              icon: <AlertCircle size={16} />,
+              title: `Unknown AI mode ${parsed.mode}`,
+              subtitle: `Use ${AI_WORKFLOW_MODES.map((mode) => mode.slash).join(", ")}`,
+              action: "error",
+              source: "local",
+            },
+          ];
+        case "empty-prompt":
+          return [
+            {
+              id: `ai-empty-${parsed.mode.slash}`,
+              icon: <Sparkles size={16} />,
+              title: `@ai ${parsed.mode.slash}`,
+              subtitle: `Type a prompt to start ${parsed.mode.label}`,
+              action: "complete",
+              completion: `@ai ${parsed.mode.slash} `,
+              source: "local",
+            },
+          ];
+        case "start":
+          return [
+            {
+              id: `ai-start-${parsed.mode.slash}`,
+              icon: <Sparkles size={16} />,
+              title: `Start ${parsed.mode.label} in AI Chat`,
+              subtitle: parsed.prompt,
+              action: "palette",
+              source: "local",
+              paletteActionId: "ai.startFromInput",
+              palettePayload: { input: value },
+            },
+          ];
+        default:
+          return [];
+      }
+    },
+    [aiPanelEnabled],
+  );
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -462,6 +491,13 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
             try {
               const ideActions = await GetDispatcherSuggestions(input);
               ideActions?.forEach((action, i) => {
+                if (
+                  !aiPanelEnabled &&
+                  isAIBackendDispatcherItem(action.title, action.subtitle)
+                ) {
+                  return;
+                }
+
                 newItems.push({
                   id: action.id || `ide-${i}`,
                   icon: getIconForBackendItem(action.icon || "terminal"),
@@ -604,6 +640,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
     isTerminalMode,
     historyIndex,
     projectPath,
+    aiPanelEnabled,
     buildAIInputItems,
     buildLocalAIActionItems,
   ]);
@@ -810,6 +847,10 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
             void executeItem(items[selectedIndex]);
           } else if (input) {
             if (mode === "ai") {
+              if (!aiPanelEnabled) {
+                setItems([]);
+                return;
+              }
               const parsed = parseAICommandInput(input);
               if (parsed.kind === "start") {
                 onPaletteAction?.("ai.startFromInput", { input });
@@ -856,6 +897,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       onExecute,
       onClose,
       buildAIInputItems,
+      aiPanelEnabled,
       isTerminalMode,
       terminalCommand,
       ghostText,

@@ -67,12 +67,17 @@ type ApplicationMenuShortcutPayload struct {
 }
 
 type ShellMenuStatePayload struct {
-	HasSelection            bool `json:"hasSelection"`
-	CanCloseFullscreenPanel bool `json:"canCloseFullscreenPanel"`
-	AIChatFullscreenActive  bool `json:"aiChatFullscreenActive"`
-	CanStopAgent            bool `json:"canStopAgent"`
-	CanCommit               bool `json:"canCommit"`
-	HasGitChanges           bool `json:"hasGitChanges"`
+	HasSelection            bool  `json:"hasSelection"`
+	AIPanelEnabled          *bool `json:"aiPanelEnabled,omitempty"`
+	CanCloseFullscreenPanel bool  `json:"canCloseFullscreenPanel"`
+	AIChatFullscreenActive  bool  `json:"aiChatFullscreenActive"`
+	CanStopAgent            bool  `json:"canStopAgent"`
+	CanCommit               bool  `json:"canCommit"`
+	HasGitChanges           bool  `json:"hasGitChanges"`
+}
+
+func shellMenuAIPanelEnabled(state ShellMenuStatePayload) bool {
+	return state.AIPanelEnabled == nil || *state.AIPanelEnabled
 }
 
 func (a *App) SyncApplicationMenuShortcuts(payload []ApplicationMenuShortcutPayload) {
@@ -111,25 +116,51 @@ func (a *App) SyncApplicationMenuState(payload ShellMenuStatePayload) {
 		return
 	}
 	payload.CanCommit = payload.CanCommit || payload.HasGitChanges
+	if !shellMenuAIPanelEnabled(payload) {
+		payload.AIChatFullscreenActive = false
+		payload.CanStopAgent = false
+	}
 
 	a.shellMenuMu.Lock()
+	previousAIPanelEnabled := shellMenuAIPanelEnabled(a.shellMenuState)
 	a.shellMenuState = payload
 	items := make(map[string]*application.MenuItem, len(a.shellMenuItems))
 	for actionID, item := range a.shellMenuItems {
 		items[actionID] = item
 	}
+	shortcuts := copyMenuShortcuts(a.shellMenuShortcuts)
 	a.shellMenuMu.Unlock()
 
-	setTrackedMenuEnabled(items, "panel.closeFullscreen", payload.CanCloseFullscreenPanel)
-	setTrackedMenuEnabled(items, "ai.stopAgent", payload.CanStopAgent)
-	setTrackedMenuEnabled(items, "git.commit", payload.CanCommit)
+	if previousAIPanelEnabled != shellMenuAIPanelEnabled(payload) && a.ctx != nil {
+		if a.wailsApp != nil {
+			a.wailsApp.Menu.SetApplicationMenu(a.buildApplicationMenu(shortcuts))
+		}
+		a.patchNativeApplicationMenu(shortcuts)
+	} else {
+		setTrackedMenuEnabled(items, "panel.closeFullscreen", payload.CanCloseFullscreenPanel)
+		setTrackedMenuEnabled(items, "ai.stopAgent", payload.CanStopAgent)
+		setTrackedMenuEnabled(items, "git.commit", payload.CanCommit)
+	}
 	a.syncNativeApplicationMenuState()
+}
+
+func copyMenuShortcuts(source map[string][]string) map[string][]string {
+	if len(source) == 0 {
+		return nil
+	}
+	next := make(map[string][]string, len(source))
+	for actionID, shortcuts := range source {
+		next[actionID] = append([]string(nil), shortcuts...)
+	}
+	return next
 }
 
 func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.Menu {
 	a.shellMenuMu.Lock()
 	a.shellMenuItems = make(map[string]*application.MenuItem)
+	state := a.shellMenuState
 	a.shellMenuMu.Unlock()
+	aiPanelEnabled := shellMenuAIPanelEnabled(state)
 
 	appMenu := application.NewMenu()
 	if stdRuntime.GOOS == "darwin" && application.Get() != nil {
@@ -152,8 +183,10 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	a.addMenuAction(viewMenu, "Toggle Explorer", "explorer.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Terminal", "terminal.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Terminal Fullscreen", "terminal.fullscreen", shortcuts)
-	a.addMenuAction(viewMenu, "Toggle AI Panel", "ai.toggle", shortcuts)
-	a.addMenuAction(viewMenu, "Toggle AI Fullscreen", "ai.fullscreen", shortcuts)
+	if aiPanelEnabled {
+		a.addMenuAction(viewMenu, "Toggle AI Panel", "ai.toggle", shortcuts)
+		a.addMenuAction(viewMenu, "Toggle AI Fullscreen", "ai.fullscreen", shortcuts)
+	}
 	viewMenu.AddSeparator()
 	a.addMenuAction(viewMenu, "Open Browser Preview", "browser.preview", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Git Panel", "git.toggle", shortcuts)
@@ -169,8 +202,10 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	a.addMenuAction(viewMenu, "Reopen Closed Panel", "panel.reopenClosed", shortcuts)
 	a.addMenuAction(viewMenu, "Enter Full Screen", "window.toggleFullscreen", shortcuts)
 
-	aiMenu := appMenu.AddSubmenu("AI")
-	a.addMenuAction(aiMenu, "Stop Agent", "ai.stopAgent", shortcuts)
+	if aiPanelEnabled {
+		aiMenu := appMenu.AddSubmenu("AI")
+		a.addMenuAction(aiMenu, "Stop Agent", "ai.stopAgent", shortcuts)
+	}
 
 	sourceControlMenu := appMenu.AddSubmenu("Source Control")
 	a.addMenuAction(sourceControlMenu, "Commit...", "git.commit", shortcuts)
@@ -280,10 +315,14 @@ func (a *App) shellMenuActionEnabled(actionID string) bool {
 		a.shellMenuMu.Lock()
 		defer a.shellMenuMu.Unlock()
 		return a.shellMenuState.CanCloseFullscreenPanel
+	case "ai.toggle", "ai.fullscreen", "ai.history":
+		a.shellMenuMu.Lock()
+		defer a.shellMenuMu.Unlock()
+		return shellMenuAIPanelEnabled(a.shellMenuState)
 	case "ai.stopAgent":
 		a.shellMenuMu.Lock()
 		defer a.shellMenuMu.Unlock()
-		return a.shellMenuState.CanStopAgent
+		return shellMenuAIPanelEnabled(a.shellMenuState) && a.shellMenuState.CanStopAgent
 	case "git.commit":
 		a.shellMenuMu.Lock()
 		defer a.shellMenuMu.Unlock()
@@ -323,15 +362,17 @@ func (a *App) syncNativeApplicationMenuState() {
 	a.shellMenuMu.Lock()
 	state := a.shellMenuState
 	a.shellMenuMu.Unlock()
+	aiPanelEnabled := shellMenuAIPanelEnabled(state)
 
 	recent := a.nativeMenuRecentProjects(10)
 	_, _ = callNativeMacOSBridge("menu.updateState", map[string]any{
 		"commands": []map[string]any{
 			{"title": "Close Fullscreen Panel", "enabled": state.CanCloseFullscreenPanel},
-			{"title": "Stop Agent", "enabled": state.CanStopAgent},
+			{"title": "Stop Agent", "enabled": aiPanelEnabled && state.CanStopAgent},
 			{"title": "Commit...", "enabled": state.CanCommit || state.HasGitChanges},
 		},
-		"aiChatFullscreenActive": state.AIChatFullscreenActive,
+		"aiPanelEnabled":         aiPanelEnabled,
+		"aiChatFullscreenActive": aiPanelEnabled && state.AIChatFullscreenActive,
 		"recentProjects":         recent,
 	})
 }

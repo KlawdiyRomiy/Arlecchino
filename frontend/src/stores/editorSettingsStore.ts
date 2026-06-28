@@ -134,6 +134,7 @@ interface EditorSettingsState {
   zenModeEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
   appIconAppearance: AppIconAppearance;
+  aiPanelEnabled: boolean;
   aiChatSendShortcut: AIChatSendShortcut;
   aiChatPreferences: AIChatUIPreferences;
   zoomIn: () => void;
@@ -165,6 +166,7 @@ interface EditorSettingsState {
   setZenModeEnabled: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   setAppIconAppearance: (value: AppIconAppearance) => void;
+  setAIPanelEnabled: (value: boolean) => void;
   setAIChatSendShortcut: (value: AIChatSendShortcut) => void;
   setAIChatDisplayPref: (
     key: keyof AIChatDisplayPreferences,
@@ -204,6 +206,7 @@ const DEFAULT_CONFIRM_BEFORE_CLOSE = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
+const DEFAULT_AI_PANEL_ENABLED = true;
 const DEFAULT_AI_CHAT_SEND_SHORTCUT: AIChatSendShortcut = "enter";
 export const DEFAULT_AI_CHAT_DISPLAY_PREFS: AIChatDisplayPreferences = {
   autoScroll: true,
@@ -252,6 +255,7 @@ type PersistedEditorSettingsState = Partial<
     | "zenModeEnabled"
     | "projectWindowMode"
     | "appIconAppearance"
+    | "aiPanelEnabled"
     | "aiChatSendShortcut"
     | "aiChatPreferences"
   >
@@ -469,6 +473,10 @@ const sanitizePersistedEditorSettings = (
     nextState.appIconAppearance = persistedState.appIconAppearance;
   }
 
+  if (typeof persistedState.aiPanelEnabled === "boolean") {
+    nextState.aiPanelEnabled = persistedState.aiPanelEnabled;
+  }
+
   if (isAIChatSendShortcut(persistedState.aiChatSendShortcut)) {
     nextState.aiChatSendShortcut = persistedState.aiChatSendShortcut;
   }
@@ -523,6 +531,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
       appIconAppearance: DEFAULT_APP_ICON_APPEARANCE,
+      aiPanelEnabled: DEFAULT_AI_PANEL_ENABLED,
       aiChatSendShortcut: DEFAULT_AI_CHAT_SEND_SHORTCUT,
       aiChatPreferences: DEFAULT_AI_CHAT_PREFERENCES,
 
@@ -652,6 +661,8 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setAppIconAppearance: (value) =>
         set(() => ({ appIconAppearance: value })),
+
+      setAIPanelEnabled: (value) => set(() => ({ aiPanelEnabled: value })),
 
       setAIChatSendShortcut: (value) =>
         set(() => ({ aiChatSendShortcut: value })),

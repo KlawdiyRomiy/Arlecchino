@@ -775,6 +775,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const zenModeEnabled = useEditorSettingsStore(
     (state) => state.zenModeEnabled,
   );
+  const aiPanelEnabled = useEditorSettingsStore(
+    (state) => state.aiPanelEnabled,
+  );
   const showNativeMacWindowControls = useEditorSettingsStore(
     (state) => state.showNativeMacWindowControls,
   );
@@ -1197,6 +1200,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     },
     [applyPanelsState],
   );
+
+  useEffect(() => {
+    if (aiPanelEnabled || !panelsRef.current.aiChat) {
+      return;
+    }
+
+    updatePanelsState((previous) =>
+      previous.aiChat ? { ...previous, aiChat: false } : previous,
+    );
+  }, [aiPanelEnabled, updatePanelsState]);
 
   const applyPanelConfigsState = useCallback(
     (nextPanelConfigs: PanelConfigs, options: PanelStateApplyOptions = {}) => {
@@ -3209,20 +3222,24 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const effectivePanels = useMemo<PanelVisibility>(() => {
+    const availablePanels = aiPanelEnabled
+      ? panels
+      : { ...panels, aiChat: false };
+
     if (tuiModeActive) {
       return {
-        ...panels,
+        ...availablePanels,
         terminal: false,
       };
     }
 
     if (!zenModeEnabled) {
-      return panels;
+      return availablePanels;
     }
 
-    const nextPanels = { ...panels };
+    const nextPanels = { ...availablePanels };
     (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
-      if (!panels[panelId]) {
+      if (!availablePanels[panelId]) {
         nextPanels[panelId] = false;
         return;
       }
@@ -3240,23 +3257,34 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     });
 
     return nextPanels;
-  }, [panelConfigs, panels, tuiModeActive, zenModeEnabled, zenPinnedPanels]);
+  }, [
+    aiPanelEnabled,
+    panelConfigs,
+    panels,
+    tuiModeActive,
+    zenModeEnabled,
+    zenPinnedPanels,
+  ]);
 
   const layoutPanels = useMemo<PanelVisibility>(() => {
+    const availablePanels = aiPanelEnabled
+      ? panels
+      : { ...panels, aiChat: false };
+
     if (tuiModeActive) {
       return {
-        ...panels,
+        ...availablePanels,
         terminal: false,
       };
     }
 
     if (!zenModeEnabled) {
-      return panels;
+      return availablePanels;
     }
 
-    const nextPanels = { ...panels };
+    const nextPanels = { ...availablePanels };
     (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
-      if (!panels[panelId]) {
+      if (!availablePanels[panelId]) {
         nextPanels[panelId] = false;
         return;
       }
@@ -3274,7 +3302,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     });
 
     return nextPanels;
-  }, [panelConfigs, panels, tuiModeActive, zenModeEnabled, zenPinnedPanels]);
+  }, [
+    aiPanelEnabled,
+    panelConfigs,
+    panels,
+    tuiModeActive,
+    zenModeEnabled,
+    zenPinnedPanels,
+  ]);
 
   useEffect(() => {
     effectivePanelsRef.current = effectivePanels;
@@ -5684,6 +5719,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       handlePreviewWindowOpenEvent,
       handlePreviewWindowUpdateEvent,
       handleSurfacePromoteEvent,
+      aiPanelEnabled,
       isAIChatTopmostFullscreen,
       isSettingsOpen,
       logicalViewport,
@@ -5801,6 +5837,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     executionDialogMode,
     finishHeldPanelShortcutOnKeyUp,
     getShortcutEventCode,
+    aiPanelEnabled,
     aiChatPreFullscreenRef,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
@@ -5835,6 +5872,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   const openAIChatFromPalette = useCallback(() => {
+    if (!aiPanelEnabled) {
+      return;
+    }
+
     if (isZenHiddenSnappedPanel("aiChat")) {
       pinZenPanelIfShortcutOpened("aiChat");
       markActivePanel("aiChat");
@@ -5849,6 +5890,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     applyPanelOpenState("aiChat", { panel: "aiChat" });
     pinZenPanelIfShortcutOpened("aiChat");
   }, [
+    aiPanelEnabled,
     applyPanelOpenState,
     isZenHiddenSnappedPanel,
     markActivePanel,
@@ -5860,10 +5902,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (!actionId.startsWith("ai.")) {
         return;
       }
+      if (!aiPanelEnabled) {
+        return;
+      }
       openAIChatFromPalette();
       useAIChatStore.getState().enqueueCommandIntent(actionId, payload);
     },
-    [openAIChatFromPalette],
+    [aiPanelEnabled, openAIChatFromPalette],
   );
 
   const openProblemsFromStatusBar = () => {
@@ -7077,6 +7122,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 togglePanelFromExplicitAction("terminal");
               }}
               onToggleAIChat={() => {
+                if (!aiPanelEnabled) {
+                  return;
+                }
                 if (tuiModeActive) {
                   togglePanelFromExplicitAction("aiChat");
                   return;
@@ -7105,7 +7153,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               panels={{
                 explorer: panels.explorer,
                 terminal: tuiModeActive ? true : panels.terminal,
-                aiChat: panels.aiChat,
+                aiChat: aiPanelEnabled && panels.aiChat,
                 git: panels.git,
               }}
               projectPath={activeProjectPath}

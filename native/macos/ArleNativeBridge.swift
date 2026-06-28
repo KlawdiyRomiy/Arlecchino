@@ -52,6 +52,7 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
     private let aiChatHistoryActionID = "ai.history"
     private var commandEnabledByTitle: [String: Bool] = [:]
     private var recentProjects: [[String: String]] = []
+    private var aiPanelEnabled = true
     private var aiChatFullscreenActive = false
 
     func configure() {
@@ -85,6 +86,12 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
             }
             if let active = payload["aiChatFullscreenActive"] as? Bool {
                 self.aiChatFullscreenActive = active
+            }
+            if let enabled = payload["aiPanelEnabled"] as? Bool {
+                self.aiPanelEnabled = enabled
+                if !enabled {
+                    self.aiChatFullscreenActive = false
+                }
             }
             self.configure()
         }
@@ -142,6 +149,7 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
         updateStandardEditValidation(menu: mainMenu)
         updateCustomCommandValidation(menu: mainMenu)
         updateOpenRecent(menu: mainMenu)
+        updateAIVisibility(menu: mainMenu)
         updateAIChatFullscreenItems(menu: mainMenu)
     }
 
@@ -188,7 +196,14 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
         }
     }
 
+    private func updateAIVisibility(menu: NSMenu) {
+        menu.item(withTitle: "AI")?.isHidden = !aiPanelEnabled
+        findItem(title: "Toggle AI Panel", in: menu)?.isHidden = !aiPanelEnabled
+        findItem(title: "Toggle AI Fullscreen", in: menu)?.isHidden = !aiPanelEnabled
+    }
+
     private func updateAIChatFullscreenItems(menu: NSMenu) {
+        guard aiPanelEnabled else { return }
         guard
             let aiMenuItem = menu.item(withTitle: "AI"),
             let aiMenu = aiMenuItem.submenu
