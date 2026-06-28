@@ -33,6 +33,7 @@ import {
   useExplorerSelectionStore,
   useExplorerStore,
 } from "../stores/explorerStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import {
   ContextActionMenu,
   type ContextActionMenuItem,
@@ -189,6 +190,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       clearSelection: state.clearSelection,
     })),
   );
+  const projectSwitchPending = useWorkspaceStore(
+    (state) => state.pendingId !== null,
+  );
   const [projectPath, setProjectPath] = useState<string>("");
   const [files, setFiles] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -226,6 +230,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const anchorPathRef = useRef(anchorPath);
   const latestFileOpenRequestRef = useRef(0);
   const latestProjectLoadRef = useRef(0);
+  const sawProjectSwitchPendingRef = useRef(false);
   const folderLoadRequestRef = useRef<Map<string, number>>(new Map());
   const suppressNodeClickRef = useRef(false);
   const relations = useFileRelations(perspectiveTarget || "");
@@ -638,6 +643,25 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   useEffect(() => {
     void loadProject();
   }, [initialProjectPath]);
+
+  useEffect(() => {
+    if (projectSwitchPending) {
+      sawProjectSwitchPendingRef.current = true;
+      return;
+    }
+
+    if (!sawProjectSwitchPendingRef.current) {
+      return;
+    }
+
+    sawProjectSwitchPendingRef.current = false;
+    const currentProjectPath = projectPathRef.current;
+    if (!currentProjectPath) {
+      return;
+    }
+
+    void loadDirectory(currentProjectPath);
+  }, [projectSwitchPending]);
 
   const refreshDirectoryPath = async (
     dirPath: string,

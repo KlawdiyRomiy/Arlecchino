@@ -648,3 +648,49 @@ test("layout and explorer resolve the active project from workspace state", asyn
   expect(explorerSource).toMatch(/initialProjectPath \|\|/);
   expect(explorerSource).toMatch(/GetCurrentProjectPath/);
 });
+
+test("file explorer reloads the project tree after project switch completion", async ({
+  page,
+}) => {
+  const explorerSource = await readSource(
+    page,
+    "/src/components/FileExplorer.tsx",
+  );
+
+  const workspaceImportIndex = explorerSource.indexOf("useWorkspaceStore");
+  const pendingSelectorIndex = explorerSource.indexOf(
+    "const projectSwitchPending = useWorkspaceStore(",
+  );
+  const pendingRefIndex = explorerSource.indexOf(
+    "const sawProjectSwitchPendingRef = useRef(false);",
+  );
+  const pendingEffectIndex = explorerSource.indexOf(
+    "if (projectSwitchPending) {",
+    pendingRefIndex,
+  );
+  const markPendingIndex = explorerSource.indexOf(
+    "sawProjectSwitchPendingRef.current = true;",
+    pendingEffectIndex,
+  );
+  const clearPendingIndex = explorerSource.indexOf(
+    "sawProjectSwitchPendingRef.current = false;",
+    markPendingIndex,
+  );
+  const currentProjectPathIndex = explorerSource.indexOf(
+    "const currentProjectPath = projectPathRef.current;",
+    clearPendingIndex,
+  );
+  const reloadIndex = explorerSource.indexOf(
+    "void loadDirectory(currentProjectPath);",
+    currentProjectPathIndex,
+  );
+
+  expect(workspaceImportIndex).toBeGreaterThan(-1);
+  expect(pendingSelectorIndex).toBeGreaterThan(workspaceImportIndex);
+  expect(pendingRefIndex).toBeGreaterThan(pendingSelectorIndex);
+  expect(pendingEffectIndex).toBeGreaterThan(pendingRefIndex);
+  expect(markPendingIndex).toBeGreaterThan(pendingEffectIndex);
+  expect(clearPendingIndex).toBeGreaterThan(markPendingIndex);
+  expect(currentProjectPathIndex).toBeGreaterThan(clearPendingIndex);
+  expect(reloadIndex).toBeGreaterThan(currentProjectPathIndex);
+});
