@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_BRANCH="main"
 CURRENT_BRANCH="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
-WAILS3_VERSION="${ARLE_WAILS3_VERSION:-v3.0.0-alpha2.103}"
+WAILS3_VERSION="${ARLE_WAILS3_VERSION:-v3.0.0-alpha2.107}"
 OUTPUT_DIR="${ARLE_WAILS3_BINDINGS_DIR:-frontend/bindings}"
 OUTPUT_DIR_SET="0"
 WRITE="0"
