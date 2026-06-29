@@ -12,6 +12,7 @@ package app
 
 static char arlecchinoOriginalButtonsSuperviewFrameKey;
 static char arlecchinoOriginalButtonsSuperviewKey;
+static char arlecchinoWindowButtonsOccludedKey;
 static char arlecchinoWindowButtonPlacementKey;
 static char arlecchinoWindowButtonMoveObserverKey;
 static char arlecchinoWindowButtonEventForwarderKey;
@@ -108,13 +109,18 @@ static void arlecchinoRefreshWindowButtons(
 }
 
 static bool arlecchinoWindowButtonCanReceiveForwardedEvent(NSButton *button) {
-    if (button == nil || ![button isEnabled] || [button isHiddenOrHasHiddenAncestor]) {
-        return false;
-    }
-    if ([button superview] == nil || [button window] == nil) {
-        return false;
-    }
-    return true;
+	if (button == nil || ![button isEnabled] || [button isHiddenOrHasHiddenAncestor]) {
+		return false;
+	}
+	NSView *superview = [button superview];
+	if (superview == nil || [button window] == nil) {
+		return false;
+	}
+	NSNumber *occluded = objc_getAssociatedObject(superview, &arlecchinoWindowButtonsOccludedKey);
+	if ([occluded isKindOfClass:[NSNumber class]] && [occluded boolValue]) {
+		return false;
+	}
+	return true;
 }
 
 static bool arlecchinoWindowButtonContainsEvent(NSButton *button, NSEvent *event) {
@@ -151,7 +157,8 @@ static bool arlecchinoPositionNativeWindowControlsOnMainThread(
     double closeX, double closeY,
     double minimiseX, double minimiseY,
     double maximiseX, double maximiseY,
-    bool visible
+    bool visible,
+    bool occluded
 );
 
 static void arlecchinoRememberWindowButtonPlacement(
@@ -160,7 +167,8 @@ static void arlecchinoRememberWindowButtonPlacement(
     double closeY,
     double minimiseY,
     double maximiseY,
-    bool visible
+    bool visible,
+    bool occluded
 ) {
     if (window == nil) {
         return;
@@ -172,6 +180,7 @@ static void arlecchinoRememberWindowButtonPlacement(
         @"minimiseY": @(minimiseY),
         @"maximiseY": @(maximiseY),
         @"visible": @(visible),
+        @"occluded": @(occluded),
     };
     objc_setAssociatedObject(
         window,
@@ -192,12 +201,14 @@ static void arlecchinoRepositionRememberedWindowButtons(NSWindow *window) {
     NSNumber *minimiseY = placement[@"minimiseY"];
     NSNumber *maximiseY = placement[@"maximiseY"];
     NSNumber *visible = placement[@"visible"];
+    NSNumber *occluded = placement[@"occluded"];
     if (
         ![closeX isKindOfClass:[NSNumber class]] ||
         ![closeY isKindOfClass:[NSNumber class]] ||
         ![minimiseY isKindOfClass:[NSNumber class]] ||
         ![maximiseY isKindOfClass:[NSNumber class]] ||
-        ![visible isKindOfClass:[NSNumber class]]
+        ![visible isKindOfClass:[NSNumber class]] ||
+        ![occluded isKindOfClass:[NSNumber class]]
     ) {
         return;
     }
@@ -210,7 +221,8 @@ static void arlecchinoRepositionRememberedWindowButtons(NSWindow *window) {
         [minimiseY doubleValue],
         [closeX doubleValue],
         [maximiseY doubleValue],
-        [visible boolValue]
+        [visible boolValue],
+        [occluded boolValue]
     );
 }
 
@@ -401,7 +413,7 @@ static NSView* arlecchinoOriginalButtonsSuperview(NSView *buttonSuperview) {
     return (NSView*)originalSuperview;
 }
 
-static bool arlecchinoAttachButtonsSuperviewToParent(NSView *buttonSuperview, NSView *parentView, bool visible) {
+static bool arlecchinoAttachButtonsSuperviewToParent(NSView *buttonSuperview, NSView *parentView, bool visible, bool occluded) {
     if (buttonSuperview == nil) {
         return false;
     }
@@ -410,11 +422,22 @@ static bool arlecchinoAttachButtonsSuperviewToParent(NSView *buttonSuperview, NS
         return false;
     }
 
-    if ([buttonSuperview superview] != parentView) {
+    NSNumber *currentOccluded = objc_getAssociatedObject(buttonSuperview, &arlecchinoWindowButtonsOccludedKey);
+    bool needsReattach =
+        [buttonSuperview superview] != parentView ||
+        currentOccluded == nil ||
+        [currentOccluded boolValue] != occluded;
+    if (needsReattach) {
         [buttonSuperview retain];
         [buttonSuperview removeFromSuperviewWithoutNeedingDisplay];
-        [parentView addSubview:buttonSuperview positioned:NSWindowAbove relativeTo:nil];
+        [parentView addSubview:buttonSuperview positioned:(occluded ? NSWindowBelow : NSWindowAbove) relativeTo:nil];
         [buttonSuperview release];
+        objc_setAssociatedObject(
+            buttonSuperview,
+            &arlecchinoWindowButtonsOccludedKey,
+            @(occluded),
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        );
     }
 
     [buttonSuperview setHidden:visible ? NO : YES];
@@ -435,10 +458,10 @@ static bool arlecchinoRaiseWindowButtonsSuperview(NSView *buttonSuperview, bool 
         return false;
     }
 
-    return arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, [buttonSuperview superview], visible);
+    return arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, [buttonSuperview superview], visible, false);
 }
 
-static bool arlecchinoMoveWindowButtonsSuperviewToContentView(NSView *buttonSuperview, NSWindow *window, bool visible) {
+static bool arlecchinoMoveWindowButtonsSuperviewToContentView(NSView *buttonSuperview, NSWindow *window, bool visible, bool occluded) {
     if (buttonSuperview == nil || window == nil) {
         return false;
     }
@@ -448,7 +471,7 @@ static bool arlecchinoMoveWindowButtonsSuperviewToContentView(NSView *buttonSupe
         return false;
     }
 
-    return arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, contentView, visible);
+    return arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, contentView, visible, occluded);
 }
 
 static bool arlecchinoRestoreWindowButtonsSuperview(
@@ -465,7 +488,7 @@ static bool arlecchinoRestoreWindowButtonsSuperview(
     NSValue *originalFrame = objc_getAssociatedObject(buttonSuperview, &arlecchinoOriginalButtonsSuperviewFrameKey);
     NSView *originalSuperview = arlecchinoOriginalButtonsSuperview(buttonSuperview);
     if (originalSuperview != nil && [buttonSuperview superview] != originalSuperview) {
-        arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, originalSuperview, visible);
+        arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, originalSuperview, visible, false);
     }
     if (originalFrame != nil) {
         [buttonSuperview setFrame:[originalFrame rectValue]];
@@ -483,7 +506,8 @@ static bool arlecchinoMoveWindowButtonsSuperview(
     CGFloat closeY,
     CGFloat minimiseY,
     CGFloat maximiseY,
-    bool visible
+    bool visible,
+    bool occluded
 ) {
     NSView *buttonSuperview = arlecchinoWindowButtonsSuperview(closeButton, minimiseButton, maximiseButton);
     if (buttonSuperview == nil) {
@@ -492,7 +516,7 @@ static bool arlecchinoMoveWindowButtonsSuperview(
 
     arlecchinoRememberWindowButtonsSuperviewFrame(buttonSuperview);
     NSWindow *window = [buttonSuperview window];
-    if (!arlecchinoMoveWindowButtonsSuperviewToContentView(buttonSuperview, window, visible)) {
+    if (!arlecchinoMoveWindowButtonsSuperviewToContentView(buttonSuperview, window, visible, occluded)) {
         arlecchinoRaiseWindowButtonsSuperview(buttonSuperview, visible);
     }
 
@@ -523,7 +547,8 @@ static bool arlecchinoPositionNativeWindowControlsOnMainThread(
     double closeX, double closeY,
     double minimiseX, double minimiseY,
     double maximiseX, double maximiseY,
-    bool visible
+    bool visible,
+    bool occluded
 ) {
     NSWindow *window = arlecchinoControlsWindow(preferredWindow);
     if (window == nil) {
@@ -540,7 +565,7 @@ static bool arlecchinoPositionNativeWindowControlsOnMainThread(
         return arlecchinoRestoreWindowButtonsSuperview(closeButton, minimiseButton, maximiseButton, visible);
     }
 
-    arlecchinoRememberWindowButtonPlacement(window, closeX, closeY, minimiseY, maximiseY, visible);
+    arlecchinoRememberWindowButtonPlacement(window, closeX, closeY, minimiseY, maximiseY, visible, occluded);
     return arlecchinoMoveWindowButtonsSuperview(
         closeButton,
         minimiseButton,
@@ -549,7 +574,8 @@ static bool arlecchinoPositionNativeWindowControlsOnMainThread(
         closeY,
         minimiseY,
         maximiseY,
-        visible
+        visible,
+        occluded
     );
 }
 
@@ -558,7 +584,8 @@ static bool arlecchinoPositionNativeWindowControls(
     double closeX, double closeY,
     double minimiseX, double minimiseY,
     double maximiseX, double maximiseY,
-    bool visible
+    bool visible,
+    bool occluded
 ) {
     __block bool didPosition = false;
     void (^position)(void) = ^{
@@ -567,7 +594,8 @@ static bool arlecchinoPositionNativeWindowControls(
             closeX, closeY,
             minimiseX, minimiseY,
             maximiseX, maximiseY,
-            visible
+            visible,
+            occluded
         );
     };
 
@@ -613,6 +641,19 @@ func (a *App) SetNativeWindowControlsVisible(ctx context.Context, visible bool) 
 	return true
 }
 
+func (a *App) SetNativeWindowControlsOccluded(ctx context.Context, occluded bool) bool {
+	window := a.nativeWindowControlsTarget(ctx)
+	if window == nil {
+		return false
+	}
+
+	a.updateNativeWindowControlsState(window, func(controlsState *nativeWindowControlsState) {
+		controlsState.occluded = occluded
+	})
+
+	return a.refreshNativeWindowControlsForWindow(window)
+}
+
 func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY float64) bool {
 	window := a.nativeWindowControlsTarget(ctx)
 	if window == nil {
@@ -628,7 +669,8 @@ func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, 
 		controlsState.inset = inset
 	})
 
-	return a.positionNativeWindowControls(window, inset, a.nativeWindowControlsVisible(window))
+	state, _ := a.nativeWindowControlsState(window)
+	return a.positionNativeWindowControls(window, inset, nativeWindowControlsVisible(state), nativeWindowControlsOccluded(state))
 }
 
 func (a *App) RefreshNativeWindowControls(ctx context.Context) bool {
@@ -640,10 +682,10 @@ func (a *App) refreshNativeWindowControlsForWindow(window application.Window) bo
 	if !ok || !state.insetSet {
 		return false
 	}
-	return a.positionNativeWindowControls(window, state.inset, nativeWindowControlsVisible(state))
+	return a.positionNativeWindowControls(window, state.inset, nativeWindowControlsVisible(state), nativeWindowControlsOccluded(state))
 }
 
-func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset, visible bool) bool {
+func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset, visible bool, occluded bool) bool {
 	var nativeWindow unsafe.Pointer
 	if window != nil {
 		nativeWindow = window.NativeWindow()
@@ -657,5 +699,6 @@ func (a *App) positionNativeWindowControls(window application.Window, inset nati
 		C.double(inset.closeCenterX),
 		C.double(inset.buttonCenterY),
 		C.bool(visible),
+		C.bool(occluded),
 	))
 }

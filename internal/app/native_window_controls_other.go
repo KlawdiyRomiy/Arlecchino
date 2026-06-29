@@ -12,6 +12,10 @@ func (a *App) SetNativeWindowControlsVisible(context.Context, bool) bool {
 	return false
 }
 
+func (a *App) SetNativeWindowControlsOccluded(context.Context, bool) bool {
+	return false
+}
+
 func (a *App) PositionNativeWindowControls(context.Context, float64, float64, float64, float64, float64, float64) bool {
 	return false
 }

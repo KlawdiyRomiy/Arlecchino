@@ -206,6 +206,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     y: number;
   }>({ isOpen: false, x: 0, y: 0 });
   const [treeOpen, setTreeOpen] = useState(false);
+  const dependencyTreeActive = treeOpen && Boolean(perspectiveTarget);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [dragGhost, setDragGhost] = useState<DragGhostState | null>(null);
   const [marqueeSelection, setMarqueeSelection] = useState<{
@@ -215,6 +216,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     height: number;
   } | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
+  const onPerspectiveCloseRef = useRef(onPerspectiveClose);
   const filesRef = useRef<FileNode[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -312,13 +314,29 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   );
 
   const closePerspective = useCallback(() => {
-    document.body.removeAttribute("data-perspective-open");
     setQuickMenu((prev) => ({ ...prev, isOpen: false }));
     setTreeOpen(false);
     setPerspectiveTarget(null);
     unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
-    onPerspectiveClose?.();
+  }, []);
+
+  useEffect(() => {
+    onPerspectiveCloseRef.current = onPerspectiveClose;
   }, [onPerspectiveClose]);
+
+  useEffect(() => {
+    if (!dependencyTreeActive) {
+      return;
+    }
+
+    document.body.setAttribute("data-perspective-open", "dependency-tree");
+
+    return () => {
+      document.body.removeAttribute("data-perspective-open");
+      unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
+      onPerspectiveCloseRef.current?.();
+    };
+  }, [dependencyTreeActive]);
 
   useEffect(() => {
     if (!perspectiveTarget) {

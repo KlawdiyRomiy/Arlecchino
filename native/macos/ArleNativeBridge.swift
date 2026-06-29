@@ -268,6 +268,7 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
 
 private var originalButtonsSuperviewFrameKey: UInt8 = 0
 private var originalButtonsSuperviewKey: UInt8 = 0
+private var windowButtonsOccludedKey: UInt8 = 0
 private var windowButtonPlacementKey: UInt8 = 0
 private var windowButtonMoveObserverKey: UInt8 = 0
 private var windowButtonEventForwarderKey: UInt8 = 0
@@ -278,13 +279,15 @@ private final class WindowButtonPlacement: NSObject {
     let minimiseY: CGFloat
     let maximiseY: CGFloat
     let visible: Bool
+    let occluded: Bool
 
-    init(closeX: CGFloat, closeY: CGFloat, minimiseY: CGFloat, maximiseY: CGFloat, visible: Bool) {
+    init(closeX: CGFloat, closeY: CGFloat, minimiseY: CGFloat, maximiseY: CGFloat, visible: Bool, occluded: Bool) {
         self.closeX = closeX
         self.closeY = closeY
         self.minimiseY = minimiseY
         self.maximiseY = maximiseY
         self.visible = visible
+        self.occluded = occluded
     }
 }
 
@@ -426,7 +429,8 @@ public func ArleNativePositionWindowControls(
     _ minimiseY: Double,
     _ maximiseX: Double,
     _ maximiseY: Double,
-    _ visible: Bool
+    _ visible: Bool,
+    _ occluded: Bool
 ) -> Bool {
     var didPosition = false
     syncMain {
@@ -438,7 +442,8 @@ public func ArleNativePositionWindowControls(
             minimiseY,
             maximiseX,
             maximiseY,
-            visible
+            visible,
+            occluded
         )
     }
     return didPosition
@@ -681,7 +686,16 @@ private func refreshWindowButtons(_ close: NSButton?, _ minimise: NSButton?, _ m
 
 private func windowButtonCanReceiveForwardedEvent(_ button: NSButton?) -> Bool {
     guard let button else { return false }
-    return button.isEnabled && !button.isHiddenOrHasHiddenAncestor && button.superview != nil && button.window != nil
+    guard
+        button.isEnabled,
+        !button.isHiddenOrHasHiddenAncestor,
+        let superview = button.superview,
+        button.window != nil
+    else {
+        return false
+    }
+    let occluded = objc_getAssociatedObject(superview, &windowButtonsOccludedKey) as? NSNumber
+    return occluded?.boolValue != true
 }
 
 private func windowButton(_ button: NSButton?, contains event: NSEvent) -> Bool {
@@ -709,14 +723,16 @@ private func rememberWindowButtonPlacement(
     closeY: CGFloat,
     minimiseY: CGFloat,
     maximiseY: CGFloat,
-    visible: Bool
+    visible: Bool,
+    occluded: Bool
 ) {
     let placement = WindowButtonPlacement(
         closeX: closeX,
         closeY: closeY,
         minimiseY: minimiseY,
         maximiseY: maximiseY,
-        visible: visible
+        visible: visible,
+        occluded: occluded
     )
     objc_setAssociatedObject(window, &windowButtonPlacementKey, placement, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 }
@@ -735,7 +751,8 @@ private func repositionRememberedWindowButtons(_ window: NSWindow) {
         Double(placement.minimiseY),
         Double(placement.closeX),
         Double(placement.maximiseY),
-        placement.visible
+        placement.visible,
+        placement.occluded
     )
 }
 
@@ -834,14 +851,20 @@ private func originalButtonsSuperview(_ buttonSuperview: NSView) -> NSView? {
     return view
 }
 
-private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: NSView?, visible: Bool) -> Bool {
+private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: NSView?, visible: Bool, occluded: Bool) -> Bool {
     guard let buttonSuperview, let parentView else { return false }
 
-    if buttonSuperview.superview !== parentView {
+    let currentOccluded = objc_getAssociatedObject(buttonSuperview, &windowButtonsOccludedKey) as? NSNumber
+    let needsReattach =
+        buttonSuperview.superview !== parentView ||
+        currentOccluded == nil ||
+        currentOccluded?.boolValue != occluded
+    if needsReattach {
         let retainedSuperview = Unmanaged.passRetained(buttonSuperview)
         buttonSuperview.removeFromSuperviewWithoutNeedingDisplay()
-        parentView.addSubview(buttonSuperview, positioned: .above, relativeTo: nil)
+        parentView.addSubview(buttonSuperview, positioned: occluded ? .below : .above, relativeTo: nil)
         retainedSuperview.release()
+        objc_setAssociatedObject(buttonSuperview, &windowButtonsOccludedKey, NSNumber(value: occluded), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
 
     buttonSuperview.isHidden = !visible
@@ -857,17 +880,17 @@ private func attachButtonsSuperview(_ buttonSuperview: NSView?, to parentView: N
 }
 
 private func raiseButtonsSuperview(_ buttonSuperview: NSView?, visible: Bool) -> Bool {
-    attachButtonsSuperview(buttonSuperview, to: buttonSuperview?.superview, visible: visible)
+    attachButtonsSuperview(buttonSuperview, to: buttonSuperview?.superview, visible: visible, occluded: false)
 }
 
-private func moveButtonsSuperviewToContentView(_ buttonSuperview: NSView?, window: NSWindow?, visible: Bool) -> Bool {
-    attachButtonsSuperview(buttonSuperview, to: window?.contentView, visible: visible)
+private func moveButtonsSuperviewToContentView(_ buttonSuperview: NSView?, window: NSWindow?, visible: Bool, occluded: Bool) -> Bool {
+    attachButtonsSuperview(buttonSuperview, to: window?.contentView, visible: visible, occluded: occluded)
 }
 
 private func restoreButtonsSuperview(_ close: NSButton?, _ minimise: NSButton?, _ maximise: NSButton?, visible: Bool) -> Bool {
     guard let buttonSuperview = windowButtonsSuperview(close, minimise, maximise) else { return false }
     if let originalSuperview = originalButtonsSuperview(buttonSuperview), buttonSuperview.superview !== originalSuperview {
-        _ = attachButtonsSuperview(buttonSuperview, to: originalSuperview, visible: visible)
+        _ = attachButtonsSuperview(buttonSuperview, to: originalSuperview, visible: visible, occluded: false)
     }
     if let originalFrame = objc_getAssociatedObject(buttonSuperview, &originalButtonsSuperviewFrameKey) as? NSValue {
         buttonSuperview.frame = originalFrame.rectValue
@@ -885,7 +908,8 @@ private func moveButtonsSuperview(
     closeY: CGFloat,
     minimiseY: CGFloat,
     maximiseY: CGFloat,
-    visible: Bool
+    visible: Bool,
+    occluded: Bool
 ) -> Bool {
     guard
         let close,
@@ -898,7 +922,7 @@ private func moveButtonsSuperview(
 
     rememberButtonsSuperviewFrame(buttonSuperview)
     let window = buttonSuperview.window
-    if !moveButtonsSuperviewToContentView(buttonSuperview, window: window, visible: visible) {
+    if !moveButtonsSuperviewToContentView(buttonSuperview, window: window, visible: visible, occluded: occluded) {
         _ = raiseButtonsSuperview(buttonSuperview, visible: visible)
     }
     guard let parentView = buttonSuperview.superview else { return false }
@@ -922,7 +946,8 @@ private func positionNativeWindowControlsOnMainThread(
     _ minimiseY: Double,
     _ maximiseX: Double,
     _ maximiseY: Double,
-    _ visible: Bool
+    _ visible: Bool,
+    _ occluded: Bool
 ) -> Bool {
     guard let window = controlsWindow(preferredWindow) else { return false }
     let close = window.standardWindowButton(.closeButton)
@@ -941,7 +966,8 @@ private func positionNativeWindowControlsOnMainThread(
         closeY: CGFloat(closeY),
         minimiseY: CGFloat(minimiseY),
         maximiseY: CGFloat(maximiseY),
-        visible: visible
+        visible: visible,
+        occluded: occluded
     )
     return moveButtonsSuperview(
         close,
@@ -951,7 +977,8 @@ private func positionNativeWindowControlsOnMainThread(
         closeY: CGFloat(closeY),
         minimiseY: CGFloat(minimiseY),
         maximiseY: CGFloat(maximiseY),
-        visible: visible
+        visible: visible,
+        occluded: occluded
     )
 }
 

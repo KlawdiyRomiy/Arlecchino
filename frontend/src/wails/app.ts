@@ -19,6 +19,9 @@ interface NativeWindowControlsBridge {
   SetNativeWindowControlsVisible?: (
     visible: boolean,
   ) => Promise<boolean> | boolean;
+  SetNativeWindowControlsOccluded?: (
+    occluded: boolean,
+  ) => Promise<boolean> | boolean;
   PositionNativeWindowControls?: (
     closeX: number,
     closeY: number,
@@ -276,6 +279,12 @@ const nativeWindowControlsMethodNames = [
   "arlecchino.App.SetNativeWindowControlsVisible",
 ] as const;
 
+const nativeWindowControlsOccludedMethodNames = [
+  "arlecchino/internal/app.App.SetNativeWindowControlsOccluded",
+  "main.App.SetNativeWindowControlsOccluded",
+  "arlecchino.App.SetNativeWindowControlsOccluded",
+] as const;
+
 const nativeWindowControlsPositionMethodNames = [
   "arlecchino/internal/app.App.PositionNativeWindowControls",
   "main.App.PositionNativeWindowControls",
@@ -446,6 +455,9 @@ const aiSavePredictionSettingsMethodNames = [
 
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
+  | undefined;
+let nativeWindowControlsOccludedMethodName:
+  | (typeof nativeWindowControlsOccludedMethodNames)[number]
   | undefined;
 let nativeWindowControlsPositionMethodName:
   | (typeof nativeWindowControlsPositionMethodNames)[number]
@@ -753,6 +765,30 @@ export async function SetNativeWindowControlsVisible(
   }
 
   return false;
+}
+
+export async function SetNativeWindowControlsOccluded(
+  occluded: boolean,
+): Promise<boolean> {
+  const bridge = getNativeWindowControlsBridge();
+  if (bridge?.SetNativeWindowControlsOccluded) {
+    try {
+      return Boolean(
+        await Promise.resolve(bridge.SetNativeWindowControlsOccluded(occluded)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callBooleanBridgeMethod(
+    nativeWindowControlsOccludedMethodName,
+    (methodName) => {
+      nativeWindowControlsOccludedMethodName = methodName;
+    },
+    nativeWindowControlsOccludedMethodNames,
+    [occluded],
+  );
 }
 
 export async function PositionNativeWindowControls(

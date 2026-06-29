@@ -2,6 +2,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useState,
   useMemo,
 } from "react";
@@ -30,6 +31,7 @@ import {
 } from "../hooks/useDependencyGraph";
 import { getThemeColors, radius } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
+import { SetNativeWindowControlsOccluded } from "../wails/app";
 
 const SelectCtx = createContext<(path: string, line?: number) => void>(
   () => {},
@@ -59,6 +61,7 @@ const KIND_ABBR: Record<string, string> = {
 const ANIM_NODE_DURATION = 350;
 const ANIM_NODE_STAGGER = 40;
 const ANIM_EDGE_DELAY_BASE = 150;
+let nativeWindowControlsOcclusionGeneration = 0;
 
 function FileCardNode({ data: rawData }: NodeProps) {
   const { isDark } = useTheme();
@@ -296,6 +299,18 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
     setNodes(layoutNodes);
     setEdges(layoutEdges);
   }
+
+  useLayoutEffect(() => {
+    const generation = ++nativeWindowControlsOcclusionGeneration;
+    void SetNativeWindowControlsOccluded(true).catch(() => undefined);
+    return () => {
+      window.setTimeout(() => {
+        if (nativeWindowControlsOcclusionGeneration === generation) {
+          void SetNativeWindowControlsOccluded(false).catch(() => undefined);
+        }
+      }, 0);
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

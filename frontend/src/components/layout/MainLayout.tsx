@@ -5400,6 +5400,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ]);
 
   const handlePerspectiveOpen = useCallback(() => {
+    if (isPerspectiveOpenRef.current) {
+      return;
+    }
     isPerspectiveOpenRef.current = true;
     if (externalPerspectiveOpen) {
       externalPerspectiveOpen();
@@ -5407,6 +5410,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [externalPerspectiveOpen]);
 
   const handlePerspectiveClose = useCallback(() => {
+    if (!isPerspectiveOpenRef.current) {
+      return;
+    }
     isPerspectiveOpenRef.current = false;
     if (externalPerspectiveClose) {
       externalPerspectiveClose();
@@ -6396,11 +6402,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         zenTopChromePointerInside ||
         zenTopChromeOccludedHeaderActive));
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
-  const nativeWindowControlsEnabled =
+  const nativeWindowControlsSlotEnabled =
     showNativeMacWindowControls &&
     (nativeWindowFullscreen || zenTopChromeVisible);
+  const nativeWindowControlsEnabled = nativeWindowControlsSlotEnabled;
   const nativeWindowControlsVisible =
-    nativeWindowControlsEnabled &&
+    nativeWindowControlsSlotEnabled &&
     zenTopChromeVisible &&
     !nativeWindowFullscreen;
   const nativeWindowControlsBackdropVisible = nativeWindowControlsVisible;

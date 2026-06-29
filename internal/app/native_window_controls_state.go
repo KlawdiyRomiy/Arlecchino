@@ -13,6 +13,7 @@ import (
 type nativeWindowControlsState struct {
 	visibleSet      bool
 	visible         bool
+	occluded        bool
 	insetSet        bool
 	inset           nativeWindowControlsInset
 	transientHidden bool
@@ -42,6 +43,10 @@ type nativeWindowControlsTransientPayload struct {
 
 func nativeWindowControlsVisible(state nativeWindowControlsState) bool {
 	return (!state.visibleSet || state.visible) && !state.transientHidden
+}
+
+func nativeWindowControlsOccluded(state nativeWindowControlsState) bool {
+	return state.occluded && nativeWindowControlsVisible(state)
 }
 
 func nativeWindowControlsStateKey(window application.Window) string {

@@ -12,7 +12,8 @@ bool ArleNativePositionWindowControls(
 	double minimiseY,
 	double maximiseX,
 	double maximiseY,
-	bool visible
+	bool visible,
+	bool occluded
 );
 */
 import "C"
@@ -48,6 +49,19 @@ func (a *App) SetNativeWindowControlsVisible(ctx context.Context, visible bool) 
 	return true
 }
 
+func (a *App) SetNativeWindowControlsOccluded(ctx context.Context, occluded bool) bool {
+	window := a.nativeWindowControlsTarget(ctx)
+	if window == nil {
+		return false
+	}
+
+	a.updateNativeWindowControlsState(window, func(controlsState *nativeWindowControlsState) {
+		controlsState.occluded = occluded
+	})
+
+	return a.refreshNativeWindowControlsForWindow(window)
+}
+
 func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY float64) bool {
 	window := a.nativeWindowControlsTarget(ctx)
 	if window == nil {
@@ -63,7 +77,8 @@ func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, 
 		controlsState.inset = inset
 	})
 
-	return a.positionNativeWindowControls(window, inset, a.nativeWindowControlsVisible(window))
+	state, _ := a.nativeWindowControlsState(window)
+	return a.positionNativeWindowControls(window, inset, nativeWindowControlsVisible(state), nativeWindowControlsOccluded(state))
 }
 
 func (a *App) RefreshNativeWindowControls(ctx context.Context) bool {
@@ -75,10 +90,10 @@ func (a *App) refreshNativeWindowControlsForWindow(window application.Window) bo
 	if !ok || !state.insetSet {
 		return false
 	}
-	return a.positionNativeWindowControls(window, state.inset, nativeWindowControlsVisible(state))
+	return a.positionNativeWindowControls(window, state.inset, nativeWindowControlsVisible(state), nativeWindowControlsOccluded(state))
 }
 
-func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset, visible bool) bool {
+func (a *App) positionNativeWindowControls(window application.Window, inset nativeWindowControlsInset, visible bool, occluded bool) bool {
 	var nativeWindow unsafe.Pointer
 	if window != nil {
 		nativeWindow = window.NativeWindow()
@@ -92,5 +107,6 @@ func (a *App) positionNativeWindowControls(window application.Window, inset nati
 		C.double(inset.closeCenterX),
 		C.double(inset.buttonCenterY),
 		C.bool(visible),
+		C.bool(occluded),
 	))
 }
