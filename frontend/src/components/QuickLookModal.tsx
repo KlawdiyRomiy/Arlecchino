@@ -62,6 +62,19 @@ const quickLookEditorStyles = EditorView.theme({
   },
 });
 
+const quickLookControlsBubbleStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  padding: "4px",
+  borderRadius: 9999,
+  background: "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
+  boxShadow: "var(--shell-shadow)",
+  backdropFilter: "blur(12px)",
+  WebkitBackdropFilter: "blur(12px)",
+};
+
 const setHighlightLineEffect = StateEffect.define<number | null>();
 const highlightLineField = StateField.define<DecorationSet>({
   create() {
@@ -293,28 +306,29 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
             style={{
               width: modalSize.width,
               height: modalSize.height,
-              borderRadius: "var(--radius-shell)",
+              borderRadius: "30px",
               background:
                 "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 98%, transparent), color-mix(in srgb, var(--surface-shell) 99%, transparent))",
               color: "var(--text-primary)",
               backdropFilter: "blur(18px) saturate(1.08)",
+              WebkitBackdropFilter: "blur(18px) saturate(1.08)",
             }}
           >
             <div
               className="flex items-center justify-between"
               style={{
-                minHeight: 46,
-                padding: "0 12px",
+                minHeight: 56,
+                padding: "8px 14px",
                 borderBottom: "1px solid var(--shell-inline-divider)",
                 background:
                   "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-strong) 92%, transparent), color-mix(in srgb, var(--surface-shell) 98%, transparent))",
               }}
             >
-              <div className="flex items-center gap-1.5">
+              <div style={quickLookControlsBubbleStyle}>
                 <button
                   type="button"
                   onClick={onClose}
-                  className="panel-control-button"
+                  className="panel-control-button panel-control-button-danger topbar-control-button"
                   title="Close (Esc)"
                   aria-label="Close preview"
                 >
@@ -323,7 +337,7 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
                 <button
                   type="button"
                   onClick={onExpand}
-                  className="panel-control-button"
+                  className="panel-control-button topbar-control-button"
                   title="Open in tab (Cmd+T)"
                   aria-label="Open preview in editor tab"
                 >
@@ -343,7 +357,7 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
                 {fileName}
               </div>
 
-              <div style={{ width: 72 }} />
+              <div style={{ width: 78, flexShrink: 0 }} />
             </div>
 
             <div className="quicklook-scroll-fog-shell">
