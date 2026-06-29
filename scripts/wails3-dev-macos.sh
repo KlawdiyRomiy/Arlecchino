@@ -9,6 +9,17 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_BRANCH="main"
 CURRENT_BRANCH="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  for HOMEBREW_PREFIX in /opt/homebrew /usr/local; do
+    if [[ -d "$HOMEBREW_PREFIX/bin" ]]; then
+      export PATH="$HOMEBREW_PREFIX/bin:$PATH"
+    fi
+    if [[ -d "$HOMEBREW_PREFIX/sbin" ]]; then
+      export PATH="$HOMEBREW_PREFIX/sbin:$PATH"
+    fi
+  done
+fi
+
 if [[ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]]; then
   echo "ERROR: scripts/wails3-dev-macos.sh is only for $EXPECTED_BRANCH." >&2
   echo "Current branch: ${CURRENT_BRANCH:-unknown}" >&2
@@ -20,6 +31,12 @@ if command -v brew >/dev/null 2>&1; then
   if [[ -n "${NODE22_PREFIX:-}" && -d "$NODE22_PREFIX/bin" ]]; then
     export PATH="$NODE22_PREFIX/bin:$PATH"
   fi
+fi
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "ERROR: Go was not found in PATH." >&2
+  echo "Install Go or make it available before running scripts/wails3-dev-macos.sh." >&2
+  exit 1
 fi
 
 if ! go list -m github.com/wailsapp/wails/v3 >/dev/null 2>&1; then
