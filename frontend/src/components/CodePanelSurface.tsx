@@ -61,6 +61,7 @@ import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
 import { ImageEditorPreview } from "./ImageEditorPreview";
+import { useProjectSwitchFrameMotion } from "./layout/ProjectSwitchTransition";
 
 interface CodePanelSurfaceProps {
   path: string;
@@ -110,18 +111,25 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
+  const projectSwitchFrameMotion = useProjectSwitchFrameMotion();
+  const projectSwitchMotionActive = projectSwitchFrameMotion.moving;
+  const surfaceRuntimeActive = projectSwitchFrameMotion.active;
   const contentLineCount = useMemo(
     () => getCodeMirrorLineCount(content),
     [content],
   );
   const adaptivePerformanceMode = usePerformanceStore((state) => state.mode);
+  const effectiveAdaptivePerformanceMode =
+    projectSwitchMotionActive && adaptivePerformanceMode === "normal"
+      ? "constrained"
+      : adaptivePerformanceMode;
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
   );
   const editorFeatureBudget = useMemo(
     () =>
       resolveAdaptiveEditorFeatureBudget({
-        mode: adaptivePerformanceMode,
+        mode: effectiveAdaptivePerformanceMode,
         frameGapMs: 0,
         eventPressure: 0,
         activeEditorCharCount: content.length,
@@ -132,9 +140,9 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         updatedAtMs: 0,
       }),
     [
-      adaptivePerformanceMode,
       content.length,
       contentLineCount,
+      effectiveAdaptivePerformanceMode,
       largeDocumentMode,
     ],
   );
@@ -154,7 +162,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     [gitProjectPath, path],
   );
   const gitMarkers = useGitStore((state) =>
-    editorFeatureBudget.layoutStableGitGutter
+    surfaceRuntimeActive && editorFeatureBudget.layoutStableGitGutter
       ? (state.fileMarkers[path] ??
         state.fileMarkers[gitMarkerKey] ??
         EMPTY_GIT_MARKERS)
@@ -178,7 +186,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
   const diagnosticsExtension = useMemo(
     () =>
-      !editorFeatureBudget.runtimeDiagnostics
+      !surfaceRuntimeActive || !editorFeatureBudget.runtimeDiagnostics
         ? []
         : createDiagnosticsExtension({
             filePath: path,
@@ -187,11 +195,19 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
               ? LARGE_DOCUMENT_INLINE_DIAGNOSTIC_LIMIT
               : undefined,
           }),
-    [editorFeatureBudget.runtimeDiagnostics, language, largeDocumentMode, path],
+    [
+      editorFeatureBudget.runtimeDiagnostics,
+      language,
+      largeDocumentMode,
+      path,
+      surfaceRuntimeActive,
+    ],
   );
 
   useEffect(() => {
-    if (!isEditable) return;
+    if (!isEditable || !surfaceRuntimeActive || projectSwitchMotionActive) {
+      return;
+    }
     updatePerformanceBudget({
       activeEditorCharCount: content.length,
       activeEditorLineCount: contentLineCount,
@@ -202,6 +218,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     contentLineCount,
     isEditable,
     largeDocumentMode,
+    projectSwitchMotionActive,
+    surfaceRuntimeActive,
     updatePerformanceBudget,
   ]);
 
@@ -229,7 +247,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   }, [ensureTab, initialContent, isEditable, language, name, path]);
 
   useEffect(() => {
-    if (!isEditable) return;
+    if (!isEditable || !surfaceRuntimeActive) return;
     openEditorDocument({
       surfaceId: documentSurfaceIdRef.current,
       path,
@@ -241,7 +259,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     return () => {
       closeEditorDocument(documentSurfaceIdRef.current);
     };
-  }, [isEditable, language, largeDocumentMode, path]);
+  }, [isEditable, language, largeDocumentMode, path, surfaceRuntimeActive]);
 
   useEffect(() => {
     return () => {
@@ -274,7 +292,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     editorFeatureBudget.runtimeRichEditorFeatures &&
     isCodeMirrorColorToolTarget(language, path);
   const completionProviderEnabled =
-    completionProviderMode === "full" && isEditable;
+    completionProviderMode === "full" && isEditable && surfaceRuntimeActive;
   const {
     extensions: completionProviderExtensions,
     extensionsKey: completionProviderExtensionsKey,
@@ -306,7 +324,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         createCodeMirrorColorToolExtension(colorToolsEnabled),
       );
     }
-    if (editorFeatureBudget.layoutStableGitGutter) {
+    if (surfaceRuntimeActive && editorFeatureBudget.layoutStableGitGutter) {
       result.push(gitGutterExtension);
     }
     result.push(...diagnosticsExtension);
@@ -320,6 +338,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     foldControlsEnabled,
     gitGutterExtension,
     indentGuidesEnabled,
+    surfaceRuntimeActive,
   ]);
 
   const adaptiveExtensionsKey = useStableReferenceKey([
@@ -330,6 +349,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.layoutStableFoldGutter,
     editorFeatureBudget.runtimeRichEditorFeatures,
+    surfaceRuntimeActive,
     foldControlsEnabled,
     gitGutterExtension,
     indentGuidesEnabled,
@@ -448,6 +468,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   useEffect(() => {
     if (!path) return;
     if (!gitProjectPath) return;
+    if (!surfaceRuntimeActive) return;
     if (!editorFeatureBudget.layoutStableGitGutter) return;
 
     void refreshFileMarkers(path);
@@ -456,6 +477,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     gitProjectPath,
     path,
     refreshFileMarkers,
+    surfaceRuntimeActive,
   ]);
 
   const basicSetup = useMemo(

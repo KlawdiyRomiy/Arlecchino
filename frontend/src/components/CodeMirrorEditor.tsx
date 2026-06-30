@@ -64,6 +64,7 @@ import {
   ContextActionMenu,
   type ContextActionMenuItem,
 } from "./ui/ContextActionMenu";
+import { useProjectSwitchFrameMotion } from "./layout/ProjectSwitchTransition";
 import { LSPHover, LSPSignatureHelp, RevealProjectEntry } from "../wails/app";
 import {
   createDiagnosticsExtension,
@@ -710,6 +711,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const showOperatorLigatures = useEditorSettingsStore(
     (state) => state.showOperatorLigatures,
   );
+  const projectSwitchFrameMotion = useProjectSwitchFrameMotion();
+  const projectSwitchMotionActive = projectSwitchFrameMotion.moving;
+  const editorRuntimeActive = active && projectSwitchFrameMotion.active;
+  const reportsEditorPerformanceBudget =
+    reportsPerformanceBudget &&
+    projectSwitchFrameMotion.active &&
+    !projectSwitchMotionActive;
 
   useEffect(() => {
     const view = editorRef.current?.view;
@@ -751,6 +759,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [content],
   );
   const adaptivePerformanceMode = usePerformanceStore((state) => state.mode);
+  const effectiveAdaptivePerformanceMode =
+    projectSwitchMotionActive && adaptivePerformanceMode === "normal"
+      ? "constrained"
+      : adaptivePerformanceMode;
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
   );
@@ -760,7 +772,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const editorFeatureBudget = useMemo(
     () =>
       resolveAdaptiveEditorFeatureBudget({
-        mode: adaptivePerformanceMode,
+        mode: effectiveAdaptivePerformanceMode,
         frameGapMs: 0,
         eventPressure: 0,
         activeEditorCharCount: content.length,
@@ -771,9 +783,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         updatedAtMs: 0,
       }),
     [
-      adaptivePerformanceMode,
       content.length,
       contentLineCount,
+      effectiveAdaptivePerformanceMode,
       featureBudgetLargeDocument,
     ],
   );
@@ -785,7 +797,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [filePath, gitProjectPath],
   );
   const gitMarkers = useGitStore((state) =>
-    active && editorFeatureBudget.layoutStableGitGutter
+    editorRuntimeActive && editorFeatureBudget.layoutStableGitGutter
       ? (state.fileMarkers[filePath] ??
         state.fileMarkers[gitMarkerKey] ??
         EMPTY_GIT_MARKERS)
@@ -795,7 +807,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
-      !active || !editorFeatureBudget.runtimeDiagnostics
+      !editorRuntimeActive || !editorFeatureBudget.runtimeDiagnostics
         ? []
         : createDiagnosticsExtension({
             filePath,
@@ -805,7 +817,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               : undefined,
           }),
     [
-      active,
+      editorRuntimeActive,
       editorFeatureBudget.runtimeDiagnostics,
       filePath,
       language,
@@ -841,7 +853,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const lastUserChangeContentRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!reportsPerformanceBudget) {
+    if (!reportsEditorPerformanceBudget) {
       return;
     }
 
@@ -854,7 +866,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     content.length,
     contentLineCount,
     largeDocumentMode,
-    reportsPerformanceBudget,
+    reportsEditorPerformanceBudget,
     updatePerformanceBudget,
   ]);
 
@@ -864,15 +876,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   useEffect(
     () => () => {
-      if (reportsPerformanceBudget) {
+      if (reportsEditorPerformanceBudget) {
         resetActiveEditorBudget();
       }
     },
-    [reportsPerformanceBudget, resetActiveEditorBudget],
+    [reportsEditorPerformanceBudget, resetActiveEditorBudget],
   );
 
   useEffect(() => {
-    if (!filePath || !language || !active) {
+    if (!filePath || !language || !editorRuntimeActive) {
       signatureRequestGuardRef.current.next();
       closeEditorDocument(documentSurfaceIdRef.current);
       return;
@@ -893,7 +905,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return () => {
       closeEditorDocument(documentSurfaceIdRef.current);
     };
-  }, [active, filePath, language, largeDocumentMode]);
+  }, [editorRuntimeActive, filePath, language, largeDocumentMode]);
 
   useEffect(() => {
     if (lastContentPropRef.current === content) {
@@ -906,10 +918,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       lastUserChangeContentRef.current = null;
       return;
     }
-    if (active && !largeDocumentMode) {
+    if (editorRuntimeActive && !largeDocumentMode) {
       replaceEditorDocumentFromDisk(filePath, language, content);
     }
-  }, [active, content, filePath, language, largeDocumentMode]);
+  }, [editorRuntimeActive, content, filePath, language, largeDocumentMode]);
 
   useEffect(() => {
     const view = editorRef.current?.view;
@@ -1047,7 +1059,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const completionProvider = useCodeMirrorCompletionProvider({
     enabled:
-      active &&
+      editorRuntimeActive &&
       (editorFeatureBudget.runtimeCompletions ||
         editorFeatureBudget.runtimeGhostText),
     filePath,
@@ -1090,12 +1102,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   useEffect(() => {
     if (!filePath) return;
     if (!gitProjectPath) return;
-    if (!active) return;
+    if (!editorRuntimeActive) return;
     if (!editorFeatureBudget.layoutStableGitGutter) return;
 
     void refreshFileMarkers(filePath);
   }, [
-    active,
+    editorRuntimeActive,
     editorFeatureBudget.layoutStableGitGutter,
     filePath,
     gitProjectPath,
@@ -1791,7 +1803,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   const definitionLinkExtension = useMemo<Extension[]>(() => {
-    if (!active || !editorFeatureBudget.hover) {
+    if (!editorRuntimeActive || !editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1892,7 +1904,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }),
     ];
   }, [
-    active,
+    editorRuntimeActive,
     editorFeatureBudget.hover,
     filePath,
     language,
@@ -1901,7 +1913,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   ]);
 
   const hoverExtension = useMemo<Extension[]>(() => {
-    if (!active || !editorFeatureBudget.hover) {
+    if (!editorRuntimeActive || !editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1945,10 +1957,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }
       }),
     ];
-  }, [active, editorFeatureBudget.hover, filePath, language]);
+  }, [editorRuntimeActive, editorFeatureBudget.hover, filePath, language]);
 
   const signatureHelpExtension = useMemo<Extension[]>(() => {
-    if (!active || !editorFeatureBudget.hover) {
+    if (!editorRuntimeActive || !editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1980,7 +1992,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }),
     ];
   }, [
-    active,
+    editorRuntimeActive,
     requestSignatureHelp,
     clearSignatureHelp,
     editorFeatureBudget.hover,
@@ -2007,7 +2019,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const adaptiveExtensions = useMemo<Extension[]>(() => {
     const nextExtensions: Extension[] = [];
 
-    if (active && editorFeatureBudget.layoutStableGitGutter) {
+    if (editorRuntimeActive && editorFeatureBudget.layoutStableGitGutter) {
       nextExtensions.push(gitGutterExtension);
     }
 
@@ -2042,10 +2054,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
     return nextExtensions;
   }, [
-    active,
     completionProviderExtensions,
     definitionLinkExtension,
     diagnosticsExtension,
+    editorRuntimeActive,
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
@@ -2065,7 +2077,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
     editorFeatureBudget.runtimeDiagnostics,
-    active,
+    editorRuntimeActive,
     colorToolsEnabled,
     foldControlsEnabled,
     filePath,

@@ -49,6 +49,7 @@ type ProjectRuntimeSession struct {
 	launchProjectPath string
 	pathMu            sync.RWMutex
 	projectGeneration atomic.Uint64
+	projectOpenSeq    atomic.Uint64
 	lifecycleMu       sync.Mutex
 
 	projectCtx    context.Context

@@ -2,11 +2,13 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { useTransition, animated } from "@react-spring/web";
 import { useIndexingPhase } from "../../hooks/useIndexingProgress";
+import { beginInteractiveSurfaceMotionWindow } from "../../stores/performanceStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 
@@ -30,6 +32,8 @@ const ProjectSwitchFrameMotionContext = createContext<ProjectSwitchFrameMotion>(
   defaultProjectSwitchFrameMotion,
 );
 
+const PROJECT_SWITCH_MOTION_HOLD_MS = 420;
+
 export const useProjectSwitchFrameMotion = (): ProjectSwitchFrameMotion =>
   useContext(ProjectSwitchFrameMotionContext);
 
@@ -43,16 +47,41 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
   const indexingPhase = useIndexingPhase();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const switchPending = useWorkspaceStore((state) => state.pendingId !== null);
-  const reduceMotion =
-    !switchPending &&
-    (indexingPhase === "indexing" || diagnosticsPreload.active);
 
   const dirRef = useRef(direction);
   dirRef.current = direction;
+  const lastLayoutKeyRef = useRef(layoutKey);
+  const layoutKeyChanged = lastLayoutKeyRef.current !== layoutKey;
   const activeMotionItemsRef = useRef<Set<string>>(new Set());
   const [activeMotionItems, setActiveMotionItems] = useState<
     Record<string, true>
   >({});
+  const [motionHoldActive, setMotionHoldActive] = useState(false);
+  const switchMotionActive =
+    layoutKeyChanged ||
+    motionHoldActive ||
+    switchPending ||
+    Object.keys(activeMotionItems).length > 0;
+  const reduceMotion =
+    !switchMotionActive &&
+    (indexingPhase === "indexing" || diagnosticsPreload.active);
+
+  useLayoutEffect(() => {
+    lastLayoutKeyRef.current = layoutKey;
+    if (direction === 0) {
+      return;
+    }
+
+    setMotionHoldActive(true);
+    beginInteractiveSurfaceMotionWindow(PROJECT_SWITCH_MOTION_HOLD_MS);
+    const timer = window.setTimeout(() => {
+      setMotionHoldActive(false);
+    }, PROJECT_SWITCH_MOTION_HOLD_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [direction, layoutKey]);
 
   const setItemMotion = useCallback((item: string, moving: boolean) => {
     const next = new Set(activeMotionItemsRef.current);

@@ -33,6 +33,7 @@ import (
 )
 
 const envDisableMCPBootstrap = "ARLECCHINO_DISABLE_MCP_BOOTSTRAP"
+const projectSwitchBackgroundStartDelay = 420 * time.Millisecond
 
 type App struct {
 	ctx                      context.Context
@@ -385,19 +386,38 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		return err
 	}
 
+	previousProjectPath := session.currentProjectPath()
+	backgroundStartDelay := projectSwitchBackgroundDelay(previousProjectPath)
+	openSeq := session.projectOpenSeq.Add(1)
+	session.setProjectPath(path)
+	a.syncDefaultProjectSession(session)
+
 	session.lifecycleMu.Lock()
 	defer session.lifecycleMu.Unlock()
 
-	if session.currentProjectPath() != "" {
-		if err := a.closeProjectInSessionLocked(session, false); err != nil {
+	if session.projectOpenSeq.Load() != openSeq {
+		return nil
+	}
+	if session.projectManager != nil {
+		if err := session.projectManager.OpenProject(path); err != nil {
+			if session.projectOpenSeq.Load() == openSeq {
+				session.setProjectPath(previousProjectPath)
+				a.syncDefaultProjectSession(session)
+			}
 			return err
 		}
 	}
+	if session.projectOpenSeq.Load() != openSeq {
+		return nil
+	}
 
-	if session.projectManager != nil {
-		if err := session.projectManager.OpenProject(path); err != nil {
+	if previousProjectPath != "" {
+		if err := a.closeProjectInSessionLockedForProjectSwitch(session, false, previousProjectPath); err != nil {
 			return err
 		}
+	}
+	if session.projectOpenSeq.Load() != openSeq {
+		return nil
 	}
 
 	projectGeneration := session.projectGeneration.Add(1)
@@ -557,6 +577,9 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		go func() {
 			defer session.wg.Done()
 			defer a.unregisterBackgroundJobCancel(indexJobID)
+			if !waitForProjectSwitchBackgroundStart(indexCtx, backgroundStartDelay) {
+				return
+			}
 			select {
 			case <-indexCtx.Done():
 				return
@@ -618,6 +641,28 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 	a.startProjectFilesystemWatcherForSession(session, path, projectGeneration)
 
 	return nil
+}
+
+func projectSwitchBackgroundDelay(previousProjectPath string) time.Duration {
+	if strings.TrimSpace(previousProjectPath) == "" {
+		return 0
+	}
+	return projectSwitchBackgroundStartDelay
+}
+
+func waitForProjectSwitchBackgroundStart(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return ctx.Err() == nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func validateProjectOpenAccess(path string) error {
@@ -713,8 +758,35 @@ func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTermina
 }
 
 func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeTerminals bool) error {
+	return a.closeProjectInSessionLockedWithOptions(session, closeProjectInSessionOptions{
+		closeTerminals:      closeTerminals,
+		clearProjectPath:    true,
+		closeProjectManager: true,
+	})
+}
+
+func (a *App) closeProjectInSessionLockedForProjectSwitch(session *ProjectRuntimeSession, closeTerminals bool, closingProjectPath string) error {
+	return a.closeProjectInSessionLockedWithOptions(session, closeProjectInSessionOptions{
+		closeTerminals:      closeTerminals,
+		closingProjectPath:  closingProjectPath,
+		clearProjectPath:    false,
+		closeProjectManager: false,
+	})
+}
+
+type closeProjectInSessionOptions struct {
+	closeTerminals      bool
+	closingProjectPath  string
+	clearProjectPath    bool
+	closeProjectManager bool
+}
+
+func (a *App) closeProjectInSessionLockedWithOptions(session *ProjectRuntimeSession, options closeProjectInSessionOptions) error {
 	started := time.Now()
-	projectPath := session.currentProjectPath()
+	projectPath := strings.TrimSpace(options.closingProjectPath)
+	if projectPath == "" {
+		projectPath = session.currentProjectPath()
+	}
 	a.finalizeProjectEntryHistory(session)
 	if session.projectCancel != nil {
 		session.projectCancel()
@@ -738,7 +810,7 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 		session.aiSession = nil
 	}
 
-	if closeTerminals && session.termManager != nil {
+	if options.closeTerminals && session.termManager != nil {
 		stageStarted = time.Now()
 		session.termManager.CloseAll()
 		logShutdownStage("terminal.closeAll", stageStarted, "session="+session.ID)
@@ -770,14 +842,16 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 	a.managerMu.Lock()
 	session.cmp = nil
 	session.sys = nil
-	session.setProjectPath("")
+	if options.clearProjectPath {
+		session.setProjectPath("")
+	}
 	session.projectCtx = nil
 	session.projectCancel = nil
 	a.syncDefaultProjectSession(session)
 	a.managerMu.Unlock()
 
 	var err error
-	if session.projectManager != nil {
+	if options.closeProjectManager && session.projectManager != nil {
 		err = session.projectManager.CloseProject()
 	}
 
