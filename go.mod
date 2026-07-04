@@ -19,7 +19,7 @@ require (
 	github.com/sahilm/fuzzy v0.1.1
 	github.com/scip-code/scip/bindings/go/scip v0.7.1
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/wailsapp/wails/v3 v3.0.0-alpha2.107
+	github.com/wailsapp/wails/v3 v3.0.0-alpha2.113
 	github.com/yalue/onnxruntime_go v1.25.0
 	go.lsp.dev/jsonrpc2 v0.10.0
 	go.lsp.dev/protocol v0.12.0
@@ -47,7 +47,7 @@ require (
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.3.4 // indirect
 	github.com/sourcegraph/beaut v0.0.0-20240611013027-627e4c25335a // indirect
-	github.com/wailsapp/wails/webview2 v1.0.27 // indirect
+	github.com/wailsapp/wails/webview2 v1.0.28 // indirect
 	go.lsp.dev/pkg v0.0.0-20210717090340-384b27a52fb2 // indirect
 	go.lsp.dev/uri v0.3.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

@@ -25,7 +25,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-MODULE_ROOT="$(go env GOMODCACHE)/github.com/wailsapp/wails/v3@v3.0.0-alpha2.107"
+MODULE_ROOT="$(go env GOMODCACHE)/github.com/wailsapp/wails/v3@v3.0.0-alpha2.113"
 EXAMPLE_ROOT="$MODULE_ROOT/examples/custom-protocol-example"
 if [[ ! -d "$EXAMPLE_ROOT" ]]; then
   echo "ERROR: pinned Wails custom protocol example not found: $EXAMPLE_ROOT" >&2
@@ -63,7 +63,7 @@ perl -0pi -e 's/app\.Event\.Emit\("frontend:ShowURL", e\.Context\(\)\.URL\(\)\)/
 
 (cd "$WORK_DIR" && \
   go mod init arlecchino-wails-custom-protocol-repro >/dev/null && \
-  go mod edit -require github.com/wailsapp/wails/v3@v3.0.0-alpha2.107 && \
+  go mod edit -require github.com/wailsapp/wails/v3@v3.0.0-alpha2.113 && \
   go mod edit -replace github.com/wailsapp/wails/v3="$MODULE_ROOT" && \
   go mod tidy >/dev/null && \
   go build -o "$OUTPUT" .)
@@ -142,7 +142,7 @@ const read = (path) => {
 };
 const report = {
   runtime: "wails-v3",
-  version: "v3.0.0-alpha2.107",
+  version: "v3.0.0-alpha2.113",
   example: "custom-protocol-example",
   platform: "darwin",
   generatedAt: new Date().toISOString(),
