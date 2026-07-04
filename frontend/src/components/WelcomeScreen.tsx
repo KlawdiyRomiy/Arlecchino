@@ -1,16 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  AlertTriangle,
+  Check,
   ChevronRight,
   FolderOpen,
   GitBranch,
   Loader2,
   Plus,
+  Search,
 } from "lucide-react";
 
 import { useIDEEvents } from "../hooks/useIDEEvents";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import * as App from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CloneRepositoryDialog } from "./CloneRepositoryDialog";
@@ -26,7 +30,7 @@ const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 const welcomePanelClass =
-  "w-full overflow-hidden rounded-[34px] border border-[var(--shell-border-strong)] bg-[color-mix(in_srgb,var(--surface-elevated)_96%,transparent)] shadow-[inset_0_1px_0_var(--shell-inner-highlight),var(--shadow-overlay)] backdrop-blur-xl";
+  "w-full overflow-hidden rounded-[34px] border border-[var(--shell-border-strong)] bg-[color-mix(in_srgb,var(--surface-elevated)_96%,transparent)] shadow-[inset_0_1px_0_var(--shell-inner-highlight),0_1px_2px_rgba(0,0,0,0.05),0_14px_28px_-20px_rgba(0,0,0,0.34),0_30px_64px_-48px_rgba(0,0,0,0.28)] backdrop-blur-xl";
 const welcomeClusterClass =
   "rounded-[34px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_96%,transparent)] p-2 shadow-[inset_0_1px_0_var(--shell-inner-highlight),var(--shell-shadow)]";
 const welcomeActionClass =
@@ -62,10 +66,91 @@ interface Project {
   is_favorite: boolean;
 }
 
+type RecentProjectIndexStatusMap = Record<string, App.RecentProjectIndexStatus>;
+
+const recentProjectIndexPathKey = (path: string) => {
+  const trimmed = path.trim();
+  if (trimmed === "/") {
+    return trimmed;
+  }
+  return trimmed.replace(/\/+$/, "");
+};
+
+const boundedIndexPercent = (status?: App.RecentProjectIndexStatus) => {
+  if (!status) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, status.percent));
+};
+
+const RecentProjectIndexButton: React.FC<{
+  status?: App.RecentProjectIndexStatus;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}> = ({ status, onClick }) => {
+  const phase = status?.phase ?? "idle";
+  const isIndexing = phase === "indexing";
+  const isComplete = phase === "complete";
+  const isError = phase === "error";
+  const percent = boundedIndexPercent(status);
+  const label = isIndexing
+    ? "Indexing"
+    : isComplete
+      ? "Indexed"
+      : isError
+        ? "Retry"
+        : "Index";
+  const Icon = isIndexing
+    ? Loader2
+    : isComplete
+      ? Check
+      : isError
+        ? AlertTriangle
+        : Search;
+  const disabled = isIndexing || isComplete;
+  const title = isIndexing
+    ? `Indexing ${Math.round(percent)}%`
+    : isComplete
+      ? "Project index is ready"
+      : isError
+        ? status?.error || "Retry project indexing"
+        : "Index this project before opening";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`relative flex h-11 min-w-[112px] shrink-0 items-center justify-center overflow-hidden rounded-full border px-3 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
+        isComplete
+          ? "border-[color-mix(in_srgb,var(--status-success)_44%,var(--shell-border))] bg-[color-mix(in_srgb,var(--status-success)_12%,var(--surface-shell-soft))] text-[var(--status-success)]"
+          : isError
+            ? "border-[color-mix(in_srgb,var(--status-error)_44%,var(--shell-border))] bg-[color-mix(in_srgb,var(--status-error)_12%,var(--surface-shell-soft))] text-[var(--status-error)] hover:border-[color-mix(in_srgb,var(--status-error)_62%,var(--shell-border-strong))]"
+            : "border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell)_82%,transparent)] text-[var(--text-secondary)] hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)] disabled:hover:border-[var(--shell-border)] disabled:hover:text-[var(--text-secondary)]"
+      }`}
+    >
+      {isIndexing ? (
+        <span className="absolute inset-x-3 bottom-1.5 h-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)]">
+          <span
+            className="block h-full origin-left rounded-full bg-[var(--accent-primary)] transition-transform duration-200"
+            style={{ transform: `scaleX(${percent / 100})` }}
+          />
+        </span>
+      ) : null}
+      <span className="relative flex items-center gap-1.5 pb-0.5">
+        <Icon size={14} className={isIndexing ? "animate-spin" : ""} />
+        <span>{label}</span>
+      </span>
+    </button>
+  );
+};
+
 const WelcomeScreen: React.FC<{
   onProjectOpen: (path: string) => void | Promise<void>;
 }> = ({ onProjectOpen }) => {
   const [recentProjects, setRecentProjects] = useState<Project[]>([]);
+  const [projectIndexStatuses, setProjectIndexStatuses] =
+    useState<RecentProjectIndexStatusMap>({});
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showCloneDialog, setShowCloneDialog] = useState(false);
@@ -73,6 +158,30 @@ const WelcomeScreen: React.FC<{
   const handleViewZoom = useCallback((action: string) => {
     applyWelcomeZoomAction(action);
   }, []);
+  const handleOpenTarget = useCallback(() => {
+    window.dispatchEvent(new Event(OPEN_TARGET_EVENT));
+  }, []);
+  const loadRecentProjects = useCallback(async () => {
+    try {
+      const projects = await App.GetRecentProjects(5);
+      setRecentProjects(projects);
+    } catch (error) {
+      console.error("Error loading recent projects:", error);
+    }
+  }, []);
+  const upsertProjectIndexStatus = useCallback(
+    (status: App.RecentProjectIndexStatus) => {
+      const key = recentProjectIndexPathKey(status.projectPath);
+      if (!key) {
+        return;
+      }
+      setProjectIndexStatuses((current) => ({
+        ...current,
+        [key]: status,
+      }));
+    },
+    [],
+  );
 
   useIDEEvents({
     onViewZoom: handleViewZoom,
@@ -85,7 +194,47 @@ const WelcomeScreen: React.FC<{
     };
 
     void bootstrap();
-  }, []);
+  }, [loadRecentProjects]);
+
+  useEffect(() => {
+    return EventsOn<[App.RecentProjectIndexStatus]>(
+      "recent-project:index",
+      upsertProjectIndexStatus,
+    );
+  }, [upsertProjectIndexStatus]);
+
+  useEffect(() => {
+    if (recentProjects.length === 0) {
+      setProjectIndexStatuses({});
+      return;
+    }
+
+    let disposed = false;
+    const paths = recentProjects.map((project) => project.path);
+    App.GetRecentProjectIndexStatuses(paths)
+      .then((statuses) => {
+        if (disposed) {
+          return;
+        }
+        setProjectIndexStatuses((current) => {
+          const next = { ...current };
+          statuses.forEach((status) => {
+            const key = recentProjectIndexPathKey(status.projectPath);
+            if (key) {
+              next[key] = status;
+            }
+          });
+          return next;
+        });
+      })
+      .catch((error) => {
+        console.error("Error loading recent project index statuses:", error);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [recentProjects]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -150,20 +299,49 @@ const WelcomeScreen: React.FC<{
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener(NEW_PROJECT_EVENT, handleNewProjectEvent);
     };
-  }, [showCreateDialog, showCloneDialog]);
+  }, [handleOpenTarget, showCreateDialog, showCloneDialog]);
 
-  const loadRecentProjects = async () => {
-    try {
-      const projects = await App.GetRecentProjects(5);
-      setRecentProjects(projects);
-    } catch (error) {
-      console.error("Error loading recent projects:", error);
-    }
-  };
+  const startRecentProjectIndex = useCallback(
+    async (project: Project) => {
+      upsertProjectIndexStatus({
+        projectPath: project.path,
+        phase: "indexing",
+        current: 0,
+        total: 0,
+        percent: 0,
+        updatedAt: new Date().toISOString(),
+      });
 
-  const handleOpenTarget = () => {
-    window.dispatchEvent(new Event(OPEN_TARGET_EVENT));
-  };
+      try {
+        upsertProjectIndexStatus(
+          await App.StartRecentProjectIndex(project.path),
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Project indexing failed.";
+        console.error("Error indexing recent project:", error);
+        upsertProjectIndexStatus({
+          projectPath: project.path,
+          phase: "error",
+          current: 0,
+          total: 0,
+          percent: 0,
+          error: message,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    },
+    [upsertProjectIndexStatus],
+  );
+
+  const handleIndexRecentProject = useCallback(
+    async (event: React.MouseEvent<HTMLButtonElement>, project: Project) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await startRecentProjectIndex(project);
+    },
+    [startRecentProjectIndex],
+  );
 
   if (loading) {
     return (
@@ -325,35 +503,55 @@ const WelcomeScreen: React.FC<{
 
               <div className="space-y-2">
                 {recentProjects.length > 0 ? (
-                  recentProjects.map((project) => (
-                    <button
-                      type="button"
-                      key={project.id}
-                      onClick={() => onProjectOpen(project.path)}
-                      className="flex min-h-[76px] w-full items-center gap-4 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-4 py-3 text-left shadow-[inset_0_1px_0_var(--shell-inner-highlight)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_66%,transparent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
-                    >
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_78%,transparent)] text-[14px] font-medium text-[var(--text-primary)]">
-                        {project.name.slice(0, 2).toUpperCase()}
+                  recentProjects.map((project) => {
+                    const indexStatus =
+                      projectIndexStatuses[
+                        recentProjectIndexPathKey(project.path)
+                      ];
+
+                    return (
+                      <div
+                        key={project.id}
+                        className="flex min-h-[76px] w-full items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-3 py-3 shadow-[inset_0_1px_0_var(--shell-inner-highlight)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_66%,transparent)]"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onProjectOpen(project.path)}
+                          className="flex min-w-0 flex-1 items-center gap-4 rounded-full px-1 text-left focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
+                        >
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_78%,transparent)] text-[14px] font-medium text-[var(--text-primary)]">
+                            {project.name.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[16px] font-medium leading-tight text-[var(--text-primary)]">
+                              {project.name}
+                            </div>
+                            <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
+                              {project.path}
+                            </div>
+                          </div>
+                          <ChevronRight
+                            size={17}
+                            className="shrink-0 text-[var(--text-muted)]"
+                          />
+                        </button>
+
+                        <div className="flex shrink-0 items-center gap-2">
+                          {project.version ? (
+                            <div className="hidden shrink-0 rounded-full border border-[var(--shell-border)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)] lg:block">
+                              {project.version}
+                            </div>
+                          ) : null}
+                          <RecentProjectIndexButton
+                            status={indexStatus}
+                            onClick={(event) =>
+                              handleIndexRecentProject(event, project)
+                            }
+                          />
+                        </div>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[16px] font-medium leading-tight text-[var(--text-primary)]">
-                          {project.name}
-                        </div>
-                        <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
-                          {project.path}
-                        </div>
-                      </div>
-                      {project.version ? (
-                        <div className="hidden shrink-0 rounded-full border border-[var(--shell-border)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)] sm:block">
-                          {project.version}
-                        </div>
-                      ) : null}
-                      <ChevronRight
-                        size={17}
-                        className="shrink-0 text-[var(--text-muted)]"
-                      />
-                    </button>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="rounded-[28px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-5 py-6 text-[15px] text-[var(--text-muted)]">
                     No recent projects yet.

@@ -15,7 +15,6 @@ import (
 	"arlecchino/internal/ai"
 	"arlecchino/internal/composer"
 	"arlecchino/internal/execution"
-	"arlecchino/internal/indexer/adapters"
 	"arlecchino/internal/indexer/brain"
 	"arlecchino/internal/indexer/core"
 	"arlecchino/internal/indexer/lsp"
@@ -70,6 +69,8 @@ type App struct {
 	backgroundCancelers      map[string]context.CancelFunc
 	indexerProgressMu        sync.Mutex
 	indexerProgress          map[string]indexerProgressState
+	recentProjectIndexMu     sync.Mutex
+	recentProjectIndexJobs   map[string]*recentProjectIndexJob
 	shellMenuMu              sync.Mutex
 	shellMenuShortcuts       map[string][]string
 	shellMenuState           ShellMenuStatePayload
@@ -167,6 +168,7 @@ func NewApp() *App {
 		processGovernor:          processcontrol.NewGovernor(),
 		backgroundCancelers:      make(map[string]context.CancelFunc),
 		indexerProgress:          make(map[string]indexerProgressState),
+		recentProjectIndexJobs:   make(map[string]*recentProjectIndexJob),
 		windowLeases:             NewWindowLeaseRegistry(),
 		windowRoles:              NewWindowRoleRegistry(),
 		pendingMCPApprovalNonces: make(map[string]string),
@@ -240,6 +242,7 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(_ context.Context) {
 	started := time.Now()
 	a.stopMCPBridge()
+	a.cancelRecentProjectIndexes()
 	_ = a.closeAllProjectSessions(true)
 	if a.aiService != nil {
 		stageStarted := time.Now()
@@ -440,19 +443,16 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 	lspManager = a.initProjectLSPManagerForSession(session, path, projectGeneration, lspInstaller)
 
 	// Initialize core engine and prediction brain
-	indexerWorkers := core.RecommendedWorkerCount()
-	if a.processGovernor != nil {
-		indexerWorkers = a.processGovernor.PolicyFor(processcontrol.KindIndexing, 0, 0).WorkerCount
-		if indexerWorkers <= 0 {
-			indexerWorkers = core.RecommendedWorkerCount()
-		}
+	coreEngine, adoptedRecentIndex, skipStartupIndex := a.claimRecentProjectIndexForOpen(session, path, projectGeneration)
+	var err error
+	if coreEngine == nil {
+		coreEngine, err = newCoreEngine(core.EngineConfig{
+			ProjectID:   path,
+			ProjectRoot: path,
+			DBPath:      filepath.Join(path, ".arlecchino", "brain.db"),
+			Workers:     a.indexerWorkerCount(),
+		})
 	}
-	coreEngine, err := newCoreEngine(core.EngineConfig{
-		ProjectID:   path,
-		ProjectRoot: path,
-		DBPath:      filepath.Join(path, ".arlecchino", "brain.db"),
-		Workers:     indexerWorkers,
-	})
 	if err != nil {
 		a.logWarning(fmt.Sprintf("core engine init failed: %v", err))
 	} else {
@@ -476,9 +476,7 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		if session.projectManager != nil {
 			session.projectManager.UpdateFramework(framework, version)
 		}
-		for _, adapter := range adapters.AllAdapters(framework) {
-			session.coreEngine.RegisterAdapter(adapter)
-		}
+		registerCoreEngineAdapters(session.coreEngine, framework)
 
 		// Listen for indexing lifecycle events
 		var lastIndexerLog time.Time
@@ -569,35 +567,46 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		session.brain.SetLSPManager(lspManager)
 		a.syncDefaultProjectSession(session)
 
-		projectCtx := session.projectCtx
-		indexCtx, indexCancel := context.WithCancel(projectCtx)
-		indexJobID := backgroundIndexerJobID(session.ID, projectGeneration)
-		a.registerBackgroundJobCancel(indexJobID, indexCancel)
-		session.wg.Add(1)
-		go func() {
-			defer session.wg.Done()
-			defer a.unregisterBackgroundJobCancel(indexJobID)
-			if !waitForProjectSwitchBackgroundStart(indexCtx, backgroundStartDelay) {
-				return
-			}
-			select {
-			case <-indexCtx.Done():
-				return
-			default:
-				a.logInfof("[Activation] subsystem=indexer reason=%s session=%s project=%s generation=%d", activationWorkspaceOpen, session.ID, filepath.Base(path), projectGeneration)
-				if err := coreEngine.IndexProjectContext(indexCtx); err != nil {
-					if errors.Is(err, context.Canceled) {
-						return
-					}
-					a.emitEvent("indexer:error", map[string]any{
-						"projectPath": path,
-						"sessionId":   session.ID,
-						"error":       err.Error(),
-						"terminal":    true,
-					})
+		switch {
+		case adoptedRecentIndex:
+			a.replayRecentProjectIndexForSession(path, session.ID, projectGeneration)
+		case skipStartupIndex:
+			a.logInfof("[Activation] subsystem=indexer reason=recent-preindex-ready session=%s project=%s generation=%d",
+				session.ID,
+				filepath.Base(path),
+				projectGeneration,
+			)
+		default:
+			projectCtx := session.projectCtx
+			indexCtx, indexCancel := context.WithCancel(projectCtx)
+			indexJobID := backgroundIndexerJobID(session.ID, projectGeneration)
+			a.registerBackgroundJobCancel(indexJobID, indexCancel)
+			session.wg.Add(1)
+			go func() {
+				defer session.wg.Done()
+				defer a.unregisterBackgroundJobCancel(indexJobID)
+				if !waitForProjectSwitchBackgroundStart(indexCtx, backgroundStartDelay) {
+					return
 				}
-			}
-		}()
+				select {
+				case <-indexCtx.Done():
+					return
+				default:
+					a.logInfof("[Activation] subsystem=indexer reason=%s session=%s project=%s generation=%d", activationWorkspaceOpen, session.ID, filepath.Base(path), projectGeneration)
+					if err := coreEngine.IndexProjectContext(indexCtx); err != nil {
+						if errors.Is(err, context.Canceled) {
+							return
+						}
+						a.emitEvent("indexer:error", map[string]any{
+							"projectPath": path,
+							"sessionId":   session.ID,
+							"error":       err.Error(),
+							"terminal":    true,
+						})
+					}
+				}
+			}()
+		}
 	}
 
 	a.startDeferredProjectWarmupForSession(session,

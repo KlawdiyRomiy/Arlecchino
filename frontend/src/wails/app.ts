@@ -59,6 +59,13 @@ interface ProjectWindowBridge {
   GetCurrentProjectWindowSession?: () => Promise<unknown> | unknown;
 }
 
+interface RecentProjectIndexBridge {
+  StartRecentProjectIndex?: (path: string) => Promise<unknown> | unknown;
+  GetRecentProjectIndexStatuses?: (
+    paths: string[],
+  ) => Promise<unknown> | unknown;
+}
+
 interface ProjectEntryMoveBridge {
   MoveProjectEntry?: (
     path: string,
@@ -227,6 +234,23 @@ export interface ProjectWindowSessionPayload {
   windowName: string;
 }
 
+export type RecentProjectIndexPhase =
+  | "idle"
+  | "indexing"
+  | "complete"
+  | "error"
+  | string;
+
+export interface RecentProjectIndexStatus {
+  projectPath: string;
+  phase: RecentProjectIndexPhase;
+  current: number;
+  total: number;
+  percent: number;
+  error?: string;
+  updatedAt?: string;
+}
+
 export interface ProjectEntryMoveResult {
   oldPath: string;
   newPath: string;
@@ -343,6 +367,18 @@ const currentProjectWindowSessionMethodNames = [
   "arlecchino/internal/app.App.GetCurrentProjectWindowSession",
   "main.App.GetCurrentProjectWindowSession",
   "arlecchino.App.GetCurrentProjectWindowSession",
+] as const;
+
+const startRecentProjectIndexMethodNames = [
+  "arlecchino/internal/app.App.StartRecentProjectIndex",
+  "main.App.StartRecentProjectIndex",
+  "arlecchino.App.StartRecentProjectIndex",
+] as const;
+
+const recentProjectIndexStatusesMethodNames = [
+  "arlecchino/internal/app.App.GetRecentProjectIndexStatuses",
+  "main.App.GetRecentProjectIndexStatuses",
+  "arlecchino.App.GetRecentProjectIndexStatuses",
 ] as const;
 
 const projectEntryMoveMethodNames = [
@@ -489,6 +525,12 @@ let openProjectWindowSessionMethodName:
 let currentProjectWindowSessionMethodName:
   | (typeof currentProjectWindowSessionMethodNames)[number]
   | undefined;
+let startRecentProjectIndexMethodName:
+  | (typeof startRecentProjectIndexMethodNames)[number]
+  | undefined;
+let recentProjectIndexStatusesMethodName:
+  | (typeof recentProjectIndexStatusesMethodNames)[number]
+  | undefined;
 let projectEntryMoveMethodName:
   | (typeof projectEntryMoveMethodNames)[number]
   | undefined;
@@ -590,6 +632,20 @@ const getProjectWindowBridge = (): ProjectWindowBridge | undefined => {
   return (
     window as unknown as {
       go?: { main?: { App?: ProjectWindowBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getRecentProjectIndexBridge = ():
+  | RecentProjectIndexBridge
+  | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: RecentProjectIndexBridge } };
     }
   ).go?.main?.App;
 };
@@ -1180,6 +1236,70 @@ const normalizeProjectWindowSessionPayload = (
   return { sessionId, projectPath, windowName };
 };
 
+const normalizeRecentProjectIndexStatus = (
+  payload: unknown,
+  fallbackPath = "",
+): RecentProjectIndexStatus => {
+  const source =
+    payload && typeof payload === "object"
+      ? (payload as Partial<RecentProjectIndexStatus>)
+      : {};
+  const projectPath =
+    typeof source.projectPath === "string" && source.projectPath.trim()
+      ? source.projectPath
+      : fallbackPath;
+  const phase =
+    typeof source.phase === "string" && source.phase.trim()
+      ? source.phase
+      : "idle";
+  const current =
+    typeof source.current === "number" && Number.isFinite(source.current)
+      ? Math.max(0, source.current)
+      : 0;
+  const total =
+    typeof source.total === "number" && Number.isFinite(source.total)
+      ? Math.max(0, source.total)
+      : 0;
+  const percent =
+    typeof source.percent === "number" && Number.isFinite(source.percent)
+      ? Math.max(0, Math.min(100, source.percent))
+      : total > 0
+        ? Math.max(0, Math.min(100, (current / total) * 100))
+        : phase === "complete"
+          ? 100
+          : 0;
+  const error =
+    typeof source.error === "string" && source.error.trim()
+      ? source.error
+      : undefined;
+  const updatedAt =
+    typeof source.updatedAt === "string" && source.updatedAt.trim()
+      ? source.updatedAt
+      : undefined;
+
+  return {
+    projectPath,
+    phase,
+    current,
+    total,
+    percent,
+    error,
+    updatedAt,
+  };
+};
+
+const normalizeRecentProjectIndexStatuses = (
+  payload: unknown,
+  paths: string[],
+): RecentProjectIndexStatus[] => {
+  if (!Array.isArray(payload)) {
+    return paths.map((path) => normalizeRecentProjectIndexStatus(null, path));
+  }
+  return payload.map((entry, index) =>
+    normalizeRecentProjectIndexStatus(entry, paths[index] ?? ""),
+  );
+};
+
 export async function GetProjectWindowSession(
   sessionId: string,
 ): Promise<ProjectWindowSessionPayload> {
@@ -1304,6 +1424,60 @@ export async function GetCurrentProjectWindowSession(): Promise<ProjectWindowSes
   }
 
   return null;
+}
+
+export async function StartRecentProjectIndex(
+  path: string,
+): Promise<RecentProjectIndexStatus> {
+  const bridge = getRecentProjectIndexBridge();
+  if (bridge?.StartRecentProjectIndex) {
+    try {
+      return normalizeRecentProjectIndexStatus(
+        await Promise.resolve(bridge.StartRecentProjectIndex(path)),
+        path,
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const payload = await callRuntimeBridgeMethod<unknown>(
+    startRecentProjectIndexMethodName,
+    (methodName) => {
+      startRecentProjectIndexMethodName =
+        methodName as (typeof startRecentProjectIndexMethodNames)[number];
+    },
+    startRecentProjectIndexMethodNames,
+    [path],
+  );
+  return normalizeRecentProjectIndexStatus(payload, path);
+}
+
+export async function GetRecentProjectIndexStatuses(
+  paths: string[],
+): Promise<RecentProjectIndexStatus[]> {
+  const bridge = getRecentProjectIndexBridge();
+  if (bridge?.GetRecentProjectIndexStatuses) {
+    try {
+      return normalizeRecentProjectIndexStatuses(
+        await Promise.resolve(bridge.GetRecentProjectIndexStatuses(paths)),
+        paths,
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const payload = await callRuntimeBridgeMethod<unknown>(
+    recentProjectIndexStatusesMethodName,
+    (methodName) => {
+      recentProjectIndexStatusesMethodName =
+        methodName as (typeof recentProjectIndexStatusesMethodNames)[number];
+    },
+    recentProjectIndexStatusesMethodNames,
+    [paths],
+  );
+  return normalizeRecentProjectIndexStatuses(payload, paths);
 }
 
 export async function MoveProjectEntry(
