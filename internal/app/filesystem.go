@@ -841,6 +841,15 @@ func (a *App) RevealProjectEntry(path string) error {
 	return revealProjectEntry(entryPath)
 }
 
+func (a *App) RevealPathInFileManager(path string) error {
+	entryPath, err := normalizeRequiredPath(path, "path")
+	if err != nil {
+		return err
+	}
+
+	return revealProjectEntry(entryPath)
+}
+
 func normalizeRequiredPath(rawPath string, fieldName string) (string, error) {
 	trimmed := strings.TrimSpace(rawPath)
 	if trimmed == "" {

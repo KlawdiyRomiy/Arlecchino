@@ -887,6 +887,26 @@ func (a *App) GetRecentProjects(limit int) ([]project.Project, error) {
 	return a.projectManager.GetRecentProjects(limit)
 }
 
+func (a *App) RemoveRecentProject(path string) error {
+	if a.projectManager == nil {
+		return fmt.Errorf("project manager not initialized")
+	}
+	if err := a.projectManager.RemoveRecentProject(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *App) ClearRecentProjects() error {
+	if a.projectManager == nil {
+		return fmt.Errorf("project manager not initialized")
+	}
+	if err := a.projectManager.ClearRecentProjects(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (a *App) ValidateEnvironment() map[string]bool {
 	if a.welcomeScreen == nil {
 		return map[string]bool{

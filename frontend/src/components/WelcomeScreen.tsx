@@ -1,20 +1,27 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
   Check,
   ChevronRight,
+  Copy,
+  ExternalLink,
   FolderOpen,
   GitBranch,
   Loader2,
   Plus,
+  RefreshCw,
   Search,
+  Trash2,
+  X,
 } from "lucide-react";
 
 import { useIDEEvents } from "../hooks/useIDEEvents";
+import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import * as App from "../wails/app";
 import { EventsOn } from "../wails/runtime";
+import { writeClipboardTextWithFallback } from "../utils/clipboard";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CloneRepositoryDialog } from "./CloneRepositoryDialog";
@@ -24,6 +31,10 @@ import {
   themeImportStatusClass,
   useCustomThemeImport,
 } from "./ThemeDropdown";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ui/ContextActionMenu";
 import { WindowControls } from "./ui";
 
 const OPEN_TARGET_EVENT = "arlecchino:open";
@@ -155,6 +166,17 @@ const WelcomeScreen: React.FC<{
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showCloneDialog, setShowCloneDialog] = useState(false);
   const customThemeImport = useCustomThemeImport();
+  const notify = useCallback(
+    (kind: "success" | "error", title: string, message?: string) => {
+      useAppNotificationStore.getState().addNotification({
+        kind,
+        source: "Welcome",
+        title,
+        message,
+      });
+    },
+    [],
+  );
   const handleViewZoom = useCallback((action: string) => {
     applyWelcomeZoomAction(action);
   }, []);
@@ -167,8 +189,13 @@ const WelcomeScreen: React.FC<{
       setRecentProjects(projects);
     } catch (error) {
       console.error("Error loading recent projects:", error);
+      notify(
+        "error",
+        "Recent projects unavailable",
+        error instanceof Error ? error.message : String(error),
+      );
     }
-  }, []);
+  }, [notify]);
   const upsertProjectIndexStatus = useCallback(
     (status: App.RecentProjectIndexStatus) => {
       const key = recentProjectIndexPathKey(status.projectPath);
@@ -301,6 +328,82 @@ const WelcomeScreen: React.FC<{
     };
   }, [handleOpenTarget, showCreateDialog, showCloneDialog]);
 
+  const handleRefreshRecentProjects = useCallback(() => {
+    void loadRecentProjects();
+  }, [loadRecentProjects]);
+
+  const handleCopyProjectPath = useCallback(
+    async (path: string) => {
+      const copied = await writeClipboardTextWithFallback(path);
+      if (!copied) {
+        notify("error", "Could not copy project path");
+        return;
+      }
+      notify("success", "Project path copied");
+    },
+    [notify],
+  );
+
+  const handleRevealProjectPath = useCallback(
+    async (path: string) => {
+      try {
+        await App.RevealPathInFileManager(path);
+      } catch (error) {
+        notify(
+          "error",
+          "Could not reveal project",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [notify],
+  );
+
+  const handleRemoveRecentProject = useCallback(
+    async (project: Project) => {
+      try {
+        await App.RemoveRecentProject(project.path);
+        setRecentProjects((current) =>
+          current.filter(
+            (entry) => entry.id !== project.id && entry.path !== project.path,
+          ),
+        );
+        setProjectIndexStatuses((current) => {
+          const key = recentProjectIndexPathKey(project.path);
+          if (!key || !(key in current)) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      } catch (error) {
+        notify(
+          "error",
+          "Could not remove recent project",
+          error instanceof Error ? error.message : String(error),
+        );
+        void loadRecentProjects();
+      }
+    },
+    [loadRecentProjects, notify],
+  );
+
+  const handleClearRecentProjects = useCallback(async () => {
+    try {
+      await App.ClearRecentProjects();
+      setRecentProjects([]);
+      setProjectIndexStatuses({});
+    } catch (error) {
+      notify(
+        "error",
+        "Could not clear recent projects",
+        error instanceof Error ? error.message : String(error),
+      );
+      void loadRecentProjects();
+    }
+  }, [loadRecentProjects, notify]);
+
   const startRecentProjectIndex = useCallback(
     async (project: Project) => {
       upsertProjectIndexStatus({
@@ -332,6 +435,145 @@ const WelcomeScreen: React.FC<{
       }
     },
     [upsertProjectIndexStatus],
+  );
+
+  const welcomeContextMenuItems = useMemo<ContextActionMenuItem[]>(
+    () => [
+      {
+        key: "open",
+        label: "Open",
+        shortcut: "cmd+o",
+        icon: <FolderOpen size={14} />,
+        onSelect: handleOpenTarget,
+      },
+      {
+        key: "new-project",
+        label: "New Project",
+        shortcut: "cmd+n",
+        icon: <Plus size={14} />,
+        onSelect: () => setShowCreateDialog(true),
+      },
+      {
+        key: "clone-repository",
+        label: "Clone Repository",
+        icon: <GitBranch size={14} />,
+        onSelect: () => setShowCloneDialog(true),
+      },
+      { separator: true },
+      {
+        key: "refresh-recent",
+        label: "Refresh Recent Projects",
+        icon: <RefreshCw size={14} />,
+        onSelect: handleRefreshRecentProjects,
+      },
+      {
+        key: "clear-recent",
+        label: "Clear Recent Projects",
+        icon: <Trash2 size={14} />,
+        danger: true,
+        hidden: recentProjects.length === 0,
+        onSelect: () => {
+          void handleClearRecentProjects();
+        },
+      },
+    ],
+    [
+      handleClearRecentProjects,
+      handleOpenTarget,
+      handleRefreshRecentProjects,
+      recentProjects.length,
+    ],
+  );
+
+  const buildRecentProjectContextItems = useCallback(
+    (project: Project): ContextActionMenuItem[] => {
+      const indexStatus =
+        projectIndexStatuses[recentProjectIndexPathKey(project.path)];
+      const indexPhase = indexStatus?.phase ?? "idle";
+      const indexDisabled =
+        indexPhase === "indexing" || indexPhase === "complete";
+
+      return [
+        {
+          key: "open",
+          label: "Open",
+          icon: <FolderOpen size={14} />,
+          onSelect: () => {
+            void onProjectOpen(project.path);
+          },
+        },
+        {
+          key: "index",
+          label:
+            indexPhase === "complete"
+              ? "Indexed"
+              : indexPhase === "error"
+                ? "Retry Index"
+                : indexPhase === "indexing"
+                  ? "Indexing"
+                  : "Index Project",
+          icon:
+            indexPhase === "complete" ? (
+              <Check size={14} />
+            ) : indexPhase === "error" ? (
+              <AlertTriangle size={14} />
+            ) : indexPhase === "indexing" ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Search size={14} />
+            ),
+          disabled: indexDisabled,
+          onSelect: () => {
+            void startRecentProjectIndex(project);
+          },
+        },
+        { separator: true },
+        {
+          key: "copy-path",
+          label: "Copy Project Path",
+          icon: <Copy size={14} />,
+          onSelect: () => {
+            void handleCopyProjectPath(project.path);
+          },
+        },
+        {
+          key: "reveal",
+          label: "Reveal in File Manager",
+          icon: <ExternalLink size={14} />,
+          onSelect: () => {
+            void handleRevealProjectPath(project.path);
+          },
+        },
+        { separator: true },
+        {
+          key: "remove-recent",
+          label: "Remove from Recent",
+          icon: <X size={14} />,
+          danger: true,
+          onSelect: () => {
+            void handleRemoveRecentProject(project);
+          },
+        },
+        {
+          key: "clear-recent",
+          label: "Clear Recent Projects",
+          icon: <Trash2 size={14} />,
+          danger: true,
+          onSelect: () => {
+            void handleClearRecentProjects();
+          },
+        },
+      ];
+    },
+    [
+      handleClearRecentProjects,
+      handleCopyProjectPath,
+      handleRemoveRecentProject,
+      handleRevealProjectPath,
+      onProjectOpen,
+      projectIndexStatuses,
+      startRecentProjectIndex,
+    ],
   );
 
   const handleIndexRecentProject = useCallback(
@@ -371,209 +613,223 @@ const WelcomeScreen: React.FC<{
   }
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-[var(--surface-canvas)]">
-      <div className="absolute inset-0 z-0 bg-[var(--surface-canvas)]" />
-      <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_120%_82%_at_50%_38%,color-mix(in_srgb,var(--surface-2)_44%,transparent)_0%,transparent_68%)]" />
-      <div className="grid-bg opacity-70" />
+    <ContextActionMenu
+      items={welcomeContextMenuItems}
+      nativeScope="welcome-screen"
+      nativeTargetId="welcome"
+      ignoredTargetSelector="[data-welcome-recent-project]"
+    >
+      <div className="relative flex h-full flex-col overflow-hidden bg-[var(--surface-canvas)]">
+        <div className="absolute inset-0 z-0 bg-[var(--surface-canvas)]" />
+        <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_120%_82%_at_50%_38%,color-mix(in_srgb,var(--surface-2)_44%,transparent)_0%,transparent_68%)]" />
+        <div className="grid-bg opacity-70" />
 
-      <div
-        className="absolute left-0 right-0 top-0 z-40 h-12"
-        style={{ "--wails-draggable": "drag" } as React.CSSProperties}
-      />
-      <div
-        className="absolute left-4 top-4 z-50 flex items-center gap-2"
-        style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
-      >
-        <WindowControls />
-      </div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.24 }}
-        className="absolute inset-0 z-20 mx-auto flex w-full max-w-[920px] items-center justify-center overflow-y-auto px-6 py-20"
-      >
-        <div className={welcomePanelClass}>
-          <div className="flex flex-col gap-5 px-10 pb-7 pt-9 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h1 className="text-[30px] font-semibold text-[var(--text-primary)]">
-                Workspace
-              </h1>
-              <p className="mt-1 text-[17px] text-[var(--text-secondary)]">
-                Open, create, and return to work.
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
-              <ThemeDropdown
-                triggerClassName={welcomeThemeTriggerClass}
-                customThemeImport={customThemeImport}
-                align="end"
-                contentWidth="min(380px, calc((100vw * var(--ui-inverse-scale, 1)) - 32px))"
-              />
-              <input
-                ref={customThemeImport.inputRef}
-                type="file"
-                accept=".json,application/json"
-                className="hidden"
-                onChange={customThemeImport.handleFileChange}
-              />
-              {customThemeImport.status ? (
-                <div
-                  className={`${themeImportStatusClass(
-                    customThemeImport.status.tone,
-                  )} max-w-[220px] text-left sm:text-right`}
-                >
-                  {customThemeImport.status.message}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="space-y-7 px-7 pb-7">
-            <div className={welcomeClusterClass}>
-              <div className="grid gap-3 lg:grid-cols-3">
-                <button
-                  type="button"
-                  onClick={handleOpenTarget}
-                  className={welcomeActionClass}
-                >
-                  <div className={welcomeIconClass}>
-                    <FolderOpen size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[16px] font-medium leading-tight text-[var(--text-primary)]">
-                      Open
-                    </div>
-                    <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
-                      Choose a folder
-                    </div>
-                  </div>
-                  <span className="shell-kbd text-[11px]">⌘O</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowCreateDialog(true)}
-                  className={welcomeActionClass}
-                >
-                  <div
-                    className={`${welcomeIconClass} text-[var(--accent-primary)]`}
-                  >
-                    <Plus size={20} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[16px] font-medium leading-tight text-[var(--text-primary)]">
-                      New Project
-                    </div>
-                    <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
-                      Create workspace
-                    </div>
-                  </div>
-                  <span className="shell-kbd text-[11px]">⌘N</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowCloneDialog(true)}
-                  className={welcomeActionClass}
-                >
-                  <div
-                    className={`${welcomeIconClass} text-[var(--accent-brand)]`}
-                  >
-                    <GitBranch size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[16px] font-medium leading-tight text-[var(--text-primary)]">
-                      Clone
-                    </div>
-                    <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
-                      Clone repository
-                    </div>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="text-[20px] font-semibold text-[var(--text-primary)]">
-                  Recent
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {recentProjects.length > 0 ? (
-                  recentProjects.map((project) => {
-                    const indexStatus =
-                      projectIndexStatuses[
-                        recentProjectIndexPathKey(project.path)
-                      ];
-
-                    return (
-                      <div
-                        key={project.id}
-                        className="flex min-h-[76px] w-full items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-3 py-3 shadow-[inset_0_1px_0_var(--shell-inner-highlight)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_66%,transparent)]"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => onProjectOpen(project.path)}
-                          className="flex min-w-0 flex-1 items-center gap-4 rounded-full px-1 text-left focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
-                        >
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_78%,transparent)] text-[14px] font-medium text-[var(--text-primary)]">
-                            {project.name.slice(0, 2).toUpperCase()}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[16px] font-medium leading-tight text-[var(--text-primary)]">
-                              {project.name}
-                            </div>
-                            <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
-                              {project.path}
-                            </div>
-                          </div>
-                          <ChevronRight
-                            size={17}
-                            className="shrink-0 text-[var(--text-muted)]"
-                          />
-                        </button>
-
-                        <div className="flex shrink-0 items-center gap-2">
-                          {project.version ? (
-                            <div className="hidden shrink-0 rounded-full border border-[var(--shell-border)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)] lg:block">
-                              {project.version}
-                            </div>
-                          ) : null}
-                          <RecentProjectIndexButton
-                            status={indexStatus}
-                            onClick={(event) =>
-                              handleIndexRecentProject(event, project)
-                            }
-                          />
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-[28px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-5 py-6 text-[15px] text-[var(--text-muted)]">
-                    No recent projects yet.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+        <div
+          className="absolute left-0 right-0 top-0 z-40 h-12"
+          style={{ "--wails-draggable": "drag" } as React.CSSProperties}
+        />
+        <div
+          className="absolute left-4 top-4 z-50 flex items-center gap-2"
+          style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
+        >
+          <WindowControls />
         </div>
-      </motion.div>
 
-      <CreateProjectDialog
-        open={showCreateDialog}
-        onOpenChange={setShowCreateDialog}
-        onProjectOpen={onProjectOpen}
-      />
-      <CloneRepositoryDialog
-        open={showCloneDialog}
-        onOpenChange={setShowCloneDialog}
-        onProjectOpen={onProjectOpen}
-      />
-    </div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.24 }}
+          className="absolute inset-0 z-20 mx-auto flex w-full max-w-[920px] items-center justify-center overflow-y-auto px-6 py-20"
+        >
+          <div className={welcomePanelClass}>
+            <div className="flex flex-col gap-5 px-10 pb-7 pt-9 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h1 className="text-[30px] font-semibold text-[var(--text-primary)]">
+                  Workspace
+                </h1>
+                <p className="mt-1 text-[17px] text-[var(--text-secondary)]">
+                  Open, create, and return to work.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+                <ThemeDropdown
+                  triggerClassName={welcomeThemeTriggerClass}
+                  customThemeImport={customThemeImport}
+                  align="end"
+                  contentWidth="min(380px, calc((100vw * var(--ui-inverse-scale, 1)) - 32px))"
+                />
+                <input
+                  ref={customThemeImport.inputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={customThemeImport.handleFileChange}
+                />
+                {customThemeImport.status ? (
+                  <div
+                    className={`${themeImportStatusClass(
+                      customThemeImport.status.tone,
+                    )} max-w-[220px] text-left sm:text-right`}
+                  >
+                    {customThemeImport.status.message}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="space-y-7 px-7 pb-7">
+              <div className={welcomeClusterClass}>
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <button
+                    type="button"
+                    onClick={handleOpenTarget}
+                    className={welcomeActionClass}
+                  >
+                    <div className={welcomeIconClass}>
+                      <FolderOpen size={18} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[16px] font-medium leading-tight text-[var(--text-primary)]">
+                        Open
+                      </div>
+                      <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
+                        Choose a folder
+                      </div>
+                    </div>
+                    <span className="shell-kbd text-[11px]">⌘O</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateDialog(true)}
+                    className={welcomeActionClass}
+                  >
+                    <div
+                      className={`${welcomeIconClass} text-[var(--accent-primary)]`}
+                    >
+                      <Plus size={20} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[16px] font-medium leading-tight text-[var(--text-primary)]">
+                        New Project
+                      </div>
+                      <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
+                        Create workspace
+                      </div>
+                    </div>
+                    <span className="shell-kbd text-[11px]">⌘N</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowCloneDialog(true)}
+                    className={welcomeActionClass}
+                  >
+                    <div
+                      className={`${welcomeIconClass} text-[var(--accent-brand)]`}
+                    >
+                      <GitBranch size={18} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[16px] font-medium leading-tight text-[var(--text-primary)]">
+                        Clone
+                      </div>
+                      <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
+                        Clone repository
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-[20px] font-semibold text-[var(--text-primary)]">
+                    Recent
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {recentProjects.length > 0 ? (
+                    recentProjects.map((project) => {
+                      const indexStatus =
+                        projectIndexStatuses[
+                          recentProjectIndexPathKey(project.path)
+                        ];
+
+                      return (
+                        <ContextActionMenu
+                          key={project.id}
+                          items={() => buildRecentProjectContextItems(project)}
+                          nativeScope="welcome-recent-project"
+                          nativeTargetId={`recent-project-${project.id}`}
+                        >
+                          <div
+                            data-welcome-recent-project
+                            className="flex min-h-[76px] w-full items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-3 py-3 shadow-[inset_0_1px_0_var(--shell-inner-highlight)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_66%,transparent)]"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onProjectOpen(project.path)}
+                              className="flex min-w-0 flex-1 items-center gap-4 rounded-full px-1 text-left focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
+                            >
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_78%,transparent)] text-[14px] font-medium text-[var(--text-primary)]">
+                                {project.name.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[16px] font-medium leading-tight text-[var(--text-primary)]">
+                                  {project.name}
+                                </div>
+                                <div className="mt-1 truncate text-[13px] leading-tight text-[var(--text-muted)]">
+                                  {project.path}
+                                </div>
+                              </div>
+                              <ChevronRight
+                                size={17}
+                                className="shrink-0 text-[var(--text-muted)]"
+                              />
+                            </button>
+
+                            <div className="flex shrink-0 items-center gap-2">
+                              {project.version ? (
+                                <div className="hidden shrink-0 rounded-full border border-[var(--shell-border)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--text-muted)] lg:block">
+                                  {project.version}
+                                </div>
+                              ) : null}
+                              <RecentProjectIndexButton
+                                status={indexStatus}
+                                onClick={(event) =>
+                                  handleIndexRecentProject(event, project)
+                                }
+                              />
+                            </div>
+                          </div>
+                        </ContextActionMenu>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-[28px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-5 py-6 text-[15px] text-[var(--text-muted)]">
+                      No recent projects yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        <CreateProjectDialog
+          open={showCreateDialog}
+          onOpenChange={setShowCreateDialog}
+          onProjectOpen={onProjectOpen}
+        />
+        <CloneRepositoryDialog
+          open={showCloneDialog}
+          onOpenChange={setShowCloneDialog}
+          onProjectOpen={onProjectOpen}
+        />
+      </div>
+    </ContextActionMenu>
   );
 };
 

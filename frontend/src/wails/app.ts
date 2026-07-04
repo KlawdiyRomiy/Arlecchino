@@ -64,6 +64,9 @@ interface RecentProjectIndexBridge {
   GetRecentProjectIndexStatuses?: (
     paths: string[],
   ) => Promise<unknown> | unknown;
+  RemoveRecentProject?: (path: string) => Promise<unknown> | unknown;
+  ClearRecentProjects?: () => Promise<unknown> | unknown;
+  RevealPathInFileManager?: (path: string) => Promise<unknown> | unknown;
 }
 
 interface ProjectEntryMoveBridge {
@@ -381,6 +384,24 @@ const recentProjectIndexStatusesMethodNames = [
   "arlecchino.App.GetRecentProjectIndexStatuses",
 ] as const;
 
+const removeRecentProjectMethodNames = [
+  "arlecchino/internal/app.App.RemoveRecentProject",
+  "main.App.RemoveRecentProject",
+  "arlecchino.App.RemoveRecentProject",
+] as const;
+
+const clearRecentProjectsMethodNames = [
+  "arlecchino/internal/app.App.ClearRecentProjects",
+  "main.App.ClearRecentProjects",
+  "arlecchino.App.ClearRecentProjects",
+] as const;
+
+const revealPathInFileManagerMethodNames = [
+  "arlecchino/internal/app.App.RevealPathInFileManager",
+  "main.App.RevealPathInFileManager",
+  "arlecchino.App.RevealPathInFileManager",
+] as const;
+
 const projectEntryMoveMethodNames = [
   "arlecchino/internal/app.App.MoveProjectEntry",
   "main.App.MoveProjectEntry",
@@ -530,6 +551,15 @@ let startRecentProjectIndexMethodName:
   | undefined;
 let recentProjectIndexStatusesMethodName:
   | (typeof recentProjectIndexStatusesMethodNames)[number]
+  | undefined;
+let removeRecentProjectMethodName:
+  | (typeof removeRecentProjectMethodNames)[number]
+  | undefined;
+let clearRecentProjectsMethodName:
+  | (typeof clearRecentProjectsMethodNames)[number]
+  | undefined;
+let revealPathInFileManagerMethodName:
+  | (typeof revealPathInFileManagerMethodNames)[number]
   | undefined;
 let projectEntryMoveMethodName:
   | (typeof projectEntryMoveMethodNames)[number]
@@ -1478,6 +1508,71 @@ export async function GetRecentProjectIndexStatuses(
     [paths],
   );
   return normalizeRecentProjectIndexStatuses(payload, paths);
+}
+
+export async function RemoveRecentProject(path: string): Promise<void> {
+  const bridge = getRecentProjectIndexBridge();
+  if (bridge?.RemoveRecentProject) {
+    try {
+      await Promise.resolve(bridge.RemoveRecentProject(path));
+      return;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  await callRuntimeBridgeMethod<void>(
+    removeRecentProjectMethodName,
+    (methodName) => {
+      removeRecentProjectMethodName =
+        methodName as (typeof removeRecentProjectMethodNames)[number];
+    },
+    removeRecentProjectMethodNames,
+    [path],
+  );
+}
+
+export async function ClearRecentProjects(): Promise<void> {
+  const bridge = getRecentProjectIndexBridge();
+  if (bridge?.ClearRecentProjects) {
+    try {
+      await Promise.resolve(bridge.ClearRecentProjects());
+      return;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  await callRuntimeBridgeMethod<void>(
+    clearRecentProjectsMethodName,
+    (methodName) => {
+      clearRecentProjectsMethodName =
+        methodName as (typeof clearRecentProjectsMethodNames)[number];
+    },
+    clearRecentProjectsMethodNames,
+  );
+}
+
+export async function RevealPathInFileManager(path: string): Promise<void> {
+  const bridge = getRecentProjectIndexBridge();
+  if (bridge?.RevealPathInFileManager) {
+    try {
+      await Promise.resolve(bridge.RevealPathInFileManager(path));
+      return;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  await callRuntimeBridgeMethod<void>(
+    revealPathInFileManagerMethodName,
+    (methodName) => {
+      revealPathInFileManagerMethodName =
+        methodName as (typeof revealPathInFileManagerMethodNames)[number];
+    },
+    revealPathInFileManagerMethodNames,
+    [path],
+  );
 }
 
 export async function MoveProjectEntry(

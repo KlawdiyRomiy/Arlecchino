@@ -155,6 +155,27 @@ func (pm *ProjectManager) GetRecentProjects(limit int) ([]Project, error) {
 	return projects, result.Error
 }
 
+func (pm *ProjectManager) RemoveRecentProject(path string) error {
+	projectPath := strings.TrimSpace(path)
+	if projectPath == "" {
+		return errors.New("project path is required")
+	}
+
+	return pm.db.Where("path = ?", projectPath).Delete(&Project{}).Error
+}
+
+func (pm *ProjectManager) ClearRecentProjects() error {
+	query := pm.db.Model(&Project{})
+	if pm.CurrentProject != nil {
+		currentPath := strings.TrimSpace(pm.CurrentProject.Path)
+		if currentPath != "" {
+			query = query.Where("path <> ?", currentPath)
+		}
+	}
+
+	return query.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&Project{}).Error
+}
+
 func NewProjectManager(dbPath string) (*ProjectManager, error) {
 	db, err := NewDB(dbPath)
 	if err != nil {
