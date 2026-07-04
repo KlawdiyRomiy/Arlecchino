@@ -58,7 +58,6 @@ import type {
   AIProviderDescriptor,
   AIProviderSettings,
 } from "../../bindings/arlecchino/internal/ai/providers/models";
-import { useTheme } from "../hooks/useTheme";
 import {
   type MarkdownLinkOpenMode,
   useBrowserPreviewStore,
@@ -94,8 +93,6 @@ import {
   type ProjectWindowMode,
 } from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
-import { themeOptions as builtInThemeOptions } from "../styles/themes";
-import type { Theme, ThemeTransitionOrigin } from "../types/theme";
 import {
   eventToShortcut,
   formatShortcut,
@@ -107,6 +104,12 @@ import {
 import { isAppNotificationInteractionEvent } from "../utils/appNotificationTargets";
 import { MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from "../utils/uiScale";
 import { MotionDropdownContent } from "./ui/MotionDropdownContent";
+import {
+  ThemeDropdown,
+  themeImportStatusClass,
+  useCustomThemeImport,
+  useSelectedThemeLabel,
+} from "./ThemeDropdown";
 import {
   interactiveSurfaceOverlayStyle,
   useInteractiveSurfaceMotion,
@@ -140,55 +143,6 @@ const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
 const settingsInputClass =
   "h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
-const themeDropdownOptionOriginOffsetPx = 35;
-
-const resolveThemeDropdownOptionOrigin = (
-  eventElement: HTMLElement,
-): ThemeTransitionOrigin | undefined => {
-  const rect = eventElement.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) {
-    return undefined;
-  }
-
-  const inlineOffset = Math.min(
-    themeDropdownOptionOriginOffsetPx,
-    rect.width / 2,
-  );
-  const isRtl = getComputedStyle(eventElement).direction === "rtl";
-
-  return {
-    x: isRtl ? rect.right - inlineOffset : rect.left + inlineOffset,
-    y: rect.top + rect.height / 2,
-  };
-};
-
-const resolveThemeDropdownSelectOrigin = (
-  event: Event,
-): ThemeTransitionOrigin | undefined => {
-  const eventElement =
-    event.currentTarget instanceof HTMLElement
-      ? event.currentTarget
-      : event.target instanceof HTMLElement
-        ? event.target.closest<HTMLElement>('[role="menuitem"]')
-        : null;
-
-  return eventElement
-    ? resolveThemeDropdownOptionOrigin(eventElement)
-    : undefined;
-};
-
-const resolveThemeDropdownValueOrigin = (
-  value: Theme,
-): ThemeTransitionOrigin | undefined => {
-  const optionElement = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-theme-option-value]"),
-  ).find((element) => element.dataset.themeOptionValue === value);
-
-  return optionElement
-    ? resolveThemeDropdownOptionOrigin(optionElement)
-    : undefined;
-};
-
 const isThemeSpatialTransitionActive = () =>
   document.body.dataset.themeSpatialTransitionActive === "true" ||
   document.querySelector(".theme-spatial-transition-overlay") !== null;
@@ -561,15 +515,6 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-const settingsThemeOptions: Array<{
-  value: Theme;
-  label: string;
-  appearance: "auto" | "light" | "dark";
-}> = [
-  { value: "system", label: "System", appearance: "auto" },
-  ...builtInThemeOptions,
-];
 
 type TabId =
   | "appearance"
@@ -1148,7 +1093,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     string | null
   >(null);
   const [shortcutQuery, setShortcutQuery] = useState("");
-  const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
   const [privateUpdateAuthStatus, setPrivateUpdateAuthStatus] =
     useState<PrivateUpdateAuthStatus | null>(null);
   const [privateUpdateToken, setPrivateUpdateToken] = useState("");
@@ -1178,10 +1122,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     () => defaultRemoteBYOKSetupState(),
   );
   const [remoteBYOKBusy, setRemoteBYOKBusy] = useState(false);
-  const [customThemeStatus, setCustomThemeStatus] = useState<{
-    tone: "success" | "error";
-    message: string;
-  } | null>(null);
   const [customFontStatus, setCustomFontStatus] = useState<{
     tone: "success" | "error";
     message: string;
@@ -1196,17 +1136,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     useState<ShortcutActionId | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const settingsHighlightTimeoutRef = useRef<number | null>(null);
-  const themeDropdownOptionElementsRef = useRef<Map<Theme, HTMLElement>>(
-    new Map(),
-  );
-  const themeDropdownOptionOriginsRef = useRef<
-    Map<Theme, ThemeTransitionOrigin>
-  >(new Map());
-  const themeDropdownSelectionOriginRef = useRef<{
-    value: Theme;
-    origin: ThemeTransitionOrigin;
-  } | null>(null);
-  const customThemeInputRef = useRef<HTMLInputElement | null>(null);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const customFontTargetRef = useRef<"ui" | "editor">("ui");
   const handleDialogInteractOutside = useCallback((event: Event) => {
@@ -1222,7 +1151,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setSettingsSearchFocused(false);
   }, []);
 
-  const { theme, setTheme, customThemes, addCustomTheme } = useTheme();
+  const selectedThemeLabel = useSelectedThemeLabel();
+  const customThemeImport = useCustomThemeImport();
   const {
     uiScale,
     uiFontFamily,
@@ -2004,21 +1934,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   }, [overrides, shortcutGroup, shortcutQuery]);
 
-  const customThemeOptions = useMemo(
-    () =>
-      customThemes.map((customTheme) => ({
-        value: customTheme.id as Theme,
-        label: customTheme.name,
-        appearance: customTheme.appearance,
-      })),
-    [customThemes],
-  );
-
-  const selectedThemeLabel = useMemo(() => {
-    const options = [...settingsThemeOptions, ...customThemeOptions];
-    return options.find((option) => option.value === theme)?.label ?? "System";
-  }, [customThemeOptions, theme]);
-
   const autocompleteTierCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const capability of autocompleteCapabilities) {
@@ -2108,147 +2023,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     void refreshAIProviders();
   }, [activeTab, isOpen, refreshAIProviders]);
-
-  const rememberThemeDropdownOptionElement = (
-    value: Theme,
-    element: HTMLElement | null,
-  ) => {
-    if (!element) {
-      return;
-    }
-
-    themeDropdownOptionElementsRef.current.set(value, element);
-    const rememberOrigin = () => {
-      const origin = resolveThemeDropdownOptionOrigin(element);
-      if (origin) {
-        themeDropdownOptionOriginsRef.current.set(value, origin);
-      }
-    };
-
-    rememberOrigin();
-    window.requestAnimationFrame(rememberOrigin);
-  };
-
-  const rememberThemeDropdownSelectionOrigin = (
-    value: Theme,
-    element: HTMLElement,
-  ) => {
-    const origin = resolveThemeDropdownOptionOrigin(element);
-    if (origin) {
-      themeDropdownSelectionOriginRef.current = { value, origin };
-      themeDropdownOptionOriginsRef.current.set(value, origin);
-    }
-  };
-
-  const rememberThemeDropdownCursorOrigin = (
-    value: Theme,
-    event: React.PointerEvent<HTMLElement>,
-  ) => {
-    if (!event.isPrimary) {
-      return;
-    }
-
-    const origin = {
-      x: event.clientX,
-      y: event.clientY,
-    };
-    themeDropdownSelectionOriginRef.current = { value, origin };
-    themeDropdownOptionOriginsRef.current.set(value, origin);
-  };
-
-  const rememberThemeDropdownSelectionOriginFromEvent = (
-    event: React.PointerEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>,
-  ) => {
-    const optionElement =
-      event.target instanceof HTMLElement
-        ? event.target.closest<HTMLElement>("[data-theme-option-value]")
-        : null;
-    const optionValue = optionElement?.dataset.themeOptionValue as
-      | Theme
-      | undefined;
-
-    if (optionElement && optionValue) {
-      rememberThemeDropdownSelectionOrigin(optionValue, optionElement);
-    }
-  };
-
-  const rememberThemeDropdownCursorOriginFromEvent = (
-    event: React.PointerEvent<HTMLElement>,
-  ) => {
-    const optionElement =
-      event.target instanceof HTMLElement
-        ? event.target.closest<HTMLElement>("[data-theme-option-value]")
-        : null;
-    const optionValue = optionElement?.dataset.themeOptionValue as
-      | Theme
-      | undefined;
-
-    if (optionValue) {
-      rememberThemeDropdownCursorOrigin(optionValue, event);
-    }
-  };
-
-  const resolveThemeDropdownSelectionOrigin = (
-    value: Theme,
-  ): ThemeTransitionOrigin | undefined => {
-    const selectionOrigin = themeDropdownSelectionOriginRef.current;
-    return selectionOrigin?.value === value
-      ? selectionOrigin.origin
-      : undefined;
-  };
-
-  const resolveStoredThemeDropdownOrigin = (
-    value: Theme,
-  ): ThemeTransitionOrigin | undefined => {
-    const element = themeDropdownOptionElementsRef.current.get(value);
-    const elementOrigin = element
-      ? resolveThemeDropdownOptionOrigin(element)
-      : undefined;
-
-    return (
-      elementOrigin ??
-      resolveThemeDropdownValueOrigin(value) ??
-      themeDropdownOptionOriginsRef.current.get(value)
-    );
-  };
-
-  const handleThemeSelect = (nextTheme: Theme, event?: Event) => {
-    const transitionOrigin =
-      resolveThemeDropdownSelectionOrigin(nextTheme) ??
-      resolveStoredThemeDropdownOrigin(nextTheme) ??
-      (event ? resolveThemeDropdownSelectOrigin(event) : undefined);
-
-    themeDropdownSelectionOriginRef.current = null;
-
-    setTheme(nextTheme, transitionOrigin ? { transitionOrigin } : undefined);
-  };
-
-  const handleCustomThemeFile = async (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = "";
-
-    if (!file) {
-      return;
-    }
-
-    try {
-      const rawTheme = JSON.parse(await file.text());
-      const importedTheme = addCustomTheme(rawTheme, file.name);
-      handleThemeSelect(importedTheme.id as Theme);
-      setCustomThemeStatus({
-        tone: "success",
-        message: `Added ${importedTheme.name}`,
-      });
-    } catch (error) {
-      setCustomThemeStatus({
-        tone: "error",
-        message:
-          error instanceof Error ? error.message : "Unable to import theme.",
-      });
-    }
-  };
 
   const handleCustomFontFile = async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -3795,170 +3569,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </span>
                               </div>
 
-                              <DropdownMenu.Root
-                                open={themeDropdownOpen}
-                                onOpenChange={setThemeDropdownOpen}
-                              >
-                                <DropdownMenu.Trigger asChild>
-                                  <button
-                                    type="button"
-                                    className={settingsDropdownTriggerClass}
-                                    aria-label="Select theme"
-                                    data-testid="theme-dropdown-trigger"
-                                  >
-                                    <span className="min-w-0 truncate">
-                                      {selectedThemeLabel}
-                                    </span>
-                                    <ChevronDown
-                                      size={15}
-                                      className="shrink-0 text-[var(--text-muted)]"
-                                    />
-                                  </button>
-                                </DropdownMenu.Trigger>
-
-                                <DropdownMenu.Portal>
-                                  <MotionDropdownContent
-                                    align="start"
-                                    sideOffset={8}
-                                    className={settingsDropdownContentClass}
-                                    data-testid="theme-dropdown-content"
-                                    data-shell-menu-content
-                                    onPointerDownCapture={
-                                      rememberThemeDropdownCursorOriginFromEvent
-                                    }
-                                    onKeyDownCapture={(event) => {
-                                      if (
-                                        event.key === "Enter" ||
-                                        event.key === " "
-                                      ) {
-                                        rememberThemeDropdownSelectionOriginFromEvent(
-                                          event,
-                                        );
-                                      }
-                                    }}
-                                    style={{
-                                      width:
-                                        "var(--radix-dropdown-menu-trigger-width)",
-                                      maxHeight:
-                                        "min(480px, var(--radix-dropdown-menu-content-available-height))",
-                                    }}
-                                  >
-                                    <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                                      Built-in themes
-                                    </DropdownMenu.Label>
-                                    {settingsThemeOptions.map((option) => (
-                                      <DropdownMenu.Item
-                                        key={option.value}
-                                        data-theme-option-value={option.value}
-                                        ref={(element) =>
-                                          rememberThemeDropdownOptionElement(
-                                            option.value,
-                                            element,
-                                          )
-                                        }
-                                        onPointerDown={(event) =>
-                                          rememberThemeDropdownCursorOrigin(
-                                            option.value,
-                                            event,
-                                          )
-                                        }
-                                        onKeyDown={(event) => {
-                                          if (
-                                            event.key === "Enter" ||
-                                            event.key === " "
-                                          ) {
-                                            rememberThemeDropdownSelectionOrigin(
-                                              option.value,
-                                              event.currentTarget,
-                                            );
-                                          }
-                                        }}
-                                        onSelect={(event) =>
-                                          handleThemeSelect(option.value, event)
-                                        }
-                                        className={settingsDropdownItemClass}
-                                      >
-                                        <Check
-                                          size={14}
-                                          className={
-                                            theme === option.value
-                                              ? "text-[var(--text-primary)]"
-                                              : "text-transparent"
-                                          }
-                                        />
-                                        <span className="min-w-0 flex-1 truncate">
-                                          {option.label}
-                                        </span>
-                                        <span className="text-[13px] capitalize text-[var(--text-muted)]">
-                                          {option.appearance}
-                                        </span>
-                                      </DropdownMenu.Item>
-                                    ))}
-
-                                    <DropdownMenu.Separator className="my-2 h-px bg-[var(--shell-inline-divider)]" />
-                                    <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                                      Custom themes
-                                    </DropdownMenu.Label>
-                                    {customThemeOptions.length > 0 ? (
-                                      customThemeOptions.map((option) => (
-                                        <DropdownMenu.Item
-                                          key={option.value}
-                                          data-theme-option-value={option.value}
-                                          ref={(element) =>
-                                            rememberThemeDropdownOptionElement(
-                                              option.value,
-                                              element,
-                                            )
-                                          }
-                                          onPointerDown={(event) =>
-                                            rememberThemeDropdownCursorOrigin(
-                                              option.value,
-                                              event,
-                                            )
-                                          }
-                                          onKeyDown={(event) => {
-                                            if (
-                                              event.key === "Enter" ||
-                                              event.key === " "
-                                            ) {
-                                              rememberThemeDropdownSelectionOrigin(
-                                                option.value,
-                                                event.currentTarget,
-                                              );
-                                            }
-                                          }}
-                                          onSelect={(event) =>
-                                            handleThemeSelect(
-                                              option.value,
-                                              event,
-                                            )
-                                          }
-                                          className={settingsDropdownItemClass}
-                                        >
-                                          <Check
-                                            size={14}
-                                            className={
-                                              theme === option.value
-                                                ? "text-[var(--text-primary)]"
-                                                : "text-transparent"
-                                            }
-                                          />
-                                          <span className="min-w-0 flex-1 truncate">
-                                            {option.label}
-                                          </span>
-                                          <span className="text-[13px] capitalize text-[var(--text-muted)]">
-                                            {option.appearance}
-                                          </span>
-                                        </DropdownMenu.Item>
-                                      ))
-                                    ) : (
-                                      <div className="px-4 py-2 text-[13px] text-[var(--text-muted)]">
-                                        No custom themes added
-                                      </div>
-                                    )}
-                                  </MotionDropdownContent>
-                                </DropdownMenu.Portal>
-                              </DropdownMenu.Root>
+                              <ThemeDropdown />
                             </div>
 
                             <div className={`${settingsPanelClass} p-4`}>
@@ -3974,30 +3585,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 <button
                                   type="button"
                                   className={settingsActionButtonClass}
-                                  onClick={() =>
-                                    customThemeInputRef.current?.click()
-                                  }
+                                  onClick={customThemeImport.openFilePicker}
                                 >
                                   <Plus size={14} />
                                   ADD
                                 </button>
                               </div>
                               <input
-                                ref={customThemeInputRef}
+                                ref={customThemeImport.inputRef}
                                 type="file"
                                 accept=".json,application/json"
                                 className="hidden"
-                                onChange={handleCustomThemeFile}
+                                onChange={customThemeImport.handleFileChange}
                               />
-                              {customThemeStatus && (
+                              {customThemeImport.status && (
                                 <div
-                                  className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
-                                    customThemeStatus.tone === "success"
-                                      ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                                      : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
-                                  }`}
+                                  className={themeImportStatusClass(
+                                    customThemeImport.status.tone,
+                                  )}
                                 >
-                                  {customThemeStatus.message}
+                                  {customThemeImport.status.message}
                                 </div>
                               )}
                             </div>
