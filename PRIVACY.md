@@ -3,8 +3,9 @@
 Status: beta privacy disclosure for tester artifacts.
 
 This file describes the intended privacy behavior of the current macOS open
-beta. It should be reviewed again before any Developer ID/notarization,
-app-store, enterprise, or broader public binary release.
+beta. Developer ID signing and notarization will be added soon, with no date
+committed yet; review this disclosure again before that trusted distribution
+path, App Store, enterprise, or broader public binary release.
 
 ## Current Position
 
@@ -55,7 +56,7 @@ actions:
   provider-owned account or CLI processes. Arlecchino should not own or replay
   those provider credentials.
 
-Arlecchino should pass sensitive prompt/context through controlled runtime
+Arlecchino should pass sensitive prompt/context through approved runtime
 channels, not through process arguments.
 
 ## AI Provider Rules

@@ -5,7 +5,7 @@
 <h1 align="center">Arlecchino</h1>
 
 <p align="center">
-  A desktop IDE in macOS open beta, built for controlled AI-assisted development.<br>
+  A desktop IDE in macOS open beta, built for AI-assisted project work.<br>
   Go backend, React frontend, floating IDE tools, AI Chat, and MCP-based agent control.
 </p>
 
@@ -22,28 +22,21 @@
 
 ## Status
 
-Arlecchino is currently a **macOS open beta**. Windows and Linux releases are
-planned later, but the current public path is macOS-first.
+Arlecchino is a **macOS open beta**. Windows and Linux are later targets; the
+current release path is macOS first.
 
-The beta includes the editor shell, Command Dispatcher, terminal/workspace
-flow, floating panels, Git and preview surfaces, packaged macOS routing,
-provider-aware defaults, MCP control, and an integrated AI surface with AI
-Chat, provider/model selection, context preview, consent gates, approval-gated
-tool review, reviewable patch artifacts, optional passive editor predictions,
-and a Codex-backed external agent runtime path.
+The beta is already useful as a desktop IDE: editor, Command Dispatcher,
+terminal, panels, Git, previews, project switching, MCP control, and AI Chat.
+AI features still depend on the provider, model, consent settings, and runtime
+you configure. Background agents remain preview-only, and embeddings/RAG are
+off in this build.
 
-This is not a general-availability release or a stable autonomous AI IDE. AI
-behavior depends on configured providers, model capabilities, consent, approval
-settings, and selected runtime. Background agents are preview-only,
-embeddings/RAG are disabled, and advanced runtime coverage is still being
-hardened.
-
-There is no Apple Developer ID signing or notarization yet. The beta tester path
-is a DMG artifact, installation of `Arlecchino.app`, and launch of the installed
-app bundle. Because the app is not Developer ID signed or notarized, Gatekeeper
-will warn that macOS cannot verify the developer or check the app for malicious
-software. That warning is expected for this beta until signing and notarization
-exist.
+Current artifacts are not Apple Developer ID signed and are not notarized.
+Developer ID signing and notarization will be added soon; no date is committed
+yet. For now the tester path is simple: download the DMG, install
+`Arlecchino.app`, and launch the installed app. Gatekeeper may warn that macOS
+cannot verify the developer or scan the app. That is normal for this beta
+artifact.
 
 For owner/local-tester builds, release scripts also support
 `--sign local-identity`. This requires an explicitly created local code-signing
@@ -51,8 +44,7 @@ certificate, defaults to the identity name `Arlecchino Local Code Signing`, and
 does not create or trust certificates automatically. It is intended to keep the
 same local signing identity across updates on that Mac so macOS folder
 permissions are less likely to reset after each app replacement. It is not
-public Gatekeeper trust and is not a substitute for future Developer ID signing
-and notarization.
+public Gatekeeper trust, not Developer ID signing, and not notarization.
 
 ## DMG Launch Path
 
@@ -81,7 +73,7 @@ notarized. If you trust the beta artifact, use the macOS Gatekeeper override:
 - Command Dispatcher flows with `Cmd+Shift+F`, default search, `>` IDE
   commands, `>>` file search, quoted grep search, `#` symbol search, `@t `
   terminal dispatch, and `@ai ` AI dispatch.
-- Built-in MCP server for controlled IDE access by external coding agents.
+- Built-in MCP server for approval-based IDE access by external coding agents.
 - Chat-first AI Chat with provider/model selection, context disclosure, consent
   gates, `@ai` bare prompts, `/chat`, `/plan`, `/debug`, `/build`, `/review`,
   plan-to-build handoff, linked review, session-scoped continuity, runtime
@@ -91,16 +83,18 @@ notarized. If you trust the beta artifact, use the macOS Gatekeeper override:
   open intents, Dock reopen behavior, and Keychain-backed credential storage.
 - Bundled internal autocomplete model for suggestion ranking.
 
-See [FEATURES.md](FEATURES.md) for the feature and demo-video map.
+See [FEATURES.md](FEATURES.md) and
+[docs/features-and-demos.md](docs/features-and-demos.md) for the feature and
+demo-video map.
 
 ## Current Limits
 
 - macOS is the active open-beta platform; Windows/Linux are future release
   targets.
 - Wails v3 remains an upstream alpha dependency.
-- Builds do not have Developer ID signing or notarization; Gatekeeper will warn
-  or block first launch until the user explicitly opens the trusted beta
-  artifact.
+- Builds do not have Developer ID signing or notarization yet. They will be
+  added soon, with no date committed. Gatekeeper may warn or block first launch
+  until the user explicitly opens the trusted beta artifact.
 - Ad-hoc local builds may trigger macOS folder-access prompts again after app
   updates. Use the documented `local-identity` signing mode only for explicit
   owner/local-tester workflows on a Mac where the local certificate is trusted.
@@ -114,9 +108,23 @@ See [FEATURES.md](FEATURES.md) for the feature and demo-video map.
 ## Documentation
 
 - [FEATURES.md](FEATURES.md) - public feature map and demo-video slots.
+- [docs/features-and-demos.md](docs/features-and-demos.md) - detailed feature
+  matrix, demo readiness, and claims to avoid.
+- [docs/demo-video-scenarios.md](docs/demo-video-scenarios.md) - current
+  storyboard and shot list for demo recordings.
+- [docs/open-beta.md](docs/open-beta.md) - beta status, audience, platform
+  limits, and launch notes.
+- [docs/install-update-macos.md](docs/install-update-macos.md) - macOS install,
+  update, and verification paths.
+- [docs/privacy-ai.md](docs/privacy-ai.md) - AI, provider, MCP, and local data
+  privacy notes.
 - [PRIVACY.md](PRIVACY.md) - beta privacy and provider/runtime disclosure.
 - [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) - bundled autocomplete model
   notice.
+- [release-notes/v0.2.20-beta.141.md](release-notes/v0.2.20-beta.141.md) -
+  latest checked-in beta release notes in this tree.
+- [docs/developer/architecture.md](docs/developer/architecture.md) - developer
+  architecture map for the runtime, frontend, AI, MCP, and release surfaces.
 - [CUSTOM_THEMES.md](CUSTOM_THEMES.md) - if you want to create and add your
   custom theme.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices and

@@ -23,9 +23,10 @@ Tester validation should start from the DMG artifact, installation of
 `Arlecchino.app`, and launch of the installed app bundle. Public beta docs
 should not direct testers to non-DMG launch paths.
 
-Ad-hoc tester beta artifacts remain a packaging-stage path until Developer ID
-signing and notarization are available. Gatekeeper warnings are expected for
-those unsigned, non-notarized artifacts.
+Ad-hoc tester beta artifacts remain a packaging-stage path for this beta line.
+Developer ID signing and notarization will be added soon, with no date
+committed yet. Gatekeeper warnings are expected for the unsigned,
+non-notarized artifacts used before that.
 
 Important macOS files:
 
