@@ -299,6 +299,41 @@ brightCyan
 brightWhite
 ```
 
+## Explorer File Labels
+
+Explorer file suffix labels, such as `.CFG`, `.C++`, or `.H`, are theme metadata
+rather than standalone language badges. Arlecchino does not read per-language
+colors for these labels and custom themes should not add one variable per
+language.
+
+Instead, Arlecchino generates a small shared palette:
+
+```text
+--explorer-file-label-0
+--explorer-file-label-1
+--explorer-file-label-2
+--explorer-file-label-3
+--explorer-file-label-4
+--explorer-file-label-5
+--explorer-file-label-6
+--explorer-file-label-7
+--explorer-file-label-8
+--explorer-file-label-9
+```
+
+Those slots are derived from `colors.textPrimary`, `colors.textSecondary`, the
+generated theme accent, status colors, and editor syntax colors. Explorer maps
+common labels to familiar color families, such as blue for TypeScript/C++/Docker,
+green for YAML and shell scripts, amber for JavaScript/env labels, teal for Go,
+red for JSON/HTML/Git, and purple for PHP/GraphQL/lint-style labels. Remaining
+labels fall back to a stable hash slot, so labels get varied colors without
+random flicker and without a per-language theme contract.
+
+When authoring a custom theme, keep `colors.textPrimary`,
+`colors.textSecondary`, the status colors, and editor syntax colors readable
+against Explorer row surfaces. If a label slot has poor contrast, fix the shared
+theme palette instead of adding a language-specific override.
+
 ## Import Workflow
 
 1. Save the theme as a `.json` file.

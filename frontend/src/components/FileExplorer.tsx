@@ -23,7 +23,7 @@ import {
   type ProjectEntryActionTarget,
 } from "../contexts/ProjectEntryActionsContext";
 import type { PanelOpenRequest } from "./layout/MainLayout.types";
-import { colors, getThemeColors } from "../styles/colors";
+import { getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useFileRelations } from "../hooks/useFileRelations";
 import { QuickRelationsMenu } from "./QuickRelationsMenu";
@@ -103,8 +103,62 @@ interface DeletedEntryEvent {
 
 const FILE_EXPLORER_NODE_RIGHT_INSET = 8;
 const FOLDER_CREATE_BUTTON_SIZE = 22;
+const EXPLORER_FILE_LABEL_SLOT_COUNT = 10;
 const EDITOR_FILE_SPLIT_DRAG_EVENT = "arlecchino:editor-file-split-drag";
 const EDITOR_FILE_SPLIT_DROP_EVENT = "arlecchino:editor-file-split-drop";
+
+const EXPLORER_FILE_LABEL_SLOT_OVERRIDES: Record<string, number> = {
+  TS: 1,
+  TSX: 1,
+  JS: 3,
+  JSX: 3,
+  BABEL: 3,
+  GO: 5,
+  MOD: 5,
+  SUM: 9,
+  C: 1,
+  "C++": 1,
+  H: 1,
+  "H++": 1,
+  "C#": 6,
+  DOCKER: 1,
+  YML: 2,
+  ENV: 3,
+  JSON: 4,
+  SH: 2,
+  PHP: 6,
+  SCSS: 6,
+  SASS: 6,
+  CSS: 1,
+  HTML: 4,
+  MD: 9,
+  SQL: 7,
+  PY: 3,
+  RB: 4,
+  JAVA: 4,
+  KT: 6,
+  GQL: 6,
+  CFG: 9,
+  GIT: 4,
+  FMT: 6,
+  LINT: 6,
+};
+
+const getExplorerFileLabelSlot = (label: string): number => {
+  const overrideSlot = EXPLORER_FILE_LABEL_SLOT_OVERRIDES[label];
+  if (typeof overrideSlot === "number") {
+    return overrideSlot;
+  }
+
+  let hash = 0;
+  for (let index = 0; index < label.length; index += 1) {
+    hash = (hash * 31 + label.charCodeAt(index)) >>> 0;
+  }
+  return hash % EXPLORER_FILE_LABEL_SLOT_COUNT;
+};
+
+const getExplorerFileLabelColor = (label: string): string =>
+  `var(--explorer-file-label-${getExplorerFileLabelSlot(label)}, var(--text-secondary))`;
 
 export interface FileExplorerProps extends PanelSnapDragCallbacks {
   onFileOpen?: (
@@ -946,119 +1000,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   }, [setHighlightedPath]);
 
   // ========================================
-  // INLINE EXTENSION STYLE - Unique Arlecchino file icons
-  // Format: filename.EXT where EXT is colored
+  // INLINE EXTENSION LABELS
+  // Format: filename.EXT where EXT is mapped to a stable theme-derived slot.
   // ========================================
-
-  const extColorMap: Record<string, string> = {
-    php: colors.fileType.php,
-    js: colors.fileType.js,
-    jsx: colors.fileType.jsx,
-    ts: colors.fileType.ts,
-    tsx: colors.fileType.tsx,
-    vue: colors.fileType.vue,
-    svelte: colors.fileType.svelte,
-    astro: colors.fileType.astro,
-    json: colors.fileType.json,
-    css: colors.fileType.css,
-    scss: colors.fileType.scss,
-    sass: colors.fileType.sass,
-    less: colors.fileType.less,
-    html: colors.fileType.html,
-    htm: colors.fileType.html,
-    md: colors.fileType.md,
-    mdx: colors.fileType.md,
-    txt: colors.fileType.txt,
-    yaml: colors.fileType.yaml,
-    yml: colors.fileType.yml,
-    toml: colors.fileType.toml,
-    sql: colors.fileType.sql,
-    go: colors.fileType.go,
-    mod: colors.fileType.go,
-    sum: colors.fileType.go,
-    rs: colors.fileType.rs,
-    py: colors.fileType.py,
-    rb: colors.fileType.rb,
-    java: colors.fileType.java,
-    kt: colors.fileType.kt,
-    kts: colors.fileType.kt,
-    scala: colors.fileType.scala,
-    sc: colors.fileType.scala,
-    cs: colors.fileType.cs,
-    cpp: colors.fileType.cpp,
-    cc: colors.fileType.cpp,
-    cxx: colors.fileType.cpp,
-    c: colors.fileType.c,
-    h: colors.fileType.h,
-    hpp: colors.fileType.hpp,
-    hxx: colors.fileType.hpp,
-    swift: colors.fileType.swift,
-    dart: colors.fileType.dart,
-    lua: colors.fileType.lua,
-    pl: colors.fileType.pl,
-    pm: colors.fileType.pl,
-    r: colors.fileType.r,
-    R: colors.fileType.r,
-    hs: colors.fileType.hs,
-    lhs: colors.fileType.hs,
-    clj: colors.fileType.clj,
-    cljs: colors.fileType.clj,
-    cljc: colors.fileType.clj,
-    erl: colors.fileType.erl,
-    hrl: colors.fileType.erl,
-    ex: colors.fileType.ex,
-    exs: colors.fileType.ex,
-    groovy: colors.fileType.groovy,
-    gradle: colors.fileType.groovy,
-    sh: colors.fileType.sh,
-    bash: colors.fileType.bash,
-    zsh: colors.fileType.zsh,
-    fish: colors.fileType.sh,
-    ps1: colors.fileType.ps1,
-    psm1: colors.fileType.ps1,
-    psd1: colors.fileType.ps1,
-    conf: colors.fileType.nginx,
-    nginx: colors.fileType.nginx,
-    proto: colors.fileType.proto,
-    xml: colors.fileType.xml,
-    xsl: colors.fileType.xml,
-    xslt: colors.fileType.xml,
-    svg: colors.fileType.svg,
-    diff: colors.fileType.diff,
-    patch: colors.fileType.patch,
-    m: colors.fileType.m,
-    mm: colors.fileType.mm,
-    graphql: colors.fileType.graphql,
-    gql: colors.fileType.gql,
-    prisma: colors.fileType.prisma,
-    tf: colors.fileType.tf,
-    hcl: colors.fileType.tf,
-    sol: colors.fileType.sol,
-    zig: colors.fileType.zig,
-    nim: colors.fileType.nim,
-    v: colors.fileType.v,
-    env: colors.fileType.env,
-    lock: "#6B7280",
-    gitignore: "#F05032",
-    dockerignore: colors.fileType.dockerfile,
-    editorconfig: "#FEFEFE",
-    prettierrc: "#F7B93E",
-    eslintrc: "#4B32C3",
-    babelrc: "#F9DC3E",
-  };
-
-  const imageFileExtensions = new Set([
-    "png",
-    "jpg",
-    "jpeg",
-    "jpe",
-    "jfif",
-    "gif",
-    "webp",
-    "ico",
-    "bmp",
-    "avif",
-  ]);
 
   const extensionLabelMap: Record<string, string> = {
     ts: "TS",
@@ -1074,6 +1018,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     php: "PHP",
     vue: "VUE",
     svelte: "SVLT",
+    astro: "ASTRO",
     css: "CSS",
     scss: "SCSS",
     sass: "SASS",
@@ -1090,7 +1035,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     txt: "TXT",
     java: "JAVA",
     kt: "KT",
+    kts: "KT",
     scala: "SCALA",
+    sc: "SCALA",
     cs: "C#",
     cpp: "C++",
     cc: "C++",
@@ -1098,32 +1045,58 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     c: "C",
     h: "H",
     hpp: "H++",
+    hxx: "H++",
     swift: "SWIFT",
     dart: "DART",
     lua: "LUA",
     pl: "PERL",
+    pm: "PERL",
     r: "R",
     hs: "HS",
+    lhs: "HS",
     clj: "CLJ",
+    cljs: "CLJ",
+    cljc: "CLJ",
     erl: "ERL",
+    hrl: "ERL",
     ex: "EX",
+    exs: "EX",
+    groovy: "GROOVY",
+    gradle: "GRADLE",
     sh: "SH",
     bash: "SH",
     zsh: "SH",
     fish: "SH",
     ps1: "PS",
+    psm1: "PS",
+    psd1: "PS",
+    conf: "CONF",
+    nginx: "NGINX",
     proto: "PROTO",
     xml: "XML",
+    xsl: "XML",
+    xslt: "XML",
     svg: "SVG",
+    diff: "DIFF",
+    patch: "PATCH",
+    m: "M",
+    mm: "MM",
     graphql: "GQL",
     gql: "GQL",
     prisma: "PRISMA",
     tf: "TF",
     hcl: "TF",
+    sol: "SOL",
     zig: "ZIG",
     nim: "NIM",
     v: "V",
     lock: "LOCK",
+    gitignore: "GIT",
+    dockerignore: "DOCKER",
+    editorconfig: "CFG",
+    prettierrc: "FMT",
+    eslintrc: "LINT",
+    babelrc: "BABEL",
     env: "ENV",
     png: "IMG",
     jpg: "IMG",
@@ -1137,10 +1110,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     ico: "ICO",
   };
 
+  const hasExtensionLabel = (extension: string): boolean =>
+    Object.prototype.hasOwnProperty.call(extensionLabelMap, extension);
+
   type FileNameDisplayParts = {
     baseName: string;
     suffixLabel: string;
-    suffixColor: string;
   };
 
   const getKnownExtension = (fileName: string): string | null => {
@@ -1150,17 +1125,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
 
     const extension = fileName.slice(dotIndex + 1).toLowerCase();
-    return extension in extColorMap || imageFileExtensions.has(extension)
-      ? extension
-      : null;
-  };
-
-  const getExtensionColor = (extension: string): string => {
-    if (imageFileExtensions.has(extension)) {
-      return colors.fileType.image;
-    }
-
-    return extColorMap[extension] || theme.textMuted;
+    return hasExtensionLabel(extension) ? extension : null;
   };
 
   const getSpecialConfigBaseName = (
@@ -1185,7 +1150,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return {
         baseName: fileName.replace(/\.blade\.php$/i, ""),
         suffixLabel: "BLADE",
-        suffixColor: colors.fileType.blade,
       };
     }
 
@@ -1193,7 +1157,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return {
         baseName: fileName.split(".")[0] || fileName,
         suffixLabel: "DOCKER",
-        suffixColor: colors.fileType.dockerfile,
       };
     }
 
@@ -1201,19 +1164,17 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return {
         baseName: fileName,
         suffixLabel: "MAKE",
-        suffixColor: "#6B7280",
       };
     }
 
     if (lowerName === ".gitignore") {
-      return { baseName: "", suffixLabel: "GIT", suffixColor: "#F05032" };
+      return { baseName: "", suffixLabel: "GIT" };
     }
 
     if (lowerName === ".dockerignore") {
       return {
         baseName: "",
         suffixLabel: "DOCKER",
-        suffixColor: colors.fileType.dockerfile,
       };
     }
 
@@ -1222,19 +1183,17 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return {
         baseName: parts.length === 2 ? "" : parts.slice(1, -1).join("."),
         suffixLabel: "ENV",
-        suffixColor: colors.fileType.env,
       };
     }
 
     if (lowerName === ".editorconfig") {
-      return { baseName: "", suffixLabel: "CFG", suffixColor: "#FEFEFE" };
+      return { baseName: "", suffixLabel: "CFG" };
     }
 
     if (lowerName.includes(".prettierrc")) {
       return {
         baseName: getSpecialConfigBaseName(fileName, lowerName, ".prettierrc"),
         suffixLabel: "FMT",
-        suffixColor: "#F7B93E",
       };
     }
 
@@ -1242,7 +1201,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return {
         baseName: getSpecialConfigBaseName(fileName, lowerName, ".eslintrc"),
         suffixLabel: "LINT",
-        suffixColor: "#4B32C3",
       };
     }
 
@@ -1250,7 +1208,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return {
         baseName: getSpecialConfigBaseName(fileName, lowerName, ".babelrc"),
         suffixLabel: "BABEL",
-        suffixColor: "#F9DC3E",
       };
     }
 
@@ -1262,12 +1219,14 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     return {
       baseName: fileName.slice(0, fileName.lastIndexOf(".")),
       suffixLabel: extensionLabelMap[extension] || extension.toUpperCase(),
-      suffixColor: getExtensionColor(extension),
     };
   };
 
   const renderFileNameLabel = (fileName: string) => {
     const displayParts = getFileNameDisplayParts(fileName);
+    const suffixColor = displayParts
+      ? getExplorerFileLabelColor(displayParts.suffixLabel)
+      : undefined;
 
     return (
       <span
@@ -1285,7 +1244,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             <span style={{ color: "var(--text-muted)" }}>.</span>
             <span
               style={{
-                color: displayParts.suffixColor,
+                color: suffixColor,
                 fontWeight: 700,
                 fontSize: "11px",
                 letterSpacing: "0.3px",

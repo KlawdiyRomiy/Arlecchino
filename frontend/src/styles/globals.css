@@ -83,6 +83,56 @@
   --status-warning: #f59e0b;
   --status-error: #ef4444;
   --status-info: #3b82f6;
+  --explorer-file-label-0: color-mix(
+    in srgb,
+    var(--accent-brand) 76%,
+    var(--text-primary)
+  );
+  --explorer-file-label-1: color-mix(
+    in srgb,
+    var(--status-info) 76%,
+    var(--text-primary)
+  );
+  --explorer-file-label-2: color-mix(
+    in srgb,
+    var(--status-success) 74%,
+    var(--text-primary)
+  );
+  --explorer-file-label-3: color-mix(
+    in srgb,
+    var(--status-warning) 68%,
+    var(--text-primary)
+  );
+  --explorer-file-label-4: color-mix(
+    in srgb,
+    var(--status-error) 76%,
+    var(--text-primary)
+  );
+  --explorer-file-label-5: color-mix(
+    in srgb,
+    var(--editor-accent) 78%,
+    var(--text-primary)
+  );
+  --explorer-file-label-6: color-mix(
+    in srgb,
+    var(--syntax-keyword) 78%,
+    var(--text-primary)
+  );
+  --explorer-file-label-7: color-mix(
+    in srgb,
+    var(--syntax-function) 76%,
+    var(--text-primary)
+  );
+  --explorer-file-label-8: color-mix(
+    in srgb,
+    var(--syntax-string) 74%,
+    var(--text-primary)
+  );
+  --explorer-file-label-9: color-mix(
+    in srgb,
+    var(--text-primary) 82%,
+    var(--text-secondary)
+  );
   --surface-panel-header: var(--surface-2);
   --shell-border: rgba(255, 255, 255, 0.08);
   --shell-border-strong: rgba(255, 255, 255, 0.14);
