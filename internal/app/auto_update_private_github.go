@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -323,22 +322,7 @@ func (s *AutoUpdateService) readGitHubAPIBytes(rawURL string, accept string, tok
 	req.Header.Set("Accept", accept)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-GitHub-Api-Version", autoUpdateGitHubAPIVersion)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("GitHub API response exceeds size limit")
-	}
-	return data, nil
+	return s.readHTTPResponseBytes(req, limit, autoUpdateHTTPManifestTimeout, "GitHub API response")
 }
 
 func (s *AutoUpdateService) isGitHubReleaseAssetAPIURL(rawURL string) bool {

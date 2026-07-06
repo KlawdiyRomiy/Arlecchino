@@ -3,6 +3,7 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -30,6 +32,11 @@ const (
 	autoUpdateGitHubReleasesURL = "https://github.com/KlawdiyRomiy/Arlecchino/releases"
 	autoUpdateMaxManifestBytes  = 1024 * 1024
 	autoUpdateStateVersion      = 1
+
+	autoUpdateHTTPDialTimeout           = 30 * time.Second
+	autoUpdateHTTPResponseHeaderTimeout = 45 * time.Second
+	autoUpdateHTTPManifestTimeout       = 90 * time.Second
+	autoUpdateHTTPArtifactTimeout       = 90 * time.Minute
 )
 
 type AutoUpdateState string
@@ -115,10 +122,25 @@ func NewAutoUpdateService() *AutoUpdateService {
 	status.Reason = "Auto-update is idle."
 	return &AutoUpdateService{
 		status:              status,
-		client:              &http.Client{Timeout: 45 * time.Second},
+		client:              newAutoUpdateHTTPClient(),
 		inspectCodeIdentity: inspectMacOSAppCodeIdentity,
 		githubAPIBase:       autoUpdateGitHubAPIBaseURL,
 		tokenStore:          defaultAutoUpdateTokenStore(),
+	}
+}
+
+func newAutoUpdateHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: autoUpdateHTTPDialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   autoUpdateHTTPDialTimeout,
+			ResponseHeaderTimeout: autoUpdateHTTPResponseHeaderTimeout,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
 	}
 }
 
@@ -549,10 +571,18 @@ func (s *AutoUpdateService) readManifest(source string) (PackagedOSAutoUpdateMan
 }
 
 func (s *AutoUpdateService) readArtifact(artifact PackagedOSAutoUpdateArtifact) ([]byte, error) {
-	return s.readURLBytes(artifact.URL, maxAutoUpdateSmokeArtifactBytes)
+	data, err := s.readURLBytesWithTimeout(artifact.URL, maxAutoUpdateSmokeArtifactBytes, autoUpdateHTTPArtifactTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("auto-update artifact download failed: %w", err)
+	}
+	return data, nil
 }
 
 func (s *AutoUpdateService) readURLBytes(rawURL string, limit int64) ([]byte, error) {
+	return s.readURLBytesWithTimeout(rawURL, limit, autoUpdateHTTPManifestTimeout)
+}
+
+func (s *AutoUpdateService) readURLBytesWithTimeout(rawURL string, limit int64, timeout time.Duration) ([]byte, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("URL is invalid: %w", err)
@@ -585,25 +615,52 @@ func (s *AutoUpdateService) readURLBytes(rawURL string, limit int64) ([]byte, er
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("X-GitHub-Api-Version", autoUpdateGitHubAPIVersion)
 		}
-		resp, err := s.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-		if err != nil {
-			return nil, err
-		}
-		if int64(len(data)) > limit {
-			return nil, fmt.Errorf("response exceeds size limit")
-		}
-		return data, nil
+		return s.readHTTPResponseBytes(req, limit, timeout, "response")
 	default:
 		return nil, fmt.Errorf("URL scheme %q is unsupported", parsed.Scheme)
 	}
+}
+
+func (s *AutoUpdateService) readHTTPResponseBytes(req *http.Request, limit int64, timeout time.Duration, limitLabel string) ([]byte, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	client := s.client
+	if client == nil {
+		client = newAutoUpdateHTTPClient()
+	}
+
+	if timeout > 0 {
+		ctx, cancel := context.WithTimeout(req.Context(), timeout)
+		req = req.WithContext(ctx)
+		defer cancel()
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("download timed out after %s", timeout)
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("%s exceeds size limit", limitLabel)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("download timed out after %s while reading response body", timeout)
+		}
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s exceeds size limit", limitLabel)
+	}
+	return data, nil
 }
 
 func resolveAutoUpdateManifestSource() string {

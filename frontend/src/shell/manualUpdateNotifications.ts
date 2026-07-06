@@ -15,7 +15,8 @@ import {
 export const ARLECCHINO_GITHUB_RELEASES_URL =
   "https://github.com/KlawdiyRomiy/Arlecchino/releases";
 
-type UpdateNotificationAction = "download" | "apply" | "manual" | null;
+type UpdateNotificationAction =
+  "download" | "retry-download" | "apply" | "manual" | null;
 
 interface ManualUpdateNotificationSummary {
   key: string;
@@ -87,9 +88,17 @@ const isVerboseDiagnosticReason = (reason: string): boolean =>
     reason,
   );
 
+const isAutoUpdateTimeoutReason = (reason: string): boolean =>
+  /download timed out|context deadline exceeded|client\.timeout|timeout .*reading body/i.test(
+    reason,
+  );
+
 const userFacingReason = (status: AutoUpdateStatus): string | undefined => {
   if (!status.reason) {
     return undefined;
+  }
+  if (status.state === "failed" && isAutoUpdateTimeoutReason(status.reason)) {
+    return "The update download timed out before the package finished reading. Retry the download when the connection is stable.";
   }
   if (status.state === "failed" && isVerboseDiagnosticReason(status.reason)) {
     return "The update could not be completed. Open Settings diagnostics for technical details.";
@@ -305,7 +314,8 @@ export const buildManualUpdateNotification = (
         timeoutMs: 0,
         action: "manual",
       };
-    case "failed":
+    case "failed": {
+      const retryDownload = isAutoUpdateTimeoutReason(status.reason ?? "");
       return {
         key: `${status.state}:${channel}:${version}:${status.reason ?? ""}`,
         title: "Update failed",
@@ -314,8 +324,9 @@ export const buildManualUpdateNotification = (
         kind: "error",
         sticky: true,
         timeoutMs: 0,
-        action: "manual",
+        action: retryDownload ? "retry-download" : "manual",
       };
+    }
     default:
       return null;
   }
@@ -329,6 +340,13 @@ const actionForSummary = (
     case "download":
       return {
         label: "Download update",
+        run: () => {
+          void runAutoUpdateDownloadWithNotification();
+        },
+      };
+    case "retry-download":
+      return {
+        label: "Retry download",
         run: () => {
           void runAutoUpdateDownloadWithNotification();
         },
