@@ -2,10 +2,8 @@
 
 Status: public feature map for the macOS open beta.
 
-This page is the short public map. The larger matrix is in
-[`docs/features-and-demos.md`](docs/features-and-demos.md), and the recording
-shot list is in
-[`docs/demo-video-scenarios.md`](docs/demo-video-scenarios.md).
+This page is the public feature and demo-video map. Keep video links, recording
+status, and short caveats here so GitHub visitors do not need internal notes.
 
 Current release: macOS open beta, not GA, not stable, not Developer ID signed,
 and not notarized. Developer ID signing and notarization will be added soon; no

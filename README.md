@@ -83,9 +83,7 @@ notarized. If you trust the beta artifact, use the macOS Gatekeeper override:
   open intents, Dock reopen behavior, and Keychain-backed credential storage.
 - Bundled internal autocomplete model for suggestion ranking.
 
-See [FEATURES.md](FEATURES.md) and
-[docs/features-and-demos.md](docs/features-and-demos.md) for the feature and
-demo-video map.
+See [FEATURES.md](FEATURES.md) for the public feature and demo-video map.
 
 ## Current Limits
 
@@ -108,23 +106,11 @@ demo-video map.
 ## Documentation
 
 - [FEATURES.md](FEATURES.md) - public feature map and demo-video slots.
-- [docs/features-and-demos.md](docs/features-and-demos.md) - detailed feature
-  matrix, demo readiness, and claims to avoid.
-- [docs/demo-video-scenarios.md](docs/demo-video-scenarios.md) - current
-  storyboard and shot list for demo recordings.
-- [docs/open-beta.md](docs/open-beta.md) - beta status, audience, platform
-  limits, and launch notes.
-- [docs/install-update-macos.md](docs/install-update-macos.md) - macOS install,
-  update, and verification paths.
-- [docs/privacy-ai.md](docs/privacy-ai.md) - AI, provider, MCP, and local data
-  privacy notes.
 - [PRIVACY.md](PRIVACY.md) - beta privacy and provider/runtime disclosure.
 - [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) - bundled autocomplete model
   notice.
 - [release-notes/v0.2.20-beta.141.md](release-notes/v0.2.20-beta.141.md) -
   latest checked-in beta release notes in this tree.
-- [docs/developer/architecture.md](docs/developer/architecture.md) - developer
-  architecture map for the runtime, frontend, AI, MCP, and release surfaces.
 - [CUSTOM_THEMES.md](CUSTOM_THEMES.md) - if you want to create and add your
   custom theme.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices and
