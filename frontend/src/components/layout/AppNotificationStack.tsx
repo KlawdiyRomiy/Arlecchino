@@ -258,15 +258,6 @@ const detailsPanelStyle: React.CSSProperties = {
   overflowWrap: "anywhere",
 };
 
-const progressTrackStyle: React.CSSProperties = {
-  position: "absolute",
-  left: 0,
-  right: 0,
-  bottom: 0,
-  height: "3px",
-  background: "color-mix(in srgb, var(--border-subtle) 46%, transparent)",
-};
-
 const getIconBubbleStyle = (
   notificationKind: AppNotification["kind"],
 ): React.CSSProperties => {
@@ -398,13 +389,6 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
     notification.action?.label ?? "",
   );
   const hasDetails = Boolean(notification.details);
-  const showProgress =
-    notification.kind === "progress" ||
-    typeof notification.progress === "number";
-  const progressValue =
-    typeof notification.progress === "number"
-      ? Math.max(0.08, Math.min(1, notification.progress))
-      : 0.28;
 
   return (
     <motion.div
@@ -517,25 +501,6 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           <span />
         )}
       </div>
-      {showProgress ? (
-        <div style={progressTrackStyle}>
-          <motion.div
-            initial={false}
-            animate={{ width: `${progressValue * 100}%` }}
-            transition={
-              reducedMotion
-                ? { duration: 0 }
-                : { duration: 0.22, ease: "easeOut" }
-            }
-            style={{
-              height: "100%",
-              borderRadius: radius.full,
-              background: kindAccent[notification.kind],
-              boxShadow: `0 0 14px color-mix(in srgb, ${kindAccent[notification.kind]} 42%, transparent)`,
-            }}
-          />
-        </div>
-      ) : null}
     </motion.div>
   );
 };
