@@ -6061,7 +6061,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     overflow: "hidden",
     position: "relative",
     zIndex: 0,
-    margin: "0 8px 8px",
+    margin: "0 8px 0",
     boxSizing: "border-box",
     borderRadius: "var(--radius-lg)",
     border: "1px solid var(--editor-border)",
