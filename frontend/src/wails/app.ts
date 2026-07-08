@@ -96,8 +96,21 @@ interface SystemFontsBridge {
   ListSystemFontFamilies?: () => Promise<unknown> | unknown;
 }
 
+interface LocalPreviewBridge {
+  GetLocalPreviewURL?: (filePath: string) => Promise<unknown> | unknown;
+}
+
 export interface SystemFontFamilyInfo {
   family: string;
+}
+
+export interface LocalPreviewURL {
+  url: string;
+  filePath: string;
+  projectPath: string;
+  previewPath?: string;
+  siteRoot?: string;
+  mode?: string;
 }
 
 export interface AIProviderRuntimeModel {
@@ -238,11 +251,7 @@ export interface ProjectWindowSessionPayload {
 }
 
 export type RecentProjectIndexPhase =
-  | "idle"
-  | "indexing"
-  | "complete"
-  | "error"
-  | string;
+  "idle" | "indexing" | "complete" | "error" | string;
 
 export interface RecentProjectIndexStatus {
   projectPath: string;
@@ -456,6 +465,12 @@ const listSystemFontFamiliesMethodNames = [
   "arlecchino.App.ListSystemFontFamilies",
 ] as const;
 
+const getLocalPreviewURLMethodNames = [
+  "arlecchino/internal/app.App.GetLocalPreviewURL",
+  "main.App.GetLocalPreviewURL",
+  "arlecchino.App.GetLocalPreviewURL",
+] as const;
+
 const aiListProviderRuntimesMethodNames = [
   "arlecchino/internal/app.App.AIListProviderRuntimes",
   "main.App.AIListProviderRuntimes",
@@ -511,114 +526,80 @@ const aiSavePredictionSettingsMethodNames = [
 ] as const;
 
 let nativeWindowControlsMethodName:
-  | (typeof nativeWindowControlsMethodNames)[number]
-  | undefined;
+  (typeof nativeWindowControlsMethodNames)[number] | undefined;
 let nativeWindowControlsOccludedMethodName:
-  | (typeof nativeWindowControlsOccludedMethodNames)[number]
-  | undefined;
+  (typeof nativeWindowControlsOccludedMethodNames)[number] | undefined;
 let nativeWindowControlsPositionMethodName:
-  | (typeof nativeWindowControlsPositionMethodNames)[number]
-  | undefined;
+  (typeof nativeWindowControlsPositionMethodNames)[number] | undefined;
 let nativeWindowControlsRefreshMethodName:
-  | (typeof nativeWindowControlsRefreshMethodNames)[number]
-  | undefined;
+  (typeof nativeWindowControlsRefreshMethodNames)[number] | undefined;
 let applicationIconMethodName:
-  | (typeof applicationIconMethodNames)[number]
-  | undefined;
+  (typeof applicationIconMethodNames)[number] | undefined;
 let setCloseConfirmationEnabledMethodName:
-  | (typeof setCloseConfirmationEnabledMethodNames)[number]
-  | undefined;
+  (typeof setCloseConfirmationEnabledMethodNames)[number] | undefined;
 let confirmApplicationCloseMethodName:
-  | (typeof confirmApplicationCloseMethodNames)[number]
-  | undefined;
+  (typeof confirmApplicationCloseMethodNames)[number] | undefined;
 let cancelApplicationCloseMethodName:
-  | (typeof cancelApplicationCloseMethodNames)[number]
-  | undefined;
+  (typeof cancelApplicationCloseMethodNames)[number] | undefined;
 let projectWindowMethodName:
-  | (typeof projectWindowMethodNames)[number]
-  | undefined;
+  (typeof projectWindowMethodNames)[number] | undefined;
 let projectWindowSessionMethodName:
-  | (typeof projectWindowSessionMethodNames)[number]
-  | undefined;
+  (typeof projectWindowSessionMethodNames)[number] | undefined;
 let openProjectWindowSessionMethodName:
-  | (typeof openProjectWindowSessionMethodNames)[number]
-  | undefined;
+  (typeof openProjectWindowSessionMethodNames)[number] | undefined;
 let currentProjectWindowSessionMethodName:
-  | (typeof currentProjectWindowSessionMethodNames)[number]
-  | undefined;
+  (typeof currentProjectWindowSessionMethodNames)[number] | undefined;
 let startRecentProjectIndexMethodName:
-  | (typeof startRecentProjectIndexMethodNames)[number]
-  | undefined;
+  (typeof startRecentProjectIndexMethodNames)[number] | undefined;
 let recentProjectIndexStatusesMethodName:
-  | (typeof recentProjectIndexStatusesMethodNames)[number]
-  | undefined;
+  (typeof recentProjectIndexStatusesMethodNames)[number] | undefined;
 let removeRecentProjectMethodName:
-  | (typeof removeRecentProjectMethodNames)[number]
-  | undefined;
+  (typeof removeRecentProjectMethodNames)[number] | undefined;
 let clearRecentProjectsMethodName:
-  | (typeof clearRecentProjectsMethodNames)[number]
-  | undefined;
+  (typeof clearRecentProjectsMethodNames)[number] | undefined;
 let revealPathInFileManagerMethodName:
-  | (typeof revealPathInFileManagerMethodNames)[number]
-  | undefined;
+  (typeof revealPathInFileManagerMethodNames)[number] | undefined;
 let projectEntryMoveMethodName:
-  | (typeof projectEntryMoveMethodNames)[number]
-  | undefined;
+  (typeof projectEntryMoveMethodNames)[number] | undefined;
 let createProjectEntryMethodName:
-  | (typeof createProjectEntryMethodNames)[number]
-  | undefined;
+  (typeof createProjectEntryMethodNames)[number] | undefined;
 let renameProjectEntryWithHistoryMethodName:
-  | (typeof renameProjectEntryWithHistoryMethodNames)[number]
-  | undefined;
+  (typeof renameProjectEntryWithHistoryMethodNames)[number] | undefined;
 let trashProjectEntriesMethodName:
-  | (typeof trashProjectEntriesMethodNames)[number]
-  | undefined;
+  (typeof trashProjectEntriesMethodNames)[number] | undefined;
 let undoProjectEntryOperationMethodName:
-  | (typeof undoProjectEntryOperationMethodNames)[number]
-  | undefined;
+  (typeof undoProjectEntryOperationMethodNames)[number] | undefined;
 let redoProjectEntryOperationMethodName:
-  | (typeof redoProjectEntryOperationMethodNames)[number]
-  | undefined;
+  (typeof redoProjectEntryOperationMethodNames)[number] | undefined;
 let getProjectEntryUndoStateMethodName:
-  | (typeof getProjectEntryUndoStateMethodNames)[number]
-  | undefined;
+  (typeof getProjectEntryUndoStateMethodNames)[number] | undefined;
 let selectOpenTargetMethodName:
-  | (typeof selectOpenTargetMethodNames)[number]
-  | undefined;
+  (typeof selectOpenTargetMethodNames)[number] | undefined;
 let listSystemFontFamiliesMethodName:
-  | (typeof listSystemFontFamiliesMethodNames)[number]
-  | undefined;
+  (typeof listSystemFontFamiliesMethodNames)[number] | undefined;
+let getLocalPreviewURLMethodName:
+  (typeof getLocalPreviewURLMethodNames)[number] | undefined;
 let aiListProviderRuntimesMethodName:
-  | (typeof aiListProviderRuntimesMethodNames)[number]
-  | undefined;
+  (typeof aiListProviderRuntimesMethodNames)[number] | undefined;
 let aiStartProviderRuntimeMethodName:
-  | (typeof aiStartProviderRuntimeMethodNames)[number]
-  | undefined;
+  (typeof aiStartProviderRuntimeMethodNames)[number] | undefined;
 let aiStopProviderRuntimeMethodName:
-  | (typeof aiStopProviderRuntimeMethodNames)[number]
-  | undefined;
+  (typeof aiStopProviderRuntimeMethodNames)[number] | undefined;
 let aiStartProviderOAuthMethodName:
-  | (typeof aiStartProviderOAuthMethodNames)[number]
-  | undefined;
+  (typeof aiStartProviderOAuthMethodNames)[number] | undefined;
 let aiGetProviderAuthSessionMethodName:
-  | (typeof aiGetProviderAuthSessionMethodNames)[number]
-  | undefined;
+  (typeof aiGetProviderAuthSessionMethodNames)[number] | undefined;
 let aiCancelProviderAuthMethodName:
-  | (typeof aiCancelProviderAuthMethodNames)[number]
-  | undefined;
+  (typeof aiCancelProviderAuthMethodNames)[number] | undefined;
 let aiDeleteChatSessionMethodName:
-  | (typeof aiDeleteChatSessionMethodNames)[number]
-  | undefined;
+  (typeof aiDeleteChatSessionMethodNames)[number] | undefined;
 let aiGetPredictionStatusMethodName:
-  | (typeof aiGetPredictionStatusMethodNames)[number]
-  | undefined;
+  (typeof aiGetPredictionStatusMethodNames)[number] | undefined;
 let aiSavePredictionSettingsMethodName:
-  | (typeof aiSavePredictionSettingsMethodNames)[number]
-  | undefined;
+  (typeof aiSavePredictionSettingsMethodNames)[number] | undefined;
 
 const getNativeWindowControlsBridge = ():
-  | NativeWindowControlsBridge
-  | undefined => {
+  NativeWindowControlsBridge | undefined => {
   if (typeof window === "undefined") {
     return undefined;
   }
@@ -667,8 +648,7 @@ const getProjectWindowBridge = (): ProjectWindowBridge | undefined => {
 };
 
 const getRecentProjectIndexBridge = ():
-  | RecentProjectIndexBridge
-  | undefined => {
+  RecentProjectIndexBridge | undefined => {
   if (typeof window === "undefined") {
     return undefined;
   }
@@ -712,6 +692,18 @@ const getSystemFontsBridge = (): SystemFontsBridge | undefined => {
   return (
     window as unknown as {
       go?: { main?: { App?: SystemFontsBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getLocalPreviewBridge = (): LocalPreviewBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: LocalPreviewBridge } };
     }
   ).go?.main?.App;
 };
@@ -1206,6 +1198,55 @@ export async function ListSystemFontFamilies(): Promise<string[]> {
     listSystemFontFamiliesMethodNames,
   );
   return normalizeSystemFontFamilies(payload);
+}
+
+const normalizeLocalPreviewURL = (payload: unknown): LocalPreviewURL => {
+  const source =
+    payload && typeof payload === "object"
+      ? (payload as Partial<LocalPreviewURL>)
+      : {};
+  const url = typeof source.url === "string" ? source.url : "";
+  if (!url) {
+    throw new Error("Local preview URL is unavailable.");
+  }
+
+  return {
+    url,
+    filePath: typeof source.filePath === "string" ? source.filePath : "",
+    projectPath:
+      typeof source.projectPath === "string" ? source.projectPath : "",
+    previewPath:
+      typeof source.previewPath === "string" ? source.previewPath : undefined,
+    siteRoot: typeof source.siteRoot === "string" ? source.siteRoot : undefined,
+    mode: typeof source.mode === "string" ? source.mode : undefined,
+  };
+};
+
+export async function GetLocalPreviewURL(
+  filePath: string,
+): Promise<LocalPreviewURL> {
+  const bridge = getLocalPreviewBridge();
+  if (bridge?.GetLocalPreviewURL) {
+    try {
+      return normalizeLocalPreviewURL(
+        await Promise.resolve(bridge.GetLocalPreviewURL(filePath)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const payload = await callRuntimeBridgeMethod<unknown>(
+    getLocalPreviewURLMethodName,
+    (methodName) => {
+      getLocalPreviewURLMethodName = methodName as
+        (typeof getLocalPreviewURLMethodNames)[number] | undefined;
+    },
+    getLocalPreviewURLMethodNames,
+    [filePath],
+  );
+
+  return normalizeLocalPreviewURL(payload);
 }
 
 export async function OpenProjectWindow(path: string): Promise<boolean> {

@@ -24,6 +24,7 @@ interface BrowserPreviewProps {
   htmlContent?: string;
   sourceLabel?: string;
   revision?: number;
+  loading?: boolean;
   onClose?: () => void;
 }
 
@@ -45,6 +46,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
   htmlContent,
   sourceLabel,
   revision,
+  loading = false,
   onClose,
 }) => {
   const { isDark } = useTheme();
@@ -75,6 +77,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
   const [inlineDocument, setInlineDocument] = useState<string | null>(
     initialInlineDocument,
   );
+  const visibleLoading = isLoading || loading;
 
   const focusPreviewFrame = useCallback(() => {
     iframeRef.current?.focus();
@@ -212,10 +215,10 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
   }, [autoRefresh, refresh]);
 
   useEffect(() => {
-    if (currentUrl && currentUrl !== url) {
+    if (currentUrl && (currentUrl !== url || inlineDocument !== null)) {
       navigate(currentUrl);
     }
-  }, [currentUrl, url, navigate]);
+  }, [currentUrl, inlineDocument, url, navigate]);
 
   useEffect(() => {
     const nextInlineDocument = normalizeInlinePreviewDocument(htmlContent);
@@ -308,7 +311,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
             size={16}
             style={{
               color: theme.textMuted,
-              animation: isLoading ? "spin 1s linear infinite" : "none",
+              animation: visibleLoading ? "spin 1s linear infinite" : "none",
             }}
           />
         </button>
@@ -453,21 +456,23 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
           position: "relative",
         }}
       >
-        {isLoading && (
+        {visibleLoading && (
           <div
+            data-testid="browser-preview-loading-bar"
             style={{
               position: "absolute",
               top: 0,
               left: 0,
               right: 0,
               height: 2,
-              background: `linear-gradient(90deg, transparent, #EF4444, transparent)`,
+              background:
+                "linear-gradient(90deg, transparent, #3B82F6, transparent)",
               animation: "loading 1s ease-in-out infinite",
             }}
           />
         )}
         <iframe
-          key={lastRefresh}
+          key={`${inlineDocument ? "inline" : "url"}:${lastRefresh}`}
           ref={iframeRef}
           title="Browser preview"
           src={inlineDocument ? undefined : url}
@@ -484,7 +489,9 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
           onWheel={focusPreviewFrame}
           onLoad={() => setIsLoading(false)}
           sandbox={
-            inlineDocument ? "" : "allow-scripts allow-forms allow-popups"
+            inlineDocument
+              ? ""
+              : "allow-scripts allow-forms allow-popups allow-same-origin"
           }
         />
       </div>

@@ -144,7 +144,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
         overflow: "hidden",
         contain: "layout paint style",
         clipPath: "inset(0)",
-        backgroundColor: "var(--bg-blackprint, #0a0a0a)",
+        backgroundColor: "transparent",
         overscrollBehavior: "none",
       }}
     >
@@ -178,7 +178,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
               height: "100%",
               contain: "layout paint style",
               willChange: "transform",
-              backgroundColor: "var(--bg-blackprint, #0a0a0a)",
+              backgroundColor: "transparent",
               zIndex: 1,
               boxShadow: "none",
               overflow: "hidden",

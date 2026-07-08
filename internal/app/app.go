@@ -82,6 +82,10 @@ type App struct {
 	pendingMCPApprovalNonces map[string]string
 	pendingOAuthStates       map[string]string
 	managerMu                sync.Mutex
+	localPreviewMu           sync.Mutex
+	localPreviewServer       *localPreviewServer
+	localPreviewBuildMu      sync.Mutex
+	localPreviewBuildDirs    map[string]string
 	nativeControlsMu         sync.Mutex
 	nativeControlsByWindow   map[string]nativeWindowControlsState
 	windowRoles              *WindowRoleRegistry
@@ -241,6 +245,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(_ context.Context) {
 	started := time.Now()
+	a.stopLocalPreviewServer()
 	a.stopMCPBridge()
 	a.cancelRecentProjectIndexes()
 	_ = a.closeAllProjectSessions(true)

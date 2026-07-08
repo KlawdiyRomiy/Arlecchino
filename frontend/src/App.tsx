@@ -18,6 +18,7 @@ import {
   DEFAULT_UI_FONT_SIZE,
   useEditorSettingsStore,
 } from "./stores/editorSettingsStore";
+import { usePreviewWindowStore } from "./stores/previewWindowStore";
 import {
   getAdjacentProject,
   resolveProjectSwitchDirection,
@@ -160,6 +161,7 @@ const App: React.FC = () => {
   const activeProject = useWorkspaceStore((state) =>
     state.projects.find((project) => project.id === state.activeId),
   );
+  const activeProjectPath = activeProject?.path ?? null;
   const ready = useWorkspaceStore((state) => state.ready);
   const switchDirection = useWorkspaceStore((state) => state.switchDirection);
   const [fileToOpen, setFileToOpen] = useState<EditorFileOpenPayload | null>(
@@ -175,6 +177,10 @@ const App: React.FC = () => {
   const isDetachedHost = isDetachedAppletHostRoute();
 
   useEffect(() => startAdaptivePerformanceMonitor(), []);
+
+  useEffect(() => {
+    usePreviewWindowStore.getState().setProjectKey(activeProjectPath);
+  }, [activeProjectPath]);
 
   useEffect(() => {
     confirmBeforeCloseRef.current = confirmBeforeClose;
@@ -989,7 +995,7 @@ const App: React.FC = () => {
       >
         <div className="blackprint-bg" />
         <ProjectSwitchTransition
-          layoutKey={activeProject?.path ?? "__welcome__"}
+          layoutKey={activeProjectPath ?? "__welcome__"}
           direction={activeProject ? switchDirection : 0}
         >
           {activeId && activeProject ? (

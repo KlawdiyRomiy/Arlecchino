@@ -6,13 +6,7 @@ import { getLogicalViewportSize } from "../utils/logicalViewport";
 import { clampUiScale } from "../utils/uiScale";
 
 export type PreviewSurfaceType =
-  | "file"
-  | "code"
-  | "browser"
-  | "git"
-  | "chat"
-  | "terminal"
-  | "appearance";
+  "file" | "code" | "browser" | "git" | "chat" | "terminal" | "appearance";
 
 export type PreviewWindowMode = "floating" | "snapped";
 export type PreviewWindowPosition = "left" | "right" | "top" | "bottom";
@@ -63,6 +57,11 @@ interface PreviewLayoutCheckpoint {
   createdAt: number;
 }
 
+interface PreviewWindowProjectState {
+  windows: PreviewWindow[];
+  activeWindowId: string | null;
+}
+
 export interface OpenPreviewWindowInput {
   id?: string;
   surface: PreviewSurfaceType;
@@ -91,11 +90,14 @@ export interface UpdatePreviewWindowInput {
 }
 
 interface PreviewWindowStoreState {
+  projectKey: string | null;
+  projectStates: Record<string, PreviewWindowProjectState>;
   windows: PreviewWindow[];
   activeWindowId: string | null;
   appearancePreview: AppearancePreviewState | null;
   checkpoints: Record<string, PreviewLayoutCheckpoint>;
   maxWindows: number;
+  setProjectKey: (projectKey: string | null | undefined) => void;
   openWindow: (input: OpenPreviewWindowInput) => {
     opened: boolean;
     id?: string;
@@ -185,6 +187,10 @@ const stripHeavyPreviewPayload = (
   payload: PreviewWindowPayload,
 ): PreviewWindowPayload => {
   const { content: _content, htmlContent: _htmlContent, ...rest } = payload;
+  if (rest.previewMode === "local-static") {
+    const { url: _url, ...localPreviewRest } = rest;
+    return localPreviewRest;
+  }
   return rest;
 };
 
@@ -194,6 +200,68 @@ const stripHeavyPreviewWindow = (
   ...windowState,
   payload: stripHeavyPreviewPayload(windowState.payload),
 });
+
+const normalizeProjectKey = (projectKey: string | null | undefined) => {
+  const trimmed = projectKey?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const sanitizeActiveWindowId = (
+  windows: PreviewWindow[],
+  activeWindowId: string | null,
+): string | null =>
+  activeWindowId &&
+  windows.some((windowState) => windowState.id === activeWindowId)
+    ? activeWindowId
+    : null;
+
+const createProjectSnapshot = (
+  windows: PreviewWindow[],
+  activeWindowId: string | null,
+  options: { persist?: boolean } = {},
+): PreviewWindowProjectState => {
+  const snapshotWindows = windows
+    .filter(
+      (windowState) => !options.persist || windowState.surface !== "browser",
+    )
+    .map(stripHeavyPreviewWindow);
+
+  return {
+    windows: snapshotWindows,
+    activeWindowId: sanitizeActiveWindowId(snapshotWindows, activeWindowId),
+  };
+};
+
+const emptyProjectSnapshot = (): PreviewWindowProjectState => ({
+  windows: [],
+  activeWindowId: null,
+});
+
+const persistProjectStates = (
+  projectStates: Record<string, PreviewWindowProjectState>,
+  projectKey: string | null,
+  windows: PreviewWindow[],
+  activeWindowId: string | null,
+): Record<string, PreviewWindowProjectState> => {
+  const nextProjectStates: Record<string, PreviewWindowProjectState> = {};
+  Object.entries(projectStates).forEach(([key, value]) => {
+    nextProjectStates[key] = createProjectSnapshot(
+      value.windows,
+      value.activeWindowId,
+      { persist: true },
+    );
+  });
+
+  if (projectKey) {
+    nextProjectStates[projectKey] = createProjectSnapshot(
+      windows,
+      activeWindowId,
+      { persist: true },
+    );
+  }
+
+  return nextProjectStates;
+};
 
 const getNextZIndex = (windows: PreviewWindow[]): number => {
   const maxZIndex = windows.reduce(
@@ -222,11 +290,43 @@ const trimCheckpoints = (
 export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
   persist(
     (set, get) => ({
+      projectKey: null,
+      projectStates: {},
       windows: [],
       activeWindowId: null,
       appearancePreview: null,
       checkpoints: {},
       maxWindows: PREVIEW_MAX_WINDOWS,
+
+      setProjectKey: (projectKey) => {
+        const nextProjectKey = normalizeProjectKey(projectKey);
+        const current = get();
+        if (current.projectKey === nextProjectKey) {
+          return;
+        }
+
+        const nextProjectStates = { ...current.projectStates };
+        if (current.projectKey) {
+          nextProjectStates[current.projectKey] = createProjectSnapshot(
+            current.windows,
+            current.activeWindowId,
+          );
+        }
+
+        const nextSnapshot = nextProjectKey
+          ? (nextProjectStates[nextProjectKey] ?? emptyProjectSnapshot())
+          : emptyProjectSnapshot();
+
+        set({
+          projectKey: nextProjectKey,
+          projectStates: nextProjectStates,
+          windows: nextSnapshot.windows.map(stripHeavyPreviewWindow),
+          activeWindowId: sanitizeActiveWindowId(
+            nextSnapshot.windows,
+            nextSnapshot.activeWindowId,
+          ),
+        });
+      },
 
       openWindow: (input) => {
         const now = Date.now();
@@ -545,20 +645,45 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
     {
       name: PREVIEW_STORAGE_KEY,
       partialize: (state) => ({
-        windows: state.windows
-          .filter((w) => w.surface !== "browser")
-          .map(stripHeavyPreviewWindow),
-        activeWindowId: state.activeWindowId,
+        projectStates: persistProjectStates(
+          state.projectStates,
+          state.projectKey,
+          state.windows,
+          state.activeWindowId,
+        ),
         maxWindows: state.maxWindows,
       }),
       merge: (persisted, current) => {
         const p = persisted as Partial<PreviewWindowStoreState>;
+        const projectStates = Object.entries(p?.projectStates ?? {}).reduce<
+          Record<string, PreviewWindowProjectState>
+        >((accumulator, [key, value]) => {
+          if (!key.trim()) {
+            return accumulator;
+          }
+          const snapshot = createProjectSnapshot(
+            Array.isArray(value?.windows) ? value.windows : [],
+            typeof value?.activeWindowId === "string"
+              ? value.activeWindowId
+              : null,
+            { persist: true },
+          );
+          if (snapshot.windows.length > 0) {
+            accumulator[key] = snapshot;
+          }
+          return accumulator;
+        }, {});
+
         return {
           ...current,
-          ...p,
-          windows: (p?.windows ?? [])
-            .filter((w) => w.surface !== "browser")
-            .map(stripHeavyPreviewWindow),
+          projectKey: null,
+          projectStates,
+          windows: [],
+          activeWindowId: null,
+          maxWindows:
+            typeof p?.maxWindows === "number"
+              ? p.maxWindows
+              : current.maxWindows,
         };
       },
     },

@@ -1,6 +1,6 @@
-import React, { useEffect, useId, useMemo, useReducer } from "react";
+import React, { useEffect, useId, useMemo, useReducer, useState } from "react";
 
-import { ReadFile } from "../wails/app";
+import { GetLocalPreviewURL, ReadFile } from "../wails/app";
 import { useTheme } from "../hooks/useTheme";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
@@ -42,8 +42,13 @@ type PreviewFileState = {
 };
 
 type PreviewFileAction =
-  | { type: "replace"; state: PreviewFileState }
-  | { type: "loading" };
+  { type: "replace"; state: PreviewFileState } | { type: "loading" };
+
+type BrowserLocalPreviewState = {
+  path: string;
+  url: string | null;
+  error: string | null;
+};
 
 const initialPreviewFileState: PreviewFileState = {
   content: null,
@@ -125,6 +130,101 @@ const terminalPreviewButtonStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const buildBrowserPreviewStatusDocument = (
+  title: string,
+  message: string,
+): string => `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapePreviewStatusText(title)}</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --preview-bg: #f6f6f7;
+        --panel-bg: rgba(255, 255, 255, 0.74);
+        --panel-border: rgba(17, 24, 39, 0.12);
+        --panel-text: #24272d;
+        --panel-muted: #69707d;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--preview-bg);
+        color: var(--panel-text);
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(520px, calc(100vw - 32px));
+        padding: 20px 22px;
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        background: var(--panel-bg);
+        box-shadow: 0 18px 44px rgba(15, 23, 42, 0.12);
+        backdrop-filter: blur(18px) saturate(1.22);
+      }
+      h1 { margin: 0 0 10px; font-size: 20px; line-height: 1.25; }
+      p { margin: 0; color: var(--panel-muted); line-height: 1.6; }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --preview-bg: #101112;
+          --panel-bg: rgba(31, 32, 34, 0.74);
+          --panel-border: rgba(255, 255, 255, 0.11);
+          --panel-text: #f2f3f5;
+          --panel-muted: #9ca3af;
+        }
+        main {
+          box-shadow: 0 20px 54px rgba(0, 0, 0, 0.34);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapePreviewStatusText(title)}</h1>
+      <p>${escapePreviewStatusText(message)}</p>
+    </main>
+  </body>
+</html>`;
+
+const buildBrowserPreviewLoadingDocument = (): string => `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Loading preview</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --preview-bg: #f6f6f7;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--preview-bg);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --preview-bg: #101112;
+        }
+      }
+    </style>
+  </head>
+  <body aria-busy="true"></body>
+</html>`;
+
+function escapePreviewStatusText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   window: previewWindow,
   appearancePreview,
@@ -151,6 +251,12 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     previewFileReducer,
     initialPreviewFileState,
   );
+  const [browserLocalPreviewState, setBrowserLocalPreviewState] =
+    useState<BrowserLocalPreviewState>({
+      path: "",
+      url: null,
+      error: null,
+    });
   const appearanceThemeSelectId = useId();
   const appearanceScaleInputId = useId();
 
@@ -267,17 +373,91 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   const appearanceTheme = appearancePreview?.theme ?? currentTheme;
   const appearanceScale = appearancePreview?.uiScale ?? currentUiScale;
 
+  const isLocalStaticBrowserPreview =
+    previewWindow.surface === "browser" &&
+    previewWindow.payload.previewMode === "local-static" &&
+    filePath.trim().length > 0;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isLocalStaticBrowserPreview) {
+      setBrowserLocalPreviewState({
+        path: "",
+        url: null,
+        error: null,
+      });
+      return;
+    }
+
+    setBrowserLocalPreviewState({
+      path: filePath,
+      url: null,
+      error: null,
+    });
+
+    GetLocalPreviewURL(filePath)
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setBrowserLocalPreviewState({
+          path: filePath,
+          url: result.url,
+          error: null,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        setBrowserLocalPreviewState({
+          path: filePath,
+          url: null,
+          error: message,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, isLocalStaticBrowserPreview, previewWindow.payload.revision]);
+
   if (previewWindow.surface === "browser") {
+    const hasLocalPreviewStateForFile =
+      isLocalStaticBrowserPreview && browserLocalPreviewState.path === filePath;
+    const localPreviewLoading =
+      isLocalStaticBrowserPreview &&
+      (!hasLocalPreviewStateForFile ||
+        (!browserLocalPreviewState.url && !browserLocalPreviewState.error));
+    const localPreviewError =
+      hasLocalPreviewStateForFile && browserLocalPreviewState.error
+        ? browserLocalPreviewState.error
+        : null;
+    const localPreviewUrl =
+      hasLocalPreviewStateForFile && browserLocalPreviewState.url
+        ? browserLocalPreviewState.url
+        : undefined;
     const browserUrl =
       typeof previewWindow.payload.url === "string" &&
       previewWindow.payload.url.trim()
         ? previewWindow.payload.url
+        : localPreviewUrl;
+    const localPreviewStatusDocument =
+      isLocalStaticBrowserPreview && !localPreviewUrl
+        ? localPreviewError
+          ? buildBrowserPreviewStatusDocument(
+              "Preview unavailable",
+              localPreviewError,
+            )
+          : buildBrowserPreviewLoadingDocument()
         : undefined;
     const htmlContent =
       typeof previewWindow.payload.htmlContent === "string" &&
       previewWindow.payload.htmlContent.trim()
         ? previewWindow.payload.htmlContent
-        : undefined;
+        : localPreviewStatusDocument;
     const sourceLabel =
       typeof previewWindow.payload.sourceLabel === "string" &&
       previewWindow.payload.sourceLabel.trim()
@@ -296,6 +476,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
         htmlContent={htmlContent}
         sourceLabel={sourceLabel}
         revision={revision}
+        loading={localPreviewLoading}
       />
     );
   }

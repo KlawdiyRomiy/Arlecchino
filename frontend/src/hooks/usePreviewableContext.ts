@@ -15,7 +15,7 @@ import type { OpenPreviewWindowInput } from "../stores/previewWindowStore";
 const DEFAULT_PREVIEW_BUTTON_WINDOW_ID = "preview-browser-default";
 const STATIC_PREVIEW_URL = "about:srcdoc";
 
-const STATIC_HTML_EXTENSIONS = [".html", ".htm"];
+const STATIC_HTML_EXTENSIONS = [".html", ".htm", ".html.liquid"];
 const PREVIEWABLE_EXTENSIONS = [
   ".html",
   ".htm",
@@ -62,10 +62,7 @@ const FRONTEND_CONFIG_FILES = new Set([
 ]);
 
 export type PreviewButtonKind =
-  | "none"
-  | "live-url"
-  | "static-html"
-  | "empty-state";
+  "none" | "live-url" | "static-html" | "empty-state";
 
 export interface PreviewButtonState {
   enabled: boolean;
@@ -100,19 +97,6 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function toInlinePreviewDocument(content: string, title: string): string {
-  const trimmedContent = content.trim();
-  if (trimmedContent === "") {
-    return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head><body></body></html>`;
-  }
-
-  if (/<html[\s>]/i.test(trimmedContent) || /<!doctype/i.test(trimmedContent)) {
-    return content;
-  }
-
-  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head><body>${content}</body></html>`;
 }
 
 function buildEmptyPreviewDocument(tab: EditorTab): string {
@@ -244,7 +228,9 @@ function buildStaticPreviewInput(tab: EditorTab): OpenPreviewWindowInput {
     payload: {
       title: `Preview ${tab.name}`,
       url: "",
-      htmlContent: toInlinePreviewDocument(tab.content, tab.name),
+      htmlContent: "",
+      path: tab.path,
+      previewMode: "local-static",
       sourceLabel: tab.name,
     },
     side: "right",
