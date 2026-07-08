@@ -47,6 +47,7 @@ interface MainPanelWorkspaceProps {
   renderPreviewWindowPanel: (
     windowState: PreviewWindow,
     hostMode?: "overlay" | "flow",
+    isSlotExiting?: boolean,
   ) => React.ReactNode;
   getVerticalSlotStyle: (
     position: PanelPosition,
@@ -104,7 +105,11 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
     panelId
       ? renderPanel(panelId, "flow", panelExitPositions.includes(position))
       : previewWindow
-        ? renderPreviewWindowPanel(previewWindow, "flow")
+        ? renderPreviewWindowPanel(
+            previewWindow,
+            "flow",
+            panelExitPositions.includes(position),
+          )
         : null;
 
   const renderSnappedSlotPresence = (

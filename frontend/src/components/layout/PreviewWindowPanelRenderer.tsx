@@ -26,6 +26,7 @@ interface PreviewWindowPanelRendererProps {
   isDropTarget: boolean;
   activeDropTargetPosition: PanelPosition | null;
   isRelocating: boolean;
+  isSlotExiting?: boolean;
   adjacentPanels: FloatingPanelProps["adjacentPanels"];
   uiScale: number;
   surfaceBackgroundColor: string;
@@ -59,6 +60,7 @@ export const PreviewWindowPanelRenderer: React.FC<
   isDropTarget,
   activeDropTargetPosition,
   isRelocating,
+  isSlotExiting = false,
   adjacentPanels,
   uiScale,
   surfaceBackgroundColor,
@@ -95,6 +97,7 @@ export const PreviewWindowPanelRenderer: React.FC<
     isDropTarget={isDropTarget}
     activeDropTargetPosition={activeDropTargetPosition}
     isRelocating={isRelocating}
+    isSlotExiting={isSlotExiting}
     zIndex={windowState.zIndex}
     adjacentPanels={adjacentPanels}
     uiScale={uiScale}

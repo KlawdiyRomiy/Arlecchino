@@ -36,8 +36,10 @@ import {
 } from "./ContextActionMenu";
 import { PANEL_FULLSCREEN_MOTION_TRANSITION } from "./motionContracts";
 import {
+  FLOATING_PANEL_INTERACTION_MOTION_BUFFER_MS,
   FLOATING_PANEL_LAYOUT_TRANSITION,
-  FLOATING_PANEL_LAYOUT_TRANSITION_MS,
+  FLOATING_PANEL_STABLE_CONTENT_VISIBILITY_STYLE,
+  getFloatingPanelMotionDurationMs,
 } from "./floatingPanelMotion";
 import {
   beginInteractiveSurfaceMotionSession,
@@ -108,7 +110,6 @@ const WAILS_NO_DRAG_STYLE = {
 const PANEL_HEADER_NO_DRAG_SELECTOR =
   'button,input,textarea,select,[data-panel-controls="true"],[data-panel-no-drag="true"],[data-panel-resize-handle="true"]';
 const BODY_CURSOR_OWNER_ATTRIBUTE = "data-arle-cursor-owner";
-const warmedPanelContentIds = new Set<string>();
 const PROJECTED_READABLE_SCALE_MIN = 0.05;
 const PROJECTED_READABLE_SCALE_MAX = 12;
 
@@ -346,9 +347,6 @@ export const FloatingPanel = React.forwardRef<
     const [hasEntered, setHasEntered] = useState(
       reduceMotion || mode === "floating",
     );
-    const [contentReady, setContentReady] = useState(
-      reduceMotion || mode === "floating" || warmedPanelContentIds.has(id),
-    );
     const panelRef = useRef<HTMLDivElement>(null);
     const readableLayerRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
@@ -400,7 +398,11 @@ export const FloatingPanel = React.forwardRef<
       }
 
       lastInteractiveMotionRefreshRef.current = now;
-      markInteractiveSurfaceMotion(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180);
+      markInteractiveSurfaceMotion(
+        getFloatingPanelMotionDurationMs(
+          FLOATING_PANEL_INTERACTION_MOTION_BUFFER_MS,
+        ),
+      );
     }, [reduceMotion]);
 
     useEffect(() => {
@@ -413,41 +415,16 @@ export const FloatingPanel = React.forwardRef<
     }, [isPresent, isSlotExiting, mode, reduceMotion]);
 
     useEffect(() => {
-      if (
-        contentReady ||
-        reduceMotion ||
-        mode === "floating" ||
-        isRelocating ||
-        !isPresent
-      ) {
-        if (!contentReady) {
-          warmedPanelContentIds.add(id);
-          setContentReady(true);
-        }
-        return;
-      }
-
-      const frameId = window.requestAnimationFrame(() => {
-        warmedPanelContentIds.add(id);
-        setContentReady(true);
-      });
-
-      return () => window.cancelAnimationFrame(frameId);
-    }, [contentReady, id, isPresent, isRelocating, mode, reduceMotion]);
-
-    useEffect(() => {
       if (hasEntered || reduceMotion || mode === "floating" || !isPresent) {
         return;
       }
 
       const timer = window.setTimeout(() => {
-        warmedPanelContentIds.add(id);
         setHasEntered(true);
-        setContentReady(true);
-      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 80);
+      }, getFloatingPanelMotionDurationMs(80));
 
       return () => window.clearTimeout(timer);
-    }, [hasEntered, id, isPresent, mode, reduceMotion]);
+    }, [hasEntered, isPresent, mode, reduceMotion]);
 
     useEffect(() => {
       isResizingRef.current = isResizing;
@@ -822,7 +799,9 @@ export const FloatingPanel = React.forwardRef<
         }
 
         const finishMotionSession = beginInteractiveSurfaceMotionSession(
-          FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180,
+          getFloatingPanelMotionDurationMs(
+            FLOATING_PANEL_INTERACTION_MOTION_BUFFER_MS,
+          ),
         );
         const pointerId = e.pointerId;
         const captureTarget = e.currentTarget;
@@ -1160,7 +1139,9 @@ export const FloatingPanel = React.forwardRef<
         }
 
         const finishMotionSession = beginInteractiveSurfaceMotionSession(
-          FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180,
+          getFloatingPanelMotionDurationMs(
+            FLOATING_PANEL_INTERACTION_MOTION_BUFFER_MS,
+          ),
         );
         const rect = panelRef.current?.getBoundingClientRect();
         startRef.current = {
@@ -1368,12 +1349,10 @@ export const FloatingPanel = React.forwardRef<
       isDragging ||
       isResizing ||
       isRelocating ||
-      projectSwitchFrameMotion.moving
+      projectSwitchFrameMotion.moving ||
+      panelMotionAffected
         ? {}
-        : {
-            contentVisibility: "auto",
-            containIntrinsicSize: "1px 480px",
-          };
+        : FLOATING_PANEL_STABLE_CONTENT_VISIBILITY_STYLE;
 
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
@@ -2190,9 +2169,9 @@ export const FloatingPanel = React.forwardRef<
         <div
           style={contentStyle}
           data-panel-content="true"
-          data-panel-content-ready={contentReady ? "true" : "false"}
+          data-panel-content-ready="true"
         >
-          {contentReady ? children : null}
+          {children}
         </div>
       </>
     );
@@ -2215,9 +2194,7 @@ export const FloatingPanel = React.forwardRef<
         transition={motionTransition}
         onAnimationComplete={() => {
           if (isPresent && !hasEntered) {
-            warmedPanelContentIds.add(id);
             setHasEntered(true);
-            setContentReady(true);
           }
         }}
         style={containerMotionStyle}
