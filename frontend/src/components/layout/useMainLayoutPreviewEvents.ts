@@ -66,6 +66,11 @@ interface UseMainLayoutPreviewEventsOptions {
   currentTheme: Theme;
   getBrowserPreviewWindowForShortcut: () => PreviewWindow | null;
   openCanonicalBrowserPreviewRef: MutableRefObject<() => boolean>;
+  openPreviewWindow: (input: OpenPreviewWindowInput) => {
+    opened: boolean;
+    id?: string;
+    reason?: string;
+  };
   onPreviewFocus?: () => void;
   previewLaunchInput: OpenPreviewWindowInput | null;
   resolveBrowserPreviewOpenInput: (
@@ -84,6 +89,7 @@ export const useMainLayoutPreviewEvents = ({
   currentTheme,
   getBrowserPreviewWindowForShortcut,
   openCanonicalBrowserPreviewRef,
+  openPreviewWindow,
   onPreviewFocus,
   previewLaunchInput,
   resolveBrowserPreviewOpenInput,
@@ -93,7 +99,6 @@ export const useMainLayoutPreviewEvents = ({
   toggleCanonicalBrowserPreviewRef,
   uiScale,
 }: UseMainLayoutPreviewEventsOptions) => {
-  const openPreviewWindow = usePreviewWindowStore((state) => state.openWindow);
   const updatePreviewWindow = usePreviewWindowStore(
     (state) => state.updateWindow,
   );

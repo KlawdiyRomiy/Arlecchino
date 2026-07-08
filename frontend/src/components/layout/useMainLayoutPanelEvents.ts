@@ -42,7 +42,10 @@ import {
 } from "../../utils/terminalLayout";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 import { type PanelPosition } from "../ui/FloatingPanel";
-import { FLOATING_PANEL_LAYOUT_TRANSITION_MS } from "../ui/floatingPanelMotion";
+import {
+  FLOATING_PANEL_OPEN_MOTION_BUFFER_MS,
+  getFloatingPanelMotionDurationMs,
+} from "../ui/floatingPanelMotion";
 import type {
   AppSurfaceAction,
   PanelConfigs,
@@ -164,6 +167,11 @@ interface UseMainLayoutPanelEventsOptions {
     from: PanelPosition,
     to: PanelPosition,
   ) => boolean | void;
+  prepareSnappedPanelOpen: (
+    panelId: PanelId,
+    position: PanelPosition,
+    sourcePosition: PanelPosition | null,
+  ) => boolean;
   openCanonicalBrowserPreviewRef: MutableRefObject<() => boolean>;
   openCommandDispatcher: () => void;
   openDebugDialog: () => void;
@@ -184,7 +192,7 @@ interface UseMainLayoutPanelEventsOptions {
   rememberedSnappedPositionsRef: MutableRefObject<RememberedSnappedPositions>;
   setPanelConfigs: Dispatch<SetStateAction<PanelConfigs>>;
   setActivePanelId: (panelId: PanelId | null) => void;
-  startSnappedSlotEnter: (position: PanelPosition) => void;
+  startSnappedSlotEnter: (position: PanelPosition, panelId?: PanelId) => void;
   setTUIAssistRatio: (value: unknown) => void;
   shouldSuppressApplicationMenuAction: (actionId: ShortcutActionId) => boolean;
   submitTerminalCommand: (
@@ -239,6 +247,7 @@ export const useMainLayoutPanelEvents = ({
   logicalViewport,
   moveBrowserPreviewToPosition,
   moveSnappedPanelBetweenSides,
+  prepareSnappedPanelOpen,
   openCanonicalBrowserPreviewRef,
   openCommandDispatcher,
   openDebugDialog,
@@ -309,16 +318,32 @@ export const useMainLayoutPanelEvents = ({
         ...panelConfigsRef.current,
         [panelId]: nextConfig,
       };
+      const sourcePosition =
+        panelConfigsRef.current[panelId].mode === "snapped"
+          ? panelConfigsRef.current[panelId].position
+          : rememberedSnappedPositionsRef.current[panelId];
+
+      if (
+        nextPanels[panelId] &&
+        nextConfig.mode === "snapped" &&
+        !prepareSnappedPanelOpen(panelId, nextConfig.position, sourcePosition)
+      ) {
+        return panelConfigsRef.current[panelId];
+      }
 
       if (nextPanels[panelId]) {
         usePerformanceStore
           .getState()
-          .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
+          .beginPanelMotionWindow(
+            getFloatingPanelMotionDurationMs(
+              FLOATING_PANEL_OPEN_MOTION_BUFFER_MS,
+            ),
+          );
       }
 
       applyPanelConfigsState(nextPanelConfigs, { preferredPanelId: panelId });
       if (!wasVisible && nextPanels[panelId] && nextConfig.mode === "snapped") {
-        startSnappedSlotEnter(nextConfig.position);
+        startSnappedSlotEnter(nextConfig.position, panelId);
       }
       applyPanelsState(nextPanels, { preferredPanelId: panelId });
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
@@ -335,6 +360,7 @@ export const useMainLayoutPanelEvents = ({
       panelConfigsRef,
       panelsRef,
       rememberedSnappedPositionsRef,
+      prepareSnappedPanelOpen,
       setActivePanelId,
       startSnappedSlotEnter,
     ],
