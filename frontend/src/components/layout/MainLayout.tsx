@@ -241,12 +241,7 @@ const ZEN_TOP_CHROME_INTERACTIVE_SELECTOR = [
 const MARKDOWN_LINK_PREVIEW_WINDOW_ID = "markdown-link-preview";
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
 type FullscreenPanelId =
-  | "terminal"
-  | "aiChat"
-  | "git"
-  | "problems"
-  | "code"
-  | "markdownPreview";
+  "terminal" | "aiChat" | "git" | "problems" | "code" | "markdownPreview";
 
 const CLOSED_PANEL_SURFACE_STACK_LIMIT = 24;
 
@@ -412,9 +407,7 @@ type ZenViewportPointerSnapshot = Pick<
   "clientX" | "clientY" | "buttons"
 >;
 type ZenChromeRevealIntentSource =
-  | "top-edge"
-  | "top-occluded-header"
-  | "bottom-edge";
+  "top-edge" | "top-occluded-header" | "bottom-edge";
 
 interface ZenChromeRevealIntent {
   source: ZenChromeRevealIntentSource;
@@ -775,6 +768,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const zenModeEnabled = useEditorSettingsStore(
     (state) => state.zenModeEnabled,
   );
+  const zenModeHideTopbar = useEditorSettingsStore(
+    (state) => state.zenModeHideTopbar,
+  );
+  const zenModeHideStatusbar = useEditorSettingsStore(
+    (state) => state.zenModeHideStatusbar,
+  );
+  const zenTopChromeAutoHide = zenModeHideTopbar;
+  const zenBottomChromeAutoHide = zenModeHideStatusbar;
+  const zenChromeAutoHideEnabled =
+    zenTopChromeAutoHide || zenBottomChromeAutoHide;
   const aiPanelEnabled = useEditorSettingsStore(
     (state) => state.aiPanelEnabled,
   );
@@ -2297,13 +2300,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, []);
 
   useEffect(() => {
-    if (zenModeEnabled) {
+    if (zenChromeAutoHideEnabled) {
       return;
     }
 
     setZenTopChromeEdgeActive(false);
     setZenTopChromePointerInside(false);
     setZenTopChromePopupOpen(false);
+    zenViewportChromeStateRef.current = {
+      ...zenViewportChromeStateRef.current,
+      top: false,
+    };
     clearZenChromeRevealIntent();
     clearZenTopChromeOccludedHeaderIntent();
     setZenBottomChromeHovered(false);
@@ -2319,8 +2326,44 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [
     clearZenChromeRevealIntent,
     clearZenTopChromeOccludedHeaderIntent,
-    zenModeEnabled,
+    zenChromeAutoHideEnabled,
   ]);
+
+  useEffect(() => {
+    if (zenTopChromeAutoHide) {
+      return;
+    }
+
+    setZenTopChromeEdgeActive(false);
+    setZenTopChromePointerInside(false);
+    setZenTopChromePopupOpen(false);
+    zenViewportChromeStateRef.current = {
+      ...zenViewportChromeStateRef.current,
+      top: false,
+    };
+    clearZenChromeRevealIntent();
+    clearZenTopChromeOccludedHeaderIntent();
+  }, [
+    clearZenChromeRevealIntent,
+    clearZenTopChromeOccludedHeaderIntent,
+    zenTopChromeAutoHide,
+  ]);
+
+  useEffect(() => {
+    if (zenBottomChromeAutoHide) {
+      return;
+    }
+
+    if (zenBottomChromeHoverTimerRef.current) {
+      clearTimeout(zenBottomChromeHoverTimerRef.current);
+      zenBottomChromeHoverTimerRef.current = null;
+    }
+    zenViewportChromeStateRef.current = {
+      ...zenViewportChromeStateRef.current,
+      bottom: false,
+    };
+    setZenBottomChromeHovered(false);
+  }, [zenBottomChromeAutoHide]);
 
   useEffect(() => {
     const previousViewport = previousPanelWorkspaceSizeRef.current;
@@ -6395,13 +6438,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   const zenTopChromeVisible =
-    !zenModeEnabled ||
+    !zenTopChromeAutoHide ||
     zenTopChromePopupOpen ||
     (!zenTopChromeInteractionLocked &&
       (zenTopChromeEdgeActive ||
         zenTopChromePointerInside ||
         zenTopChromeOccludedHeaderActive));
-  const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
+  const zenBottomChromeVisible =
+    !zenBottomChromeAutoHide || zenBottomChromeHovered;
   const nativeWindowControlsSlotEnabled =
     showNativeMacWindowControls &&
     (nativeWindowFullscreen || zenTopChromeVisible);
@@ -6412,7 +6456,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     !nativeWindowFullscreen;
   const nativeWindowControlsBackdropVisible = nativeWindowControlsVisible;
   const zenTopChromeAvoidanceTop =
-    zenModeEnabled && zenTopChromeVisible && !zenTopChromeInteractionLocked
+    zenTopChromeAutoHide &&
+    zenTopChromeVisible &&
+    !zenTopChromeInteractionLocked
       ? topChromeHeight + SNAPPED_PANEL_OUTER_GAP
       : 0;
 
@@ -6450,40 +6496,40 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const topChromeStyle: React.CSSProperties = {
     ...topChromeDragStyle,
-    left: zenModeEnabled ? 0 : undefined,
+    left: zenTopChromeAutoHide ? 0 : undefined,
     maxHeight: 72,
     opacity: zenTopChromeVisible ? 1 : 0,
     overflow: "visible",
     pointerEvents: zenTopChromeVisible ? "auto" : "none",
-    position: zenModeEnabled ? "absolute" : "relative",
-    right: zenModeEnabled ? 0 : undefined,
-    top: zenModeEnabled ? 0 : undefined,
+    position: zenTopChromeAutoHide ? "absolute" : "relative",
+    right: zenTopChromeAutoHide ? 0 : undefined,
+    top: zenTopChromeAutoHide ? 0 : undefined,
     transform: zenTopChromeVisible
       ? "translateY(2px)"
       : "translateY(calc(-100% - 12px))",
-    transition: zenModeEnabled ? zenChromeTransition : undefined,
+    transition: zenTopChromeAutoHide ? zenChromeTransition : undefined,
     zIndex: zIndex.tooltip + 4,
   };
 
   const bottomChromeStyle: React.CSSProperties = {
-    bottom: zenModeEnabled ? 0 : undefined,
-    left: zenModeEnabled ? 0 : undefined,
+    bottom: zenBottomChromeAutoHide ? 0 : undefined,
+    left: zenBottomChromeAutoHide ? 0 : undefined,
     maxHeight: 40,
     opacity: zenBottomChromeVisible ? 1 : 0,
     overflow: "hidden",
     pointerEvents: zenBottomChromeVisible ? "auto" : "none",
-    position: zenModeEnabled ? "absolute" : "relative",
-    right: zenModeEnabled ? 0 : undefined,
+    position: zenBottomChromeAutoHide ? "absolute" : "relative",
+    right: zenBottomChromeAutoHide ? 0 : undefined,
     transform: zenBottomChromeVisible
       ? "translateY(0)"
       : "translateY(calc(100% + 12px))",
-    transition: zenModeEnabled ? zenChromeTransition : undefined,
+    transition: zenBottomChromeAutoHide ? zenChromeTransition : undefined,
     zIndex: zIndex.tooltip + 4,
   };
 
   const applyZenViewportChromeState = useCallback(
     (nextChrome: Record<"top" | "bottom", boolean>) => {
-      if (!zenModeEnabled) {
+      if (!zenChromeAutoHideEnabled) {
         return;
       }
 
@@ -6510,13 +6556,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       hideZenBottomChrome,
       setZenTopChromeEdgeSource,
       showZenBottomChrome,
-      zenModeEnabled,
+      zenChromeAutoHideEnabled,
     ],
   );
 
   const handleZenViewportPointer = useCallback(
     (event: ZenViewportPointerSnapshot) => {
-      if (!zenModeEnabled) {
+      if (!zenChromeAutoHideEnabled) {
         return;
       }
 
@@ -6530,25 +6576,33 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       const topChromeInteractionLocked =
         !zenTopChromePopupOpen && chromeInteractionLocked;
       const topChromeOwned =
-        zenTopChromeVisible && isZenTopChromeOwnedAtPoint(clientX, clientY);
+        zenTopChromeAutoHide &&
+        zenTopChromeVisible &&
+        isZenTopChromeOwnedAtPoint(clientX, clientY);
       const topChromeReleaseBoundary = Math.max(
         ZEN_EDGE_HOVER_SIZE,
         topChromeHeight + SNAPPED_PANEL_OUTER_GAP,
       );
       const topChromeWithinVisibleBand =
-        zenTopChromeVisible && clientY <= topChromeReleaseBoundary;
+        zenTopChromeAutoHide &&
+        zenTopChromeVisible &&
+        clientY <= topChromeReleaseBoundary;
       const topChromePreOpenVetoed =
+        zenTopChromeAutoHide &&
         !zenTopChromeVisible &&
         !topChromeInteractionLocked &&
         !zenTopChromePopupOpen &&
         isZenTopChromePreOpenVetoAtPoint(clientX, clientY);
       const topChromeCornerActive =
+        zenTopChromeAutoHide &&
         clientY <= ZEN_EDGE_HOVER_SIZE &&
         (clientX <= ZEN_EDGE_HOVER_SIZE ||
           clientX >= viewportWidth - ZEN_EDGE_HOVER_SIZE);
       const topChromeEdgeImmediate =
-        clientY <= ZEN_TOP_CHROME_HOVER_SIZE || topChromeCornerActive;
+        zenTopChromeAutoHide &&
+        (clientY <= ZEN_TOP_CHROME_HOVER_SIZE || topChromeCornerActive);
       const topChromeOccludedHeaderTarget =
+        zenTopChromeAutoHide &&
         !zenTopChromeVisible &&
         !topChromeEdgeImmediate &&
         !topChromeInteractionLocked &&
@@ -6556,13 +6610,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         buttons === 0 &&
         isZenTopChromeOccludedRevealTargetAtPoint(clientX, clientY);
       const bottomChromeEdgeTarget =
+        zenBottomChromeAutoHide &&
         clientY >= viewportHeight - ZEN_EDGE_HOVER_SIZE;
       const bottomChromeKeepActive =
-        previousChrome.bottom && clientY >= bottomReleaseBoundary;
+        zenBottomChromeAutoHide &&
+        previousChrome.bottom &&
+        clientY >= bottomReleaseBoundary;
       const nextRevealIntentSource: ZenChromeRevealIntentSource | null =
         buttons !== 0 || chromeInteractionLocked
           ? null
-          : !zenTopChromeVisible &&
+          : zenTopChromeAutoHide &&
+              !zenTopChromeVisible &&
               !zenTopChromePopupOpen &&
               !topChromePreOpenVetoed &&
               topChromeEdgeImmediate
@@ -6594,6 +6652,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       applyZenViewportChromeState({
         top:
+          zenTopChromeAutoHide &&
           !topChromeInteractionLocked &&
           !topChromePreOpenVetoed &&
           zenTopChromeVisible &&
@@ -6611,8 +6670,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setZenTopChromeInteractionLock,
       setZenTopChromePointerSource,
       topChromeHeight,
-      zenModeEnabled,
+      zenBottomChromeAutoHide,
+      zenChromeAutoHideEnabled,
       zenBottomChromeVisible,
+      zenTopChromeAutoHide,
       zenTopChromeVisible,
       zenTopChromePopupOpen,
     ],
@@ -6630,7 +6691,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const handleZenViewportMouseMove = useCallback(
     (event: ZenViewportPointerSnapshot) => {
-      if (!zenModeEnabled) {
+      if (!zenChromeAutoHideEnabled) {
         return;
       }
 
@@ -6648,7 +6709,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         flushZenViewportMouseMove,
       );
     },
-    [flushZenViewportMouseMove, zenModeEnabled],
+    [flushZenViewportMouseMove, zenChromeAutoHideEnabled],
   );
 
   const handleZenViewportMouseDown = useCallback(
@@ -6734,7 +6795,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   });
 
   useEffect(() => {
-    if (!zenModeEnabled) {
+    if (!zenChromeAutoHideEnabled) {
       zenPanelInteractionActiveRef.current = false;
       setZenTopChromeInteractionLock(false);
       clearZenChromeRevealIntent();
@@ -6770,11 +6831,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     clearZenTopChromeOccludedHeaderIntent,
     clearZenChromeRevealIntent,
     setZenTopChromeInteractionLock,
-    zenModeEnabled,
+    zenChromeAutoHideEnabled,
   ]);
 
   useEffect(() => {
-    if (!zenModeEnabled || !zenTopChromeVisible) {
+    if (!zenTopChromeAutoHide || !zenTopChromeVisible) {
       return;
     }
 
@@ -6786,10 +6847,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         true,
       );
     };
-  }, [zenModeEnabled, zenTopChromeVisible]);
+  }, [zenTopChromeAutoHide, zenTopChromeVisible]);
 
   useEffect(() => {
-    if (!zenModeEnabled || !zenBottomChromeVisible) {
+    if (!zenBottomChromeAutoHide || !zenBottomChromeVisible) {
       return;
     }
 
@@ -6805,10 +6866,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         true,
       );
     };
-  }, [zenBottomChromeVisible, zenModeEnabled]);
+  }, [zenBottomChromeAutoHide, zenBottomChromeVisible]);
 
   useEffect(() => {
-    if (!zenModeEnabled) {
+    if (!zenChromeAutoHideEnabled) {
       return;
     }
 
@@ -6845,11 +6906,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     setZenTopChromeEdgeSource,
     setZenTopChromeInteractionLock,
     setZenTopChromePointerSource,
-    zenModeEnabled,
+    zenChromeAutoHideEnabled,
   ]);
 
   useEffect(() => {
-    if (!zenModeEnabled) {
+    if (!zenChromeAutoHideEnabled) {
       return;
     }
 
@@ -6861,7 +6922,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       zenPanelInteractionActiveRef.current = false;
       setZenTopChromeInteractionLock(false);
     };
-  }, [setZenTopChromeInteractionLock, zenModeEnabled]);
+  }, [setZenTopChromeInteractionLock, zenChromeAutoHideEnabled]);
 
   const normalWorkspaceStyle: React.CSSProperties = {
     position: "relative",
@@ -7091,13 +7152,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             data-zen-top-chrome="true"
             style={topChromeStyle}
             onMouseEnter={() => {
-              if (!zenModeEnabled) {
+              if (!zenTopChromeAutoHide) {
                 return;
               }
               setZenTopChromePointerSource(true);
             }}
             onMouseLeave={() => {
-              if (!zenModeEnabled) {
+              if (!zenTopChromeAutoHide) {
                 return;
               }
               clearZenChromeRevealIntent();
@@ -7239,13 +7300,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             ref={bottomChromeRef}
             style={bottomChromeStyle}
             onMouseEnter={() => {
-              if (!zenModeEnabled) {
+              if (!zenBottomChromeAutoHide) {
                 return;
               }
               showZenBottomChrome();
             }}
             onMouseLeave={() => {
-              if (!zenModeEnabled) {
+              if (!zenBottomChromeAutoHide) {
                 return;
               }
               hideZenBottomChrome();

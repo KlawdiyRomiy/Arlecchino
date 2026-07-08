@@ -132,6 +132,8 @@ interface EditorSettingsState {
   confirmBeforeClose: boolean;
   topbarItemOrder: TopbarItemId[];
   zenModeEnabled: boolean;
+  zenModeHideTopbar: boolean;
+  zenModeHideStatusbar: boolean;
   projectWindowMode: ProjectWindowMode;
   appIconAppearance: AppIconAppearance;
   aiPanelEnabled: boolean;
@@ -164,6 +166,8 @@ interface EditorSettingsState {
   setTopbarItemOrder: (order: TopbarItemId[]) => void;
   resetTopbarItemOrder: () => void;
   setZenModeEnabled: (value: boolean) => void;
+  setZenModeHideTopbar: (value: boolean) => void;
+  setZenModeHideStatusbar: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   setAppIconAppearance: (value: AppIconAppearance) => void;
   setAIPanelEnabled: (value: boolean) => void;
@@ -204,6 +208,8 @@ const DEFAULT_SHOW_TOPBAR_PROJECT_PATH = true;
 const DEFAULT_SHOW_NATIVE_MAC_WINDOW_CONTROLS = true;
 const DEFAULT_CONFIRM_BEFORE_CLOSE = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
+const DEFAULT_ZEN_MODE_HIDE_TOPBAR = false;
+const DEFAULT_ZEN_MODE_HIDE_STATUSBAR = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
 const DEFAULT_AI_PANEL_ENABLED = true;
@@ -253,6 +259,8 @@ type PersistedEditorSettingsState = Partial<
     | "confirmBeforeClose"
     | "topbarItemOrder"
     | "zenModeEnabled"
+    | "zenModeHideTopbar"
+    | "zenModeHideStatusbar"
     | "projectWindowMode"
     | "appIconAppearance"
     | "aiPanelEnabled"
@@ -461,6 +469,14 @@ const sanitizePersistedEditorSettings = (
     nextState.zenModeEnabled = persistedState.zenModeEnabled;
   }
 
+  if (typeof persistedState.zenModeHideTopbar === "boolean") {
+    nextState.zenModeHideTopbar = persistedState.zenModeHideTopbar;
+  }
+
+  if (typeof persistedState.zenModeHideStatusbar === "boolean") {
+    nextState.zenModeHideStatusbar = persistedState.zenModeHideStatusbar;
+  }
+
   const projectWindowMode = migratedProjectWindowMode(
     persistedState.projectWindowMode ??
       persistedState.projectSwitchShortcutBehavior,
@@ -529,6 +545,8 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       confirmBeforeClose: DEFAULT_CONFIRM_BEFORE_CLOSE,
       topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER],
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
+      zenModeHideTopbar: DEFAULT_ZEN_MODE_HIDE_TOPBAR,
+      zenModeHideStatusbar: DEFAULT_ZEN_MODE_HIDE_STATUSBAR,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
       appIconAppearance: DEFAULT_APP_ICON_APPEARANCE,
       aiPanelEnabled: DEFAULT_AI_PANEL_ENABLED,
@@ -654,7 +672,17 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
         set(() => ({ topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER] })),
 
       setZenModeEnabled: (value: boolean) =>
-        set(() => ({ zenModeEnabled: value })),
+        set(() => ({
+          zenModeEnabled: value,
+          zenModeHideTopbar: value,
+          zenModeHideStatusbar: value,
+        })),
+
+      setZenModeHideTopbar: (value: boolean) =>
+        set(() => ({ zenModeHideTopbar: value })),
+
+      setZenModeHideStatusbar: (value: boolean) =>
+        set(() => ({ zenModeHideStatusbar: value })),
 
       setProjectWindowMode: (value) =>
         set(() => ({ projectWindowMode: value })),
@@ -721,7 +749,14 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
         })),
 
       toggleZenMode: () =>
-        set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),
+        set((state) => {
+          const nextZenModeEnabled = !state.zenModeEnabled;
+          return {
+            zenModeEnabled: nextZenModeEnabled,
+            zenModeHideTopbar: nextZenModeEnabled,
+            zenModeHideStatusbar: nextZenModeEnabled,
+          };
+        }),
     }),
     {
       name: "editor-settings",

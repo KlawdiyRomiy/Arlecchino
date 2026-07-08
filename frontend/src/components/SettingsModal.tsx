@@ -614,22 +614,36 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     id: "zen-mode",
     tab: "appearance",
     label: "Zen Mode",
-    description: "Hide chrome and snapped panels until edge hover.",
+    description: "Hide snapped panels and optional chrome until edge hover.",
     keywords: ["focus", "fullscreen", "panels", "chrome"],
     suggested: true,
   },
   {
+    id: "zen-mode-hide-topbar",
+    tab: "appearance",
+    label: "Hide top bar",
+    description: "Hide the top bar and reveal it from the top edge.",
+    keywords: ["zen", "focus", "topbar", "top bar", "chrome"],
+  },
+  {
+    id: "zen-mode-hide-statusbar",
+    tab: "appearance",
+    label: "Hide status bar",
+    description: "Hide the status bar and reveal it from the bottom edge.",
+    keywords: ["zen", "focus", "statusbar", "status bar", "chrome"],
+  },
+  {
     id: "compact-topbar-actions",
     tab: "appearance",
-    label: "Compact topbar actions",
-    description: "Hide the project label and show actions in the topbar.",
+    label: "Compact top bar actions",
+    description: "Hide the project label and show actions in the top bar.",
     keywords: ["topbar", "project label", "actions", "compact"],
   },
   {
     id: "native-macos-window-controls",
     tab: "appearance",
     label: "macOS window buttons",
-    description: "Show the native macOS traffic-light buttons in the topbar.",
+    description: "Show the native macOS traffic-light buttons in the top bar.",
     keywords: ["macos", "traffic lights", "window buttons", "topbar"],
   },
   {
@@ -642,13 +656,13 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "topbar-icon-order",
     tab: "appearance",
-    label: "Topbar icon order",
-    description: "Restore the default order for draggable topbar controls.",
+    label: "Top bar icon order",
+    description: "Restore the default order for draggable top bar controls.",
     keywords: ["topbar", "drag", "controls", "reset order"],
   },
   {
     id: "rainbow-brackets",
-    tab: "appearance",
+    tab: "editor",
     label: "Rainbow brackets",
     description: "Color nested brackets with fixed depth colors.",
     keywords: ["brackets", "syntax", "colors", "editor"],
@@ -656,7 +670,7 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "editor-font-family",
     tab: "editor",
-    label: "Editor Font Family",
+    label: "Editor font family",
     description: "Choose the font used by the code editor.",
     keywords: ["code font", "monospace", "local font"],
     suggested: true,
@@ -664,14 +678,14 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "editor-font-size",
     tab: "editor",
-    label: "Editor Font Size",
+    label: "Editor font size",
     description: "Adjust the text size in the code editor.",
     keywords: ["font size", "code size", "text size"],
   },
   {
     id: "ui-scale",
     tab: "editor",
-    label: "UI Scale",
+    label: "UI scale",
     description: "Adjust the overall zoom of the application interface.",
     keywords: ["zoom", "scale", "interface size"],
     suggested: true,
@@ -744,7 +758,7 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "ai-panel",
     tab: "ai",
-    label: "AI Panel",
+    label: "AI panel",
     description:
       "Show AI entry points, shortcuts, and provider-backed AI features.",
     keywords: ["ai", "panel", "chat", "shortcut", "topbar", "menubar"],
@@ -818,7 +832,7 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "auto-open-preview",
     tab: "browser-preview",
-    label: "Auto-open Preview",
+    label: "Auto-open preview",
     description: "Open browser preview when terminal reports a local URL.",
     keywords: ["browser", "terminal", "localhost", "url"],
     suggested: true,
@@ -826,14 +840,14 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "reuse-session-window",
     tab: "browser-preview",
-    label: "Reuse Session Window",
+    label: "Reuse session window",
     description: "Keep one preview window per terminal session.",
     keywords: ["browser", "terminal", "session", "window"],
   },
   {
     id: "close-on-session-exit",
     tab: "browser-preview",
-    label: "Close on Session Exit",
+    label: "Close on session exit",
     description: "Close auto-opened previews when terminal session ends.",
     keywords: ["browser", "terminal", "close"],
   },
@@ -906,6 +920,20 @@ const SettingHeader: React.FC<{
       {description}
     </p>
   </div>
+);
+
+const SettingSection: React.FC<{
+  title: string;
+  children: React.ReactNode;
+}> = ({ title, children }) => (
+  <section className="space-y-3">
+    <div className="px-1">
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+        {title}
+      </h3>
+    </div>
+    <div className="space-y-4">{children}</div>
+  </section>
 );
 
 const SwitchRow: React.FC<{
@@ -1173,6 +1201,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showNativeMacWindowControls,
     confirmBeforeClose,
     zenModeEnabled,
+    zenModeHideTopbar,
+    zenModeHideStatusbar,
     projectWindowMode,
     appIconAppearance,
     aiPanelEnabled,
@@ -1200,6 +1230,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setConfirmBeforeClose,
     resetTopbarItemOrder,
     setZenModeEnabled,
+    setZenModeHideTopbar,
+    setZenModeHideStatusbar,
     setProjectWindowMode,
     setAppIconAppearance,
     setAIPanelEnabled,
@@ -2262,53 +2294,106 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 .filter(Boolean)
                 .join(" ")
             : "";
+          const capabilityDetailRows: Array<{
+            label: string;
+            value: string;
+            mono?: boolean;
+            title?: string;
+          }> = [{ label: "Language", value: capability.id, mono: true }];
+          if (capability.lspServerId) {
+            capabilityDetailRows.push({
+              label: "LSP server",
+              value: capability.lspServerId,
+              mono: true,
+            });
+          }
+          if (installTypeLabel) {
+            capabilityDetailRows.push({
+              label: "Installer",
+              value: installTypeLabel,
+            });
+          }
+          if (capability.lspBinaryPath) {
+            capabilityDetailRows.push({
+              label: "Binary",
+              value: capability.lspBinaryPath,
+              mono: true,
+              title: capability.lspBinaryPath,
+            });
+          }
+          if (capability.extensions.length) {
+            capabilityDetailRows.push({
+              label: "Extensions",
+              value: capability.extensions.join(", "),
+              mono: true,
+            });
+          }
 
           return (
             <div
               key={capability.id}
-              className="grid gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+              className="space-y-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-b-0"
             >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[13px] font-semibold text-[var(--text-primary)]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-[var(--text-primary)]">
                     {capability.name}
-                  </span>
-                  <span className={settingsPillClass}>
-                    {autocompleteTierLabels[capability.tier] ?? capability.tier}
-                  </span>
-                  <span
-                    className={
-                      lspError && !lspInstalling
-                        ? `${settingsPillClass} min-h-[26px] border-[color-mix(in_srgb,var(--status-error)_45%,var(--border-subtle))] px-2.5 text-[var(--status-error)]`
-                        : autocompleteBadgeClass(lspActive || lspAvailable)
-                    }
-                  >
-                    LSP: {lspLabel}
-                  </span>
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-muted)]">
-                  <span className="font-mono">{capability.id}</span>
-                  {capability.lspServerId ? (
-                    <span className="font-mono">{capability.lspServerId}</span>
-                  ) : null}
-                  {installTypeLabel ? <span>{installTypeLabel}</span> : null}
-                  {capability.lspBinaryPath ? (
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={settingsPillClass}>
+                      {autocompleteTierLabels[capability.tier] ??
+                        capability.tier}
+                    </span>
                     <span
-                      className="max-w-full break-all font-mono lg:max-w-[520px]"
-                      title={capability.lspBinaryPath}
+                      className={
+                        lspError && !lspInstalling
+                          ? `${settingsPillClass} min-h-[26px] border-[color-mix(in_srgb,var(--status-error)_45%,var(--border-subtle))] px-2.5 text-[var(--status-error)]`
+                          : autocompleteBadgeClass(lspActive || lspAvailable)
+                      }
                     >
-                      {capability.lspBinaryPath}
+                      LSP: {lspLabel}
                     </span>
-                  ) : null}
-                  {capability.extensions.length ? (
-                    <span className="break-words">
-                      {capability.extensions.join(", ")}
-                    </span>
-                  ) : null}
+                  </div>
                 </div>
+
+                {showInstallButton ? (
+                  <button
+                    type="button"
+                    className={`${settingsActionButtonClass} shrink-0`}
+                    disabled={!canInstall}
+                    onClick={() => {
+                      void installAutocompleteLSP(capability);
+                    }}
+                  >
+                    {lspInstalling ? (
+                      <RefreshCw size={14} className="animate-spin" />
+                    ) : (
+                      <Plus size={14} />
+                    )}
+                    {lspInstalling ? "Installing" : "Install LSP"}
+                  </button>
+                ) : null}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {capabilityDetailRows.length > 0 ? (
+                <div className="grid gap-x-3 gap-y-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] px-3 py-2 text-[11px] leading-5 text-[var(--text-secondary)] sm:grid-cols-[96px_minmax(0,1fr)]">
+                  {capabilityDetailRows.map((row) => (
+                    <React.Fragment key={row.label}>
+                      <div className="font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                        {row.label}
+                      </div>
+                      <div
+                        className={`min-w-0 break-words ${row.mono ? "font-mono" : ""}`}
+                        title={row.title}
+                      >
+                        {row.value}
+                      </div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={autocompleteBadgeClass(
                     autocompleteImportLevelKey(capability.autoImportLevel) !==
@@ -2327,27 +2412,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {label}
                   </span>
                 ))}
-                {showInstallButton ? (
-                  <button
-                    type="button"
-                    className={settingsActionButtonClass}
-                    disabled={!canInstall}
-                    onClick={() => {
-                      void installAutocompleteLSP(capability);
-                    }}
-                  >
-                    {lspInstalling ? (
-                      <RefreshCw size={14} className="animate-spin" />
-                    ) : (
-                      <Plus size={14} />
-                    )}
-                    {lspInstalling ? "Installing" : "Install LSP"}
-                  </button>
-                ) : null}
               </div>
 
               {showInstallMetadata ? (
-                <div className="min-w-0 space-y-1 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] px-3 py-2 lg:col-span-2">
+                <div className="min-w-0 space-y-1 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] px-3 py-2">
                   {capability.lspInstallCommand ? (
                     <div className="break-all font-mono text-[11px] leading-5 text-[var(--text-secondary)]">
                       {capability.lspInstallCommand}
@@ -2367,7 +2435,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ) : null}
 
               {(installDetail || lspError) && (
-                <div className="min-w-0 space-y-1 lg:col-span-2">
+                <div className="min-w-0 space-y-1">
                   {installDetail ? (
                     <div className="whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--text-muted)]">
                       {installDetail}
@@ -2401,321 +2469,329 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           description="Configure AI Chat input behavior and local provider launch defaults."
         />
 
-        <div
-          data-setting-id="ai-panel"
-          className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
-            "ai-panel",
-          )}`}
-        >
-          <SwitchRow
-            title="AI Panel"
-            description="Show AI Chat entry points, shortcuts, command palette actions, and provider-backed editor continuations."
-            checked={aiPanelEnabled}
-            onCheckedChange={setAIPanelEnabled}
-            badge={aiPanelEnabled ? "On" : "Off"}
-            controlLabel="Toggle AI Panel"
-            highlighted={highlightedSettingId === "ai-panel"}
-          />
-        </div>
-
-        <div
-          data-setting-id="ai-chat-send"
-          className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-            "ai-chat-send",
-          )}`}
-        >
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--text-primary)]">
-                Send messages
-              </div>
-              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                Choose how the AI Chat composer sends messages. Tab and
-                Shift+Tab cycle Ask, Plan, Build, and Debug.
-              </div>
-            </div>
-            <div
-              role="group"
-              aria-label="AI Chat send shortcut"
-              className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
-            >
-              {aiChatSendShortcutOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={aiChatSendShortcut === option.value}
-                  title={option.description}
-                  onClick={() => setAIChatSendShortcut(option.value)}
-                  className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                    aiChatSendShortcut === option.value
-                      ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                      : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div
-          data-setting-id="ai-chat-surface"
-          className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
-            "ai-chat-surface",
-          )}`}
-        >
-          {aiChatDisplayPreferenceRows.map((row) => (
+        <SettingSection title="Panel">
+          <div
+            data-setting-id="ai-panel"
+            className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
+              "ai-panel",
+            )}`}
+          >
             <SwitchRow
-              key={row.key}
-              title={row.title}
-              description={row.description}
-              checked={aiChatPreferences.displayPrefs[row.key]}
-              onCheckedChange={(checked) =>
-                setAIChatDisplayPref(row.key, checked)
-              }
-              controlLabel={row.title}
+              title="AI panel"
+              description="Show AI Chat entry points, shortcuts, command palette actions, and provider-backed editor continuations."
+              checked={aiPanelEnabled}
+              onCheckedChange={setAIPanelEnabled}
+              badge={aiPanelEnabled ? "On" : "Off"}
+              controlLabel="Toggle AI panel"
+              highlighted={highlightedSettingId === "ai-panel"}
             />
-          ))}
-          {aiChatWorkflowPreferenceRows.map((row) => (
-            <SwitchRow
-              key={row.key}
-              settingId="ai-chat-workflow"
-              title={row.title}
-              description={row.description}
-              checked={aiChatPreferences.workflowPrefs[row.key]}
-              onCheckedChange={(checked) =>
-                setAIChatWorkflowPref(row.key, checked)
-              }
-              controlLabel={row.title}
-              highlighted={highlightedSettingId === "ai-chat-workflow"}
-            />
-          ))}
-          <div className="space-y-3 px-4 py-4">
-            <div>
-              <div className="text-sm font-semibold text-[var(--text-primary)]">
-                Default context
-              </div>
-              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                These defaults seed AI Chat context and can be adjusted from AI
-                Chat settings.
-              </div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {aiChatContextPreferenceRows.map((row) => {
-                const Icon = row.icon;
-                const active = aiChatPreferences.defaultContext[row.key];
-                return (
-                  <button
-                    key={row.key}
-                    type="button"
-                    aria-pressed={active}
-                    title={row.description}
-                    onClick={() => setAIChatDefaultContext(row.key, !active)}
-                    className={`flex min-h-[52px] items-center gap-3 rounded-[14px] border px-3 text-left transition-colors ${
-                      active
-                        ? "border-[color-mix(in_srgb,var(--focus-ring)_42%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--focus-ring)_10%,var(--surface-1))] text-[var(--text-primary)]"
-                        : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--surface-overlay)]">
-                      <Icon className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium">
-                        {row.title}
-                      </span>
-                      <span className="block truncate text-[11px] text-[var(--text-muted)]">
-                        {active ? "Included by default" : "Off by default"}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
           </div>
-        </div>
+        </SettingSection>
 
-        <div
-          data-setting-id="ai-remote-byok"
-          className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
-            "ai-remote-byok",
-          )}`}
-        >
-          <div className="border-b border-[var(--border-subtle)] p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <SettingSection title="Composer">
+          <div
+            data-setting-id="ai-chat-send"
+            className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+              "ai-chat-send",
+            )}`}
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-                  <KeyRound size={15} className="text-[var(--text-muted)]" />
-                  Remote API key setup
+                <div className="text-sm font-semibold text-[var(--text-primary)]">
+                  Send messages
                 </div>
                 <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                  Connect an OpenAI-compatible endpoint with a write-only API
-                  key. The provider is saved disabled, tested, then enabled for
-                  prediction only after disclosure is accepted.
+                  Choose how the AI Chat composer sends messages. Tab and
+                  Shift+Tab cycle Ask, Plan, Build, and Debug.
                 </div>
               </div>
-              <span className={settingsPillClass}>
-                {aiProviderLoading
-                  ? "Refreshing"
-                  : `${aiProviders.length} providers`}
-              </span>
+              <div
+                role="group"
+                aria-label="AI Chat send shortcut"
+                className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+              >
+                {aiChatSendShortcutOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={aiChatSendShortcut === option.value}
+                    title={option.description}
+                    onClick={() => setAIChatSendShortcut(option.value)}
+                    className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                      aiChatSendShortcut === option.value
+                        ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                        : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="space-y-3 p-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
-              <label className="min-w-0">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                  Provider ID
-                </div>
-                <input
-                  value={remoteBYOKSetup.providerId}
-                  disabled={remoteBYOKBusy}
-                  onChange={(event) =>
-                    setRemoteBYOKSetup((current) => ({
-                      ...current,
-                      providerId: event.currentTarget.value,
-                    }))
-                  }
-                  className={`${settingsInputClass} w-full font-mono`}
-                  placeholder={defaultRemoteBYOKProviderID}
-                />
-              </label>
-              <label className="min-w-0">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                  Endpoint
-                </div>
-                <input
-                  value={remoteBYOKSetup.endpoint}
-                  disabled={remoteBYOKBusy}
-                  onChange={(event) =>
-                    setRemoteBYOKSetup((current) => ({
-                      ...current,
-                      endpoint: event.currentTarget.value,
-                    }))
-                  }
-                  className={`${settingsInputClass} w-full font-mono`}
-                  placeholder="https://api.openai.com/v1"
-                />
-              </label>
-            </div>
+        </SettingSection>
 
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <label className="min-w-0">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                  Model
-                </div>
-                <input
-                  value={remoteBYOKSetup.model}
-                  disabled={remoteBYOKBusy}
-                  onChange={(event) =>
-                    setRemoteBYOKSetup((current) => ({
-                      ...current,
-                      model: event.currentTarget.value,
-                    }))
-                  }
-                  className={`${settingsInputClass} w-full font-mono`}
-                  placeholder="optional; discovered from /models when possible"
-                />
-              </label>
-              <label className="min-w-0">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                  API key
-                </div>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={remoteBYOKSetup.apiKey}
-                  disabled={remoteBYOKBusy}
-                  onChange={(event) =>
-                    setRemoteBYOKSetup((current) => ({
-                      ...current,
-                      apiKey: event.currentTarget.value,
-                    }))
-                  }
-                  className={`${settingsInputClass} w-full font-mono`}
-                  placeholder="Stored in the local credential vault"
-                />
-              </label>
-            </div>
-
-            <label className="flex items-start gap-3 rounded-[16px] border border-[var(--border-subtle)] px-3 py-3">
-              <input
-                type="checkbox"
-                checked={remoteBYOKSetup.consentAccepted}
-                disabled={remoteBYOKBusy}
-                onChange={(event) =>
-                  setRemoteBYOKSetup((current) => ({
-                    ...current,
-                    consentAccepted: event.currentTarget.checked,
-                  }))
+        <SettingSection title="Chat behavior">
+          <div
+            data-setting-id="ai-chat-surface"
+            className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
+              "ai-chat-surface",
+            )}`}
+          >
+            {aiChatDisplayPreferenceRows.map((row) => (
+              <SwitchRow
+                key={row.key}
+                title={row.title}
+                description={row.description}
+                checked={aiChatPreferences.displayPrefs[row.key]}
+                onCheckedChange={(checked) =>
+                  setAIChatDisplayPref(row.key, checked)
                 }
-                className="mt-0.5 h-4 w-4 accent-[var(--accent-brand)]"
+                controlLabel={row.title}
               />
-              <span className="min-w-0 text-[12px] leading-5 text-[var(--text-muted)]">
-                I understand passive predictions may send current editor context
-                to this endpoint under the provider's own processing, retention,
-                abuse-monitoring, and billing terms.
-              </span>
-            </label>
+            ))}
+            {aiChatWorkflowPreferenceRows.map((row) => (
+              <SwitchRow
+                key={row.key}
+                settingId="ai-chat-workflow"
+                title={row.title}
+                description={row.description}
+                checked={aiChatPreferences.workflowPrefs[row.key]}
+                onCheckedChange={(checked) =>
+                  setAIChatWorkflowPref(row.key, checked)
+                }
+                controlLabel={row.title}
+                highlighted={highlightedSettingId === "ai-chat-workflow"}
+              />
+            ))}
+            <div className="space-y-3 px-4 py-4">
+              <div>
+                <div className="text-sm font-semibold text-[var(--text-primary)]">
+                  Default context
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                  These defaults seed AI Chat context and can be adjusted from
+                  AI Chat settings.
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {aiChatContextPreferenceRows.map((row) => {
+                  const Icon = row.icon;
+                  const active = aiChatPreferences.defaultContext[row.key];
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      aria-pressed={active}
+                      title={row.description}
+                      onClick={() => setAIChatDefaultContext(row.key, !active)}
+                      className={`flex min-h-[52px] items-center gap-3 rounded-[14px] border px-3 text-left transition-colors ${
+                        active
+                          ? "border-[color-mix(in_srgb,var(--focus-ring)_42%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--focus-ring)_10%,var(--surface-1))] text-[var(--text-primary)]"
+                          : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--surface-overlay)]">
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium">
+                          {row.title}
+                        </span>
+                        <span className="block truncate text-[11px] text-[var(--text-muted)]">
+                          {active ? "Included by default" : "Off by default"}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </SettingSection>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-center gap-2 text-[12px] leading-5">
-                <Shield
-                  size={14}
-                  className={
-                    remoteBYOKSetup.statusTone === "error"
-                      ? "text-[var(--status-error)]"
-                      : remoteBYOKSetup.statusTone === "success"
-                        ? "text-[var(--status-success)]"
-                        : "text-[var(--text-muted)]"
-                  }
-                />
-                <span
-                  className={
-                    remoteBYOKSetup.statusTone === "error"
-                      ? "text-[var(--status-error)]"
-                      : remoteBYOKSetup.statusTone === "success"
-                        ? "text-[var(--status-success)]"
-                        : "text-[var(--text-muted)]"
-                  }
-                >
-                  {remoteBYOKSetup.statusMessage ||
-                    "Endpoint validation and provider test run before predictions are enabled."}
+        <SettingSection title="Providers">
+          <div
+            data-setting-id="ai-remote-byok"
+            className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
+              "ai-remote-byok",
+            )}`}
+          >
+            <div className="border-b border-[var(--border-subtle)] p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                    <KeyRound size={15} className="text-[var(--text-muted)]" />
+                    Remote API key setup
+                  </div>
+                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                    Connect an OpenAI-compatible endpoint with a write-only API
+                    key. The provider is saved disabled, tested, then enabled
+                    for prediction only after disclosure is accepted.
+                  </div>
+                </div>
+                <span className={settingsPillClass}>
+                  {aiProviderLoading
+                    ? "Refreshing"
+                    : `${aiProviders.length} providers`}
                 </span>
               </div>
-              <button
-                type="button"
-                className={settingsActionButtonClass}
-                disabled={remoteBYOKBusy}
-                onClick={() => void connectRemoteBYOKForPrediction()}
-              >
-                {remoteBYOKBusy ? (
-                  <RefreshCw size={14} className="animate-spin" />
-                ) : (
-                  <Check size={14} />
-                )}
-                Connect for predictions
-              </button>
+            </div>
+            <div className="space-y-3 p-4">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
+                <label className="min-w-0">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    Provider ID
+                  </div>
+                  <input
+                    value={remoteBYOKSetup.providerId}
+                    disabled={remoteBYOKBusy}
+                    onChange={(event) =>
+                      setRemoteBYOKSetup((current) => ({
+                        ...current,
+                        providerId: event.currentTarget.value,
+                      }))
+                    }
+                    className={`${settingsInputClass} w-full font-mono`}
+                    placeholder={defaultRemoteBYOKProviderID}
+                  />
+                </label>
+                <label className="min-w-0">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    Endpoint
+                  </div>
+                  <input
+                    value={remoteBYOKSetup.endpoint}
+                    disabled={remoteBYOKBusy}
+                    onChange={(event) =>
+                      setRemoteBYOKSetup((current) => ({
+                        ...current,
+                        endpoint: event.currentTarget.value,
+                      }))
+                    }
+                    className={`${settingsInputClass} w-full font-mono`}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <label className="min-w-0">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    Model
+                  </div>
+                  <input
+                    value={remoteBYOKSetup.model}
+                    disabled={remoteBYOKBusy}
+                    onChange={(event) =>
+                      setRemoteBYOKSetup((current) => ({
+                        ...current,
+                        model: event.currentTarget.value,
+                      }))
+                    }
+                    className={`${settingsInputClass} w-full font-mono`}
+                    placeholder="optional; discovered from /models when possible"
+                  />
+                </label>
+                <label className="min-w-0">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    API key
+                  </div>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={remoteBYOKSetup.apiKey}
+                    disabled={remoteBYOKBusy}
+                    onChange={(event) =>
+                      setRemoteBYOKSetup((current) => ({
+                        ...current,
+                        apiKey: event.currentTarget.value,
+                      }))
+                    }
+                    className={`${settingsInputClass} w-full font-mono`}
+                    placeholder="Stored in the local credential vault"
+                  />
+                </label>
+              </div>
+
+              <label className="flex items-start gap-3 rounded-[16px] border border-[var(--border-subtle)] px-3 py-3">
+                <input
+                  type="checkbox"
+                  checked={remoteBYOKSetup.consentAccepted}
+                  disabled={remoteBYOKBusy}
+                  onChange={(event) =>
+                    setRemoteBYOKSetup((current) => ({
+                      ...current,
+                      consentAccepted: event.currentTarget.checked,
+                    }))
+                  }
+                  className="mt-0.5 h-4 w-4 accent-[var(--accent-brand)]"
+                />
+                <span className="min-w-0 text-[12px] leading-5 text-[var(--text-muted)]">
+                  I understand passive predictions may send current editor
+                  context to this endpoint under the provider's own processing,
+                  retention, abuse-monitoring, and billing terms.
+                </span>
+              </label>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-2 text-[12px] leading-5">
+                  <Shield
+                    size={14}
+                    className={
+                      remoteBYOKSetup.statusTone === "error"
+                        ? "text-[var(--status-error)]"
+                        : remoteBYOKSetup.statusTone === "success"
+                          ? "text-[var(--status-success)]"
+                          : "text-[var(--text-muted)]"
+                    }
+                  />
+                  <span
+                    className={
+                      remoteBYOKSetup.statusTone === "error"
+                        ? "text-[var(--status-error)]"
+                        : remoteBYOKSetup.statusTone === "success"
+                          ? "text-[var(--status-success)]"
+                          : "text-[var(--text-muted)]"
+                    }
+                  >
+                    {remoteBYOKSetup.statusMessage ||
+                      "Endpoint validation and provider test run before predictions are enabled."}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className={settingsActionButtonClass}
+                  disabled={remoteBYOKBusy}
+                  onClick={() => void connectRemoteBYOKForPrediction()}
+                >
+                  {remoteBYOKBusy ? (
+                    <RefreshCw size={14} className="animate-spin" />
+                  ) : (
+                    <Check size={14} />
+                  )}
+                  Connect for predictions
+                </button>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div
-          data-setting-id="ai-provider-launch"
-          className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-            "ai-provider-launch",
-          )}`}
-        >
-          <div className="text-sm font-semibold text-[var(--text-primary)]">
-            Provider launch
+          <div
+            data-setting-id="ai-provider-launch"
+            className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+              "ai-provider-launch",
+            )}`}
+          >
+            <div className="text-sm font-semibold text-[var(--text-primary)]">
+              Provider launch
+            </div>
+            <div className="mt-2 text-[12px] leading-5 text-[var(--text-muted)]">
+              Local provider servers are launched from the AI Chat provider
+              popup using loopback endpoints only. Cloud providers use your
+              configured API key before model discovery.
+            </div>
           </div>
-          <div className="mt-2 text-[12px] leading-5 text-[var(--text-muted)]">
-            Local provider servers are launched from the AI Chat provider popup
-            using loopback endpoints only. Cloud providers use your configured
-            API key before model discovery.
-          </div>
-        </div>
+        </SettingSection>
       </div>
     );
   };
@@ -2753,206 +2829,215 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         ) : null}
 
-        <div className={settingsPanelClass}>
-          <SwitchRow
-            title="Arlecchino MCP server"
-            description="Disable to expose no MCP tools and reject MCP tool calls from external agents."
-            checked={settings?.enabled ?? false}
-            onCheckedChange={(checked) =>
-              updateMCPSettings({ enabled: checked })
-            }
-            badge={
-              settings
-                ? settings.enabled
-                  ? "Enabled"
-                  : "Disabled"
-                : "Not loaded"
-            }
-            settingId="mcp-enabled"
-            highlighted={highlightedSettingId === "mcp-enabled"}
-          />
-          <div className="grid gap-2 px-4 py-4 text-[12px] text-[var(--text-secondary)] sm:grid-cols-2">
-            {[
-              [
-                "Bridge",
-                mcpStatus?.bridgeRunning
-                  ? "running"
-                  : settings?.enabled
-                    ? "not running"
-                    : "disabled",
-              ],
-              [
-                "Approval code",
-                mcpStatus?.approvalCodeConfigured
-                  ? "configured by environment"
-                  : "live prompt",
-              ],
-              ["Settings file", mcpStatus?.diskPath || "not available"],
-              [
-                "Tool surface",
-                `${enabledToolCount}/${totalToolCount || 0} tools enabled`,
-              ],
-            ].map(([label, value]) => (
-              <div
-                key={label}
-                className="rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2"
-              >
-                <div className="text-[var(--text-muted)]">{label}</div>
-                <div className="mt-1 break-words font-mono text-[11px] text-[var(--text-primary)]">
-                  {value}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div
-          data-setting-id="mcp-approval-policy"
-          className={`${settingsPanelClass} transition-shadow ${getSettingTargetClass(
-            "mcp-approval-policy",
-          )}`}
-        >
-          <SwitchRow
-            title="Require approval"
-            description="Ask before protected MCP actions such as writes, terminal control, runtime UI changes, and sensitive file access."
-            checked={settings?.approvalRequired ?? false}
-            onCheckedChange={(checked) =>
-              updateMCPSettings({ approvalRequired: checked })
-            }
-            badge={
-              mcpStatus?.approvalRequiredEnvOverride
-                ? "Env override"
-                : undefined
-            }
-          />
-          <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <div>
-              <div className="text-sm font-semibold text-[var(--text-primary)]">
-                Default approval lifetime
-              </div>
-              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                Used when an MCP client does not request a shorter approval
-                window.
-              </div>
-            </div>
-            <div
-              role="group"
-              aria-label="Default MCP approval lifetime"
-              className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
-            >
-              {mcpApprovalTtlOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={
-                    settings?.defaultApprovalTtlSeconds === option.value
-                  }
-                  disabled={!settings || mcpSaving}
-                  onClick={() =>
-                    updateMCPSettings({
-                      defaultApprovalTtlSeconds: option.value,
-                    })
-                  }
-                  className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                    settings?.defaultApprovalTtlSeconds === option.value
-                      ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                      : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                  }`}
+        <SettingSection title="Server">
+          <div className={settingsPanelClass}>
+            <SwitchRow
+              title="Arlecchino MCP server"
+              description="Disable to expose no MCP tools and reject MCP tool calls from external agents."
+              checked={settings?.enabled ?? false}
+              onCheckedChange={(checked) =>
+                updateMCPSettings({ enabled: checked })
+              }
+              badge={
+                settings
+                  ? settings.enabled
+                    ? "Enabled"
+                    : "Disabled"
+                  : "Not loaded"
+              }
+              settingId="mcp-enabled"
+              highlighted={highlightedSettingId === "mcp-enabled"}
+            />
+            <div className="grid gap-2 px-4 py-4 text-[12px] text-[var(--text-secondary)] sm:grid-cols-2">
+              {[
+                [
+                  "Bridge",
+                  mcpStatus?.bridgeRunning
+                    ? "running"
+                    : settings?.enabled
+                      ? "not running"
+                      : "disabled",
+                ],
+                [
+                  "Approval code",
+                  mcpStatus?.approvalCodeConfigured
+                    ? "configured by environment"
+                    : "live prompt",
+                ],
+                ["Settings file", mcpStatus?.diskPath || "not available"],
+                [
+                  "Tool surface",
+                  `${enabledToolCount}/${totalToolCount || 0} tools enabled`,
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  className="rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2"
                 >
-                  {option.label}
-                </button>
+                  <div className="text-[var(--text-muted)]">{label}</div>
+                  <div className="mt-1 break-words font-mono text-[11px] text-[var(--text-primary)]">
+                    {value}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
-        </div>
+        </SettingSection>
 
-        <div
-          data-setting-id="mcp-tool-access"
-          className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-            "mcp-tool-access",
-          )}`}
-        >
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--text-primary)]">
-                MCP tool access
+        <SettingSection title="Approval">
+          <div
+            data-setting-id="mcp-approval-policy"
+            className={`${settingsPanelClass} transition-shadow ${getSettingTargetClass(
+              "mcp-approval-policy",
+            )}`}
+          >
+            <SwitchRow
+              title="Require approval"
+              description="Ask before protected MCP actions such as writes, terminal control, runtime UI changes, and sensitive file access."
+              checked={settings?.approvalRequired ?? false}
+              onCheckedChange={(checked) =>
+                updateMCPSettings({ approvalRequired: checked })
+              }
+              badge={
+                mcpStatus?.approvalRequiredEnvOverride
+                  ? "Env override"
+                  : undefined
+              }
+            />
+            <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div>
+                <div className="text-sm font-semibold text-[var(--text-primary)]">
+                  Default approval lifetime
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                  Used when an MCP client does not request a shorter approval
+                  window.
+                </div>
               </div>
-              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                Disable individual tools without removing the Arlecchino MCP
-                server from external clients.
+              <div
+                role="group"
+                aria-label="Default MCP approval lifetime"
+                className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+              >
+                {mcpApprovalTtlOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={
+                      settings?.defaultApprovalTtlSeconds === option.value
+                    }
+                    disabled={!settings || mcpSaving}
+                    onClick={() =>
+                      updateMCPSettings({
+                        defaultApprovalTtlSeconds: option.value,
+                      })
+                    }
+                    className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                      settings?.defaultApprovalTtlSeconds === option.value
+                        ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                        : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
             </div>
-            <span className={settingsPillClass}>
-              {enabledToolCount}/{totalToolCount || 0}
-            </span>
           </div>
+        </SettingSection>
 
-          <label className="shell-cluster-soft mt-4 flex min-h-[42px] min-w-0 items-center gap-2 px-3">
-            <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-            <input
-              value={mcpToolQuery}
-              onChange={(event) => setMCPToolQuery(event.currentTarget.value)}
-              placeholder="Search MCP tools"
-              className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-            />
-          </label>
-
-          <div className="mt-4 max-h-[430px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)]">
-            {filteredMCPTools.map((tool) => (
-              <div
-                key={tool.name}
-                className="grid gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="break-all font-mono text-[12px] font-semibold text-[var(--text-primary)]">
-                      {tool.name}
-                    </span>
-                    <span className={`${settingsPillClass} min-h-[24px] px-2`}>
-                      {tool.group}
-                    </span>
-                    <span
-                      className={`${settingsPillClass} min-h-[24px] px-2 ${
-                        tool.effectiveEnabled
-                          ? "text-[var(--status-success)]"
-                          : "text-[var(--status-warning)]"
-                      }`}
-                    >
-                      {tool.effectiveEnabled ? "Available" : "Blocked"}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                    {tool.description}
-                  </div>
+        <SettingSection title="Tools">
+          <div
+            data-setting-id="mcp-tool-access"
+            className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+              "mcp-tool-access",
+            )}`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-[var(--text-primary)]">
+                  MCP tool access
                 </div>
-                <Switch.Root
-                  checked={tool.enabled}
-                  disabled={!settings || mcpSaving}
-                  onCheckedChange={(checked) =>
-                    setMCPToolEnabled(tool, checked)
-                  }
-                  aria-label={`Enable ${tool.name}`}
-                  className={settingsSwitchRootClass}
-                >
-                  <Switch.Thumb className={settingsSwitchThumbClass} />
-                </Switch.Root>
+                <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                  Disable individual tools without removing the Arlecchino MCP
+                  server from external clients.
+                </div>
               </div>
-            ))}
+              <span className={settingsPillClass}>
+                {enabledToolCount}/{totalToolCount || 0}
+              </span>
+            </div>
 
-            {filteredMCPTools.length === 0 ? (
-              <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
-                No MCP tools match this filter.
-              </div>
-            ) : null}
+            <label className="shell-cluster-soft mt-4 flex min-h-[42px] min-w-0 items-center gap-2 px-3">
+              <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+              <input
+                value={mcpToolQuery}
+                onChange={(event) => setMCPToolQuery(event.currentTarget.value)}
+                placeholder="Search MCP tools"
+                className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+              />
+            </label>
+
+            <div className="mt-4 max-h-[430px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)]">
+              {filteredMCPTools.map((tool) => (
+                <div
+                  key={tool.name}
+                  className="grid gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="break-all font-mono text-[12px] font-semibold text-[var(--text-primary)]">
+                        {tool.name}
+                      </span>
+                      <span
+                        className={`${settingsPillClass} min-h-[24px] px-2`}
+                      >
+                        {tool.group}
+                      </span>
+                      <span
+                        className={`${settingsPillClass} min-h-[24px] px-2 ${
+                          tool.effectiveEnabled
+                            ? "text-[var(--status-success)]"
+                            : "text-[var(--status-warning)]"
+                        }`}
+                      >
+                        {tool.effectiveEnabled ? "Available" : "Blocked"}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                      {tool.description}
+                    </div>
+                  </div>
+
+                  <Switch.Root
+                    checked={tool.enabled}
+                    disabled={!settings || mcpSaving}
+                    onCheckedChange={(checked) =>
+                      setMCPToolEnabled(tool, checked)
+                    }
+                    aria-label={`Enable ${tool.name}`}
+                    className={settingsSwitchRootClass}
+                  >
+                    <Switch.Thumb className={settingsSwitchThumbClass} />
+                  </Switch.Root>
+                </div>
+              ))}
+
+              {filteredMCPTools.length === 0 ? (
+                <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
+                  No MCP tools match this filter.
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        </SettingSection>
       </div>
     );
   };
 
   const renderKeybindings = () => (
     <div
-      className={`mx-auto flex max-w-4xl flex-col gap-6 transition-shadow ${getSettingTargetClass(
+      className={`mx-auto max-w-4xl space-y-7 transition-shadow ${getSettingTargetClass(
         "keybindings",
       )}`}
       data-setting-id="keybindings"
@@ -2976,127 +3061,133 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </button>
       </div>
 
-      <div className={`${settingsPanelClass} p-3`}>
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-          <label className="shell-cluster-soft flex min-h-[42px] min-w-0 items-center gap-2 px-3">
-            <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-            <input
-              value={shortcutQuery}
-              onChange={(event) => setShortcutQuery(event.target.value)}
-              placeholder="Search shortcuts"
-              className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-            />
-          </label>
-          <div className="shell-cluster-soft inline-flex min-h-[42px] flex-wrap items-center gap-1 px-1.5 py-1">
-            {shortcutGroups.map((group) => (
-              <button
-                key={group}
-                type="button"
-                onClick={() => setShortcutGroup(group)}
-                className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                  shortcutGroup === group
-                    ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                    : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {group}
-              </button>
-            ))}
+      <SettingSection title="Filters">
+        <div className={`${settingsPanelClass} p-3`}>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <label className="shell-cluster-soft flex min-h-[42px] min-w-0 items-center gap-2 px-3">
+              <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+              <input
+                value={shortcutQuery}
+                onChange={(event) => setShortcutQuery(event.target.value)}
+                placeholder="Search shortcuts"
+                className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+              />
+            </label>
+            <div className="shell-cluster-soft inline-flex min-h-[42px] flex-wrap items-center gap-1 px-1.5 py-1">
+              {shortcutGroups.map((group) => (
+                <button
+                  key={group}
+                  type="button"
+                  onClick={() => setShortcutGroup(group)}
+                  className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                    shortcutGroup === group
+                      ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                      : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {group}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      </SettingSection>
 
-      <div
-        className={`${settingsPanelClass} divide-y divide-[var(--border-subtle)]`}
-      >
-        {filteredShortcuts.map((definition) => {
-          const effectiveShortcuts = getEffectiveShortcuts(
-            definition.id,
-            overrides,
-          );
-          const isRecording = recordingActionId === definition.id;
-          const hasOverride = Boolean(overrides[definition.id]?.length);
+      <SettingSection title="Shortcuts">
+        <div
+          className={`${settingsPanelClass} divide-y divide-[var(--border-subtle)]`}
+        >
+          {filteredShortcuts.map((definition) => {
+            const effectiveShortcuts = getEffectiveShortcuts(
+              definition.id,
+              overrides,
+            );
+            const isRecording = recordingActionId === definition.id;
+            const hasOverride = Boolean(overrides[definition.id]?.length);
 
-          return (
-            <div
-              key={definition.id}
-              className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
-              data-testid={`keybinding-row-${definition.id}`}
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[14px] font-semibold text-[var(--text-primary)]">
-                    {definition.label}
-                  </span>
-                  <span className={settingsPillClass}>{definition.group}</span>
-                  {definition.scope === "terminal" ? (
-                    <span className={settingsPillClass}>Terminal scope</span>
+            return (
+              <div
+                key={definition.id}
+                className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                data-testid={`keybinding-row-${definition.id}`}
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[14px] font-semibold text-[var(--text-primary)]">
+                      {definition.label}
+                    </span>
+                    <span className={settingsPillClass}>
+                      {definition.group}
+                    </span>
+                    {definition.scope === "terminal" ? (
+                      <span className={settingsPillClass}>Terminal scope</span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                    {definition.description}
+                  </div>
+                  {isRecording && recordingError ? (
+                    <div className="mt-2 flex items-center gap-2 text-[12px] text-[var(--status-error)]">
+                      <AlertCircle size={13} />
+                      {recordingError}
+                    </div>
                   ) : null}
                 </div>
-                <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                  {definition.description}
+
+                <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                  {isRecording ? (
+                    <ShortcutPill shortcut="Press keys" active />
+                  ) : (
+                    effectiveShortcuts.map((shortcut) => (
+                      <ShortcutPill key={shortcut} shortcut={shortcut} />
+                    ))
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecordingActionId(definition.id);
+                      setRecordingError(null);
+                    }}
+                    className={settingsIconButtonClass}
+                    aria-label={`Edit shortcut for ${definition.label}`}
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetShortcut(definition.id);
+                      if (recordingActionId === definition.id) {
+                        setRecordingActionId(null);
+                      }
+                      setRecordingError(null);
+                    }}
+                    disabled={!hasOverride}
+                    className={settingsIconButtonClass}
+                    aria-label={`Reset shortcut for ${definition.label}`}
+                  >
+                    <RotateCcw size={14} />
+                  </button>
                 </div>
-                {isRecording && recordingError ? (
-                  <div className="mt-2 flex items-center gap-2 text-[12px] text-[var(--status-error)]">
-                    <AlertCircle size={13} />
-                    {recordingError}
-                  </div>
-                ) : null}
               </div>
+            );
+          })}
 
-              <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                {isRecording ? (
-                  <ShortcutPill shortcut="Press keys" active />
-                ) : (
-                  effectiveShortcuts.map((shortcut) => (
-                    <ShortcutPill key={shortcut} shortcut={shortcut} />
-                  ))
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecordingActionId(definition.id);
-                    setRecordingError(null);
-                  }}
-                  className={settingsIconButtonClass}
-                  aria-label={`Edit shortcut for ${definition.label}`}
-                >
-                  <Pencil size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetShortcut(definition.id);
-                    if (recordingActionId === definition.id) {
-                      setRecordingActionId(null);
-                    }
-                    setRecordingError(null);
-                  }}
-                  disabled={!hasOverride}
-                  className={settingsIconButtonClass}
-                  aria-label={`Reset shortcut for ${definition.label}`}
-                >
-                  <RotateCcw size={14} />
-                </button>
+          {filteredShortcuts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-muted)]">
+                <Search size={18} />
+              </div>
+              <div className="mt-3 text-[14px] font-semibold text-[var(--text-primary)]">
+                No shortcuts found
+              </div>
+              <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
+                Try another query or filter.
               </div>
             </div>
-          );
-        })}
-
-        {filteredShortcuts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-muted)]">
-              <Search size={18} />
-            </div>
-            <div className="mt-3 text-[14px] font-semibold text-[var(--text-primary)]">
-              No shortcuts found
-            </div>
-            <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
-              Try another query or filter.
-            </div>
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      </SettingSection>
     </div>
   );
 
@@ -3360,336 +3451,371 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               description="Customize the look and feel of the editor."
                             />
 
-                            <ProjectOpeningModeControl
-                              value={projectWindowMode}
-                              onChange={setProjectWindowMode}
-                              settingId="project-opening"
-                              highlighted={
-                                highlightedSettingId === "project-opening"
-                              }
-                            />
+                            <SettingSection title="Interface">
+                              <AppIconAppearanceControl
+                                value={appIconAppearance}
+                                onChange={setAppIconAppearance}
+                                settingId="app-icon"
+                                highlighted={
+                                  highlightedSettingId === "app-icon"
+                                }
+                              />
 
-                            <AppIconAppearanceControl
-                              value={appIconAppearance}
-                              onChange={setAppIconAppearance}
-                              settingId="app-icon"
-                              highlighted={highlightedSettingId === "app-icon"}
-                            />
-
-                            <div
-                              data-setting-id="system-font-family"
-                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-                                "system-font-family",
-                              )}`}
-                            >
-                              <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                    System Font Family
+                              <div
+                                data-setting-id="system-font-family"
+                                className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                  "system-font-family",
+                                )}`}
+                              >
+                                <div className="flex items-start justify-between gap-4">
+                                  <div>
+                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                      System Font Family
+                                    </div>
+                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                      Choose the font used by Arlecchino outside
+                                      the code editor.
+                                    </div>
                                   </div>
-                                  <div className="mt-1 text-xs text-[var(--text-muted)]">
-                                    Choose the font used by Arlecchino outside
-                                    the code editor.
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={resetUiFontFamily}
+                                    className={settingsIconButtonClass}
+                                    aria-label="Reset system font family"
+                                    title="Reset system font family"
+                                  >
+                                    <RotateCcw size={14} />
+                                  </button>
                                 </div>
+
+                                <div
+                                  className={`${settingsInsetClass} mt-4 p-3`}
+                                >
+                                  <DropdownMenu.Root>
+                                    <DropdownMenu.Trigger asChild>
+                                      <button
+                                        type="button"
+                                        className={settingsDropdownTriggerClass}
+                                        data-testid="ui-font-family-trigger"
+                                        aria-label="System font family"
+                                      >
+                                        <span
+                                          className="min-w-0 truncate"
+                                          style={{
+                                            fontFamily:
+                                              activeUiFontFamilyOption?.sampleFamily ??
+                                              uiFontFamily,
+                                          }}
+                                        >
+                                          {activeUiFontFamilyLabel}
+                                        </span>
+                                        <ChevronDown size={16} />
+                                      </button>
+                                    </DropdownMenu.Trigger>
+                                    <DropdownMenu.Portal>
+                                      <MotionDropdownContent
+                                        align="start"
+                                        sideOffset={8}
+                                        className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
+                                        data-testid="ui-font-family-content"
+                                        data-shell-menu-content
+                                        style={{
+                                          maxHeight:
+                                            "min(420px, var(--radix-dropdown-menu-content-available-height))",
+                                        }}
+                                      >
+                                        {uiFontOptions.map((option) => {
+                                          const isActive =
+                                            uiFontFamily === option.value;
+                                          return (
+                                            <DropdownMenu.Item
+                                              key={`${option.label}-${option.value}`}
+                                              className={
+                                                settingsDropdownItemClass
+                                              }
+                                              onSelect={() =>
+                                                setUiFontFamily(option.value)
+                                              }
+                                            >
+                                              <span
+                                                className="min-w-0 flex-1 truncate"
+                                                style={{
+                                                  fontFamily:
+                                                    option.sampleFamily,
+                                                }}
+                                              >
+                                                {option.label}
+                                              </span>
+                                              {isActive ? (
+                                                <Check size={15} />
+                                              ) : null}
+                                            </DropdownMenu.Item>
+                                          );
+                                        })}
+                                      </MotionDropdownContent>
+                                    </DropdownMenu.Portal>
+                                  </DropdownMenu.Root>
+
+                                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="text-[12px] text-[var(--text-muted)]">
+                                      {localFontStatusLabel}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={settingsActionButtonClass}
+                                      onClick={() => {
+                                        customFontTargetRef.current = "ui";
+                                        customFontInputRef.current?.click();
+                                      }}
+                                    >
+                                      <Plus size={14} />
+                                      Add font
+                                    </button>
+                                  </div>
+                                  <input
+                                    ref={customFontInputRef}
+                                    type="file"
+                                    accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                                    className="hidden"
+                                    onChange={handleCustomFontFile}
+                                  />
+                                  {customFontStatus && (
+                                    <div
+                                      className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                                        customFontStatus.tone === "success"
+                                          ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                                          : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                                      }`}
+                                    >
+                                      {customFontStatus.message}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div
+                                data-setting-id="system-font-size"
+                                className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                  "system-font-size",
+                                )}`}
+                              >
+                                <label className="block">
+                                  <div className="flex items-center justify-between gap-4">
+                                    <div>
+                                      <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                        System Font Size
+                                      </div>
+                                      <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                        Adjust UI text size everywhere outside
+                                        the code editor.
+                                      </div>
+                                    </div>
+                                    <span className="font-mono text-sm text-[var(--text-primary)]">
+                                      {uiFontSize}px
+                                    </span>
+                                  </div>
+                                  <div
+                                    className={`${settingsInsetClass} mt-4 px-4 py-3`}
+                                  >
+                                    <input
+                                      type="range"
+                                      min={MIN_UI_FONT_SIZE}
+                                      max={MAX_UI_FONT_SIZE}
+                                      value={uiFontSize}
+                                      onChange={(event) =>
+                                        setUiFontSize(
+                                          Number(event.target.value),
+                                        )
+                                      }
+                                      className="w-full"
+                                      aria-label="System font size"
+                                      data-testid="ui-font-size-input"
+                                    />
+                                  </div>
+                                </label>
                                 <button
                                   type="button"
-                                  onClick={resetUiFontFamily}
-                                  className={settingsIconButtonClass}
-                                  aria-label="Reset system font family"
-                                  title="Reset system font family"
+                                  onClick={resetUiFontSize}
+                                  className={`${settingsActionButtonClass} mt-4`}
+                                  disabled={uiFontSize === DEFAULT_UI_FONT_SIZE}
                                 >
                                   <RotateCcw size={14} />
+                                  Reset System Text Size
                                 </button>
                               </div>
 
-                              <div className={`${settingsInsetClass} mt-4 p-3`}>
-                                <DropdownMenu.Root>
-                                  <DropdownMenu.Trigger asChild>
-                                    <button
-                                      type="button"
-                                      className={settingsDropdownTriggerClass}
-                                      data-testid="ui-font-family-trigger"
-                                      aria-label="System font family"
-                                    >
-                                      <span
-                                        className="min-w-0 truncate"
-                                        style={{
-                                          fontFamily:
-                                            activeUiFontFamilyOption?.sampleFamily ??
-                                            uiFontFamily,
-                                        }}
-                                      >
-                                        {activeUiFontFamilyLabel}
-                                      </span>
-                                      <ChevronDown size={16} />
-                                    </button>
-                                  </DropdownMenu.Trigger>
-                                  <DropdownMenu.Portal>
-                                    <MotionDropdownContent
-                                      align="start"
-                                      sideOffset={8}
-                                      className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
-                                      data-testid="ui-font-family-content"
-                                      data-shell-menu-content
-                                      style={{
-                                        maxHeight:
-                                          "min(420px, var(--radix-dropdown-menu-content-available-height))",
-                                      }}
-                                    >
-                                      {uiFontOptions.map((option) => {
-                                        const isActive =
-                                          uiFontFamily === option.value;
-                                        return (
-                                          <DropdownMenu.Item
-                                            key={`${option.label}-${option.value}`}
-                                            className={
-                                              settingsDropdownItemClass
-                                            }
-                                            onSelect={() =>
-                                              setUiFontFamily(option.value)
-                                            }
-                                          >
-                                            <span
-                                              className="min-w-0 flex-1 truncate"
-                                              style={{
-                                                fontFamily: option.sampleFamily,
-                                              }}
-                                            >
-                                              {option.label}
-                                            </span>
-                                            {isActive ? (
-                                              <Check size={15} />
-                                            ) : null}
-                                          </DropdownMenu.Item>
-                                        );
-                                      })}
-                                    </MotionDropdownContent>
-                                  </DropdownMenu.Portal>
-                                </DropdownMenu.Root>
+                              <div
+                                data-setting-id="theme"
+                                className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                  "theme",
+                                )}`}
+                              >
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                    Theme
+                                  </div>
+                                  <span className={settingsPillClass}>
+                                    {selectedThemeLabel}
+                                  </span>
+                                </div>
 
-                                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                  <div className="text-[12px] text-[var(--text-muted)]">
-                                    {localFontStatusLabel}
+                                <ThemeDropdown />
+                              </div>
+
+                              <div className={`${settingsPanelClass} p-4`}>
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <div>
+                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                      Add custom theme
+                                    </div>
+                                    <div className="mt-1 text-[12px] text-[var(--text-muted)]">
+                                      JSON theme file
+                                    </div>
                                   </div>
                                   <button
                                     type="button"
                                     className={settingsActionButtonClass}
-                                    onClick={() => {
-                                      customFontTargetRef.current = "ui";
-                                      customFontInputRef.current?.click();
-                                    }}
+                                    onClick={customThemeImport.openFilePicker}
                                   >
                                     <Plus size={14} />
-                                    Add font
+                                    ADD
                                   </button>
                                 </div>
                                 <input
-                                  ref={customFontInputRef}
+                                  ref={customThemeImport.inputRef}
                                   type="file"
-                                  accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                                  accept=".json,application/json"
                                   className="hidden"
-                                  onChange={handleCustomFontFile}
+                                  onChange={customThemeImport.handleFileChange}
                                 />
-                                {customFontStatus && (
+                                {customThemeImport.status && (
                                   <div
-                                    className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
-                                      customFontStatus.tone === "success"
-                                        ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                                        : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
-                                    }`}
+                                    className={themeImportStatusClass(
+                                      customThemeImport.status.tone,
+                                    )}
                                   >
-                                    {customFontStatus.message}
+                                    {customThemeImport.status.message}
                                   </div>
                                 )}
                               </div>
-                            </div>
+                            </SettingSection>
 
-                            <div
-                              data-setting-id="system-font-size"
-                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-                                "system-font-size",
-                              )}`}
-                            >
-                              <label className="block">
-                                <div className="flex items-center justify-between gap-4">
-                                  <div>
+                            <SettingSection title="Zen Mode">
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Zen Mode"
+                                  description="Hide snapped panels until edge hover."
+                                  checked={zenModeEnabled}
+                                  onCheckedChange={setZenModeEnabled}
+                                  badge="Beta"
+                                  settingId="zen-mode"
+                                  highlighted={
+                                    highlightedSettingId === "zen-mode"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Hide top bar"
+                                  description="Hide the top bar. Move to the top edge to reveal it."
+                                  checked={zenModeHideTopbar}
+                                  onCheckedChange={setZenModeHideTopbar}
+                                  settingId="zen-mode-hide-topbar"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "zen-mode-hide-topbar"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Hide status bar"
+                                  description="Hide the status bar. Move to the bottom edge to reveal it."
+                                  checked={zenModeHideStatusbar}
+                                  onCheckedChange={setZenModeHideStatusbar}
+                                  settingId="zen-mode-hide-statusbar"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "zen-mode-hide-statusbar"
+                                  }
+                                />
+                              </div>
+                            </SettingSection>
+
+                            <SettingSection title="Top bar">
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Compact top bar actions"
+                                  description="Hide the project path so more actions fit in the top bar."
+                                  checked={!showTopbarProjectPath}
+                                  onCheckedChange={(checked) =>
+                                    setShowTopbarProjectPath(!checked)
+                                  }
+                                  settingId="compact-topbar-actions"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "compact-topbar-actions"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="macOS window buttons"
+                                  description="Show native traffic-light buttons in the top bar."
+                                  checked={showNativeMacWindowControls}
+                                  onCheckedChange={
+                                    setShowNativeMacWindowControls
+                                  }
+                                  settingId="native-macos-window-controls"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "native-macos-window-controls"
+                                  }
+                                />
+                                <div
+                                  data-setting-id="topbar-icon-order"
+                                  className={`flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 transition-shadow last:border-0 sm:flex-row sm:items-center sm:justify-between ${getSettingTargetClass(
+                                    "topbar-icon-order",
+                                  )}`}
+                                >
+                                  <div className="pr-4">
                                     <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                      System Font Size
+                                      Top bar icon order
                                     </div>
-                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
-                                      Adjust UI text size everywhere outside the
-                                      code editor.
+                                    <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                                      Restore the default draggable control
+                                      order.
                                     </div>
                                   </div>
-                                  <span className="font-mono text-sm text-[var(--text-primary)]">
-                                    {uiFontSize}px
-                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={resetTopbarItemOrder}
+                                    className={settingsActionButtonClass}
+                                  >
+                                    <RotateCcw size={14} />
+                                    Reset order
+                                  </button>
                                 </div>
-                                <div
-                                  className={`${settingsInsetClass} mt-4 px-4 py-3`}
-                                >
-                                  <input
-                                    type="range"
-                                    min={MIN_UI_FONT_SIZE}
-                                    max={MAX_UI_FONT_SIZE}
-                                    value={uiFontSize}
-                                    onChange={(event) =>
-                                      setUiFontSize(Number(event.target.value))
-                                    }
-                                    className="w-full"
-                                    aria-label="System font size"
-                                    data-testid="ui-font-size-input"
-                                  />
-                                </div>
-                              </label>
-                              <button
-                                type="button"
-                                onClick={resetUiFontSize}
-                                className={`${settingsActionButtonClass} mt-4`}
-                                disabled={uiFontSize === DEFAULT_UI_FONT_SIZE}
-                              >
-                                <RotateCcw size={14} />
-                                Reset System Text Size
-                              </button>
-                            </div>
-
-                            <div
-                              data-setting-id="theme"
-                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-                                "theme",
-                              )}`}
-                            >
-                              <div className="mb-3 flex items-center justify-between gap-3">
-                                <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                  Theme
-                                </div>
-                                <span className={settingsPillClass}>
-                                  {selectedThemeLabel}
-                                </span>
                               </div>
+                            </SettingSection>
 
-                              <ThemeDropdown />
-                            </div>
-
-                            <div className={`${settingsPanelClass} p-4`}>
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                    Add custom theme
-                                  </div>
-                                  <div className="mt-1 text-[12px] text-[var(--text-muted)]">
-                                    JSON theme file
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  className={settingsActionButtonClass}
-                                  onClick={customThemeImport.openFilePicker}
-                                >
-                                  <Plus size={14} />
-                                  ADD
-                                </button>
+                            <SettingSection title="Windows">
+                              <ProjectOpeningModeControl
+                                value={projectWindowMode}
+                                onChange={setProjectWindowMode}
+                                settingId="project-opening"
+                                highlighted={
+                                  highlightedSettingId === "project-opening"
+                                }
+                              />
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Close confirmation"
+                                  description="Ask before closing a project or quitting Arlecchino."
+                                  checked={confirmBeforeClose}
+                                  onCheckedChange={setConfirmBeforeClose}
+                                  settingId="close-confirmation"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "close-confirmation"
+                                  }
+                                />
                               </div>
-                              <input
-                                ref={customThemeImport.inputRef}
-                                type="file"
-                                accept=".json,application/json"
-                                className="hidden"
-                                onChange={customThemeImport.handleFileChange}
-                              />
-                              {customThemeImport.status && (
-                                <div
-                                  className={themeImportStatusClass(
-                                    customThemeImport.status.tone,
-                                  )}
-                                >
-                                  {customThemeImport.status.message}
-                                </div>
-                              )}
-                            </div>
-
-                            <div className={settingsPanelClass}>
-                              <SwitchRow
-                                title="Zen Mode"
-                                description="Hide the top bar, status bar, and snapped panels until their edge is hovered."
-                                checked={zenModeEnabled}
-                                onCheckedChange={setZenModeEnabled}
-                                badge="Beta"
-                                settingId="zen-mode"
-                                highlighted={
-                                  highlightedSettingId === "zen-mode"
-                                }
-                              />
-                              <SwitchRow
-                                title="Compact topbar actions"
-                                description="Hide the project label and show panel and update actions directly in the topbar."
-                                checked={!showTopbarProjectPath}
-                                onCheckedChange={(checked) =>
-                                  setShowTopbarProjectPath(!checked)
-                                }
-                                settingId="compact-topbar-actions"
-                                highlighted={
-                                  highlightedSettingId ===
-                                  "compact-topbar-actions"
-                                }
-                              />
-                              <SwitchRow
-                                title="macOS window buttons"
-                                description="Show the native traffic-light buttons in the topbar. Turn off to let topbar actions occupy that space."
-                                checked={showNativeMacWindowControls}
-                                onCheckedChange={setShowNativeMacWindowControls}
-                                settingId="native-macos-window-controls"
-                                highlighted={
-                                  highlightedSettingId ===
-                                  "native-macos-window-controls"
-                                }
-                              />
-                              <SwitchRow
-                                title="Close confirmation"
-                                description="Ask before closing a project or quitting Arlecchino."
-                                checked={confirmBeforeClose}
-                                onCheckedChange={setConfirmBeforeClose}
-                                settingId="close-confirmation"
-                                highlighted={
-                                  highlightedSettingId === "close-confirmation"
-                                }
-                              />
-                              <div
-                                data-setting-id="topbar-icon-order"
-                                className={`flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 transition-shadow last:border-0 sm:flex-row sm:items-center sm:justify-between ${getSettingTargetClass(
-                                  "topbar-icon-order",
-                                )}`}
-                              >
-                                <div className="pr-4">
-                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                    Topbar icon order
-                                  </div>
-                                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                                    Restore the default order for draggable
-                                    topbar controls.
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={resetTopbarItemOrder}
-                                  className={settingsActionButtonClass}
-                                >
-                                  <RotateCcw size={14} />
-                                  Reset order
-                                </button>
-                              </div>
-                              <SwitchRow
-                                title="Rainbow brackets"
-                                description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
-                                checked={showRainbowBrackets}
-                                onCheckedChange={setShowRainbowBrackets}
-                                settingId="rainbow-brackets"
-                                highlighted={
-                                  highlightedSettingId === "rainbow-brackets"
-                                }
-                              />
-                            </div>
+                            </SettingSection>
                           </div>
                         )}
 
@@ -3700,7 +3826,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               description="Core editor settings and UI zoom."
                             />
 
-                            <div className="space-y-4">
+                            <SettingSection title="Typography">
                               <div
                                 data-setting-id="editor-font-family"
                                 className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
@@ -3710,7 +3836,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 <div className="flex items-start justify-between gap-4">
                                   <div>
                                     <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                      Editor Font Family
+                                      Editor font family
                                     </div>
                                     <div className="mt-1 text-xs text-[var(--text-muted)]">
                                       Choose the font used by the code editor.
@@ -3841,7 +3967,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 <div className="flex items-center justify-between gap-4">
                                   <div>
                                     <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                      Editor Font Size
+                                      Editor font size
                                     </div>
                                     <div className="mt-1 text-xs text-[var(--text-muted)]">
                                       Adjust the text size in the code editor.
@@ -3868,7 +3994,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   />
                                 </div>
                               </label>
+                            </SettingSection>
 
+                            <SettingSection title="Interface">
                               <div
                                 data-setting-id="ui-scale"
                                 className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
@@ -3879,7 +4007,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   <div className="flex items-center justify-between gap-4">
                                     <div>
                                       <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                        UI Scale
+                                        UI scale
                                       </div>
                                       <div className="mt-1 text-xs text-[var(--text-muted)]">
                                         Adjust the overall zoom of the
@@ -3912,10 +4040,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   className={`${settingsActionButtonClass} mt-4`}
                                 >
                                   <RotateCcw size={14} />
-                                  Reset UI Zoom
+                                  Reset UI zoom
                                 </button>
                               </div>
+                            </SettingSection>
 
+                            <SettingSection title="Editor helpers">
                               <div className={settingsPanelClass}>
                                 <SwitchRow
                                   title="Operator ligatures"
@@ -3948,8 +4078,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     highlightedSettingId === "color-tools"
                                   }
                                 />
+                                <SwitchRow
+                                  title="Rainbow brackets"
+                                  description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
+                                  checked={showRainbowBrackets}
+                                  onCheckedChange={setShowRainbowBrackets}
+                                  settingId="rainbow-brackets"
+                                  highlighted={
+                                    highlightedSettingId === "rainbow-brackets"
+                                  }
+                                />
                               </div>
-                            </div>
+                            </SettingSection>
                           </div>
                         )}
 
@@ -3962,186 +4102,193 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               description="Configure how errors and warnings are displayed."
                             />
 
-                            <div className={settingsPanelClass}>
-                              <SwitchRow
-                                title="Fold gutter"
-                                description="Show code folding controls when the editor is in a stable layout budget."
-                                checked={showFoldGutter}
-                                onCheckedChange={setShowFoldGutter}
-                                settingId="fold-gutter"
-                                highlighted={
-                                  highlightedSettingId === "fold-gutter"
-                                }
-                              />
-                              <SwitchRow
-                                title="Show minimap"
-                                description="Display the code minimap in the editor gutter for supported file sizes."
-                                checked={showMinimap}
-                                onCheckedChange={setShowMinimap}
-                                settingId="show-minimap"
-                                highlighted={
-                                  highlightedSettingId === "show-minimap"
-                                }
-                              />
-                              <SwitchRow
-                                title="Show compact diagnostics"
-                                description="Keep the project-wide problems badge visible in the status bar."
-                                checked={showCompactDiagnostics}
-                                onCheckedChange={setShowCompactDiagnostics}
-                                settingId="compact-diagnostics"
-                                highlighted={
-                                  highlightedSettingId === "compact-diagnostics"
-                                }
-                              />
-                            </div>
-
-                            {renderAutocompleteSupport()}
-
-                            <div
-                              data-setting-id="build-identity"
-                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-                                "build-identity",
-                              )}`}
-                            >
-                              <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                Build identity
+                            <SettingSection title="Editor display">
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Fold gutter"
+                                  description="Show code folding controls when the editor is in a stable layout budget."
+                                  checked={showFoldGutter}
+                                  onCheckedChange={setShowFoldGutter}
+                                  settingId="fold-gutter"
+                                  highlighted={
+                                    highlightedSettingId === "fold-gutter"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Show minimap"
+                                  description="Display the code minimap in the editor gutter for supported file sizes."
+                                  checked={showMinimap}
+                                  onCheckedChange={setShowMinimap}
+                                  settingId="show-minimap"
+                                  highlighted={
+                                    highlightedSettingId === "show-minimap"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Show compact diagnostics"
+                                  description="Keep the project-wide problems badge visible in the status bar."
+                                  checked={showCompactDiagnostics}
+                                  onCheckedChange={setShowCompactDiagnostics}
+                                  settingId="compact-diagnostics"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "compact-diagnostics"
+                                  }
+                                />
                               </div>
-                              <div className="mt-3 grid gap-2 text-[12px] text-[var(--text-secondary)]">
-                                {[
-                                  ["Mode", buildInfo.mode ?? "dev"],
-                                  ["Version", buildInfo.version ?? "unknown"],
-                                  ["Build", buildInfo.build ?? "unknown"],
-                                  ["Commit", buildInfo.gitSha ?? "unknown"],
-                                  ["Channel", buildInfo.channel ?? "beta"],
-                                  [
-                                    "Package",
-                                    buildInfo.packaged
-                                      ? "packaged"
-                                      : "development",
-                                  ],
-                                  [
-                                    "Bundle",
-                                    buildInfo.bundlePath ??
-                                      "not running from .app",
-                                  ],
-                                  [
-                                    "Update manifest",
-                                    buildInfo.updateManifestUrl ??
-                                      "not configured",
-                                  ],
-                                  [
-                                    "Private update access",
-                                    privateUpdateAccessLabel,
-                                  ],
-                                  [
-                                    "Update status",
-                                    `${autoUpdateStatus.state}${
-                                      autoUpdateStatus.reason
-                                        ? `: ${autoUpdateStatus.reason}`
-                                        : ""
-                                    }`,
-                                  ],
-                                ].map(([label, value]) => (
-                                  <div
-                                    key={label}
-                                    className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
-                                  >
-                                    <span className="text-[var(--text-muted)]">
-                                      {label}
-                                    </span>
-                                    <span className="min-w-0 break-words font-mono text-[11px] text-[var(--text-primary)]">
-                                      {value}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                              {privateUpdateAccessEnabled && (
-                                <div
-                                  data-setting-id="private-release-access"
-                                  className={`mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3 transition-shadow ${getSettingTargetClass(
-                                    "private-release-access",
-                                  )}`}
-                                >
-                                  <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
-                                        <KeyRound size={14} />
-                                        Private GitHub release access
-                                      </div>
-                                      <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
-                                        Token is stored in macOS Keychain and is
-                                        never shown after saving.
-                                      </div>
-                                    </div>
-                                    <span
-                                      className={`${settingsPillClass} ${
-                                        privateUpdateAuthStatus?.configured
-                                          ? "text-[var(--status-success)]"
-                                          : "text-[var(--status-warning)]"
-                                      }`}
-                                    >
-                                      {privateUpdateAuthStatus?.configured
-                                        ? "Configured"
-                                        : "Missing token"}
-                                    </span>
-                                  </div>
-                                  <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-                                    <input
-                                      type="password"
-                                      autoComplete="off"
-                                      value={privateUpdateToken}
-                                      onChange={(event) =>
-                                        setPrivateUpdateToken(
-                                          event.currentTarget.value,
-                                        )
-                                      }
-                                      placeholder="Fine-grained GitHub token"
-                                      className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-                                    />
-                                    <button
-                                      type="button"
-                                      className={settingsActionButtonClass}
-                                      disabled={
-                                        privateUpdateAuthBusy ||
-                                        !privateUpdateToken.trim()
-                                      }
-                                      onClick={() => {
-                                        void savePrivateUpdateAccessToken();
-                                      }}
-                                    >
-                                      <Check size={14} />
-                                      Save Token
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={settingsActionButtonClass}
-                                      disabled={privateUpdateAuthBusy}
-                                      onClick={() => {
-                                        void clearPrivateUpdateAccessToken();
-                                      }}
-                                    >
-                                      <Trash2 size={14} />
-                                      Clear
-                                    </button>
-                                  </div>
-                                  <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
-                                    {privateUpdateAuthStatus?.reason ??
-                                      "Open this tab to load private update access status."}
-                                  </div>
-                                </div>
-                              )}
-                              <button
-                                type="button"
-                                className={`${settingsActionButtonClass} mt-4`}
-                                disabled={autoUpdateBusy}
-                                onClick={() => {
-                                  void runAutoUpdateCheckWithNotification();
-                                }}
+                            </SettingSection>
+
+                            <SettingSection title="Autocomplete">
+                              {renderAutocompleteSupport()}
+                            </SettingSection>
+
+                            <SettingSection title="Build">
+                              <div
+                                data-setting-id="build-identity"
+                                className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                  "build-identity",
+                                )}`}
                               >
-                                <RefreshCw size={14} />
-                                Check for Updates
-                              </button>
-                            </div>
+                                <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                  Build identity
+                                </div>
+                                <div className="mt-3 grid gap-2 text-[12px] text-[var(--text-secondary)]">
+                                  {[
+                                    ["Mode", buildInfo.mode ?? "dev"],
+                                    ["Version", buildInfo.version ?? "unknown"],
+                                    ["Build", buildInfo.build ?? "unknown"],
+                                    ["Commit", buildInfo.gitSha ?? "unknown"],
+                                    ["Channel", buildInfo.channel ?? "beta"],
+                                    [
+                                      "Package",
+                                      buildInfo.packaged
+                                        ? "packaged"
+                                        : "development",
+                                    ],
+                                    [
+                                      "Bundle",
+                                      buildInfo.bundlePath ??
+                                        "not running from .app",
+                                    ],
+                                    [
+                                      "Update manifest",
+                                      buildInfo.updateManifestUrl ??
+                                        "not configured",
+                                    ],
+                                    [
+                                      "Private update access",
+                                      privateUpdateAccessLabel,
+                                    ],
+                                    [
+                                      "Update status",
+                                      `${autoUpdateStatus.state}${
+                                        autoUpdateStatus.reason
+                                          ? `: ${autoUpdateStatus.reason}`
+                                          : ""
+                                      }`,
+                                    ],
+                                  ].map(([label, value]) => (
+                                    <div
+                                      key={label}
+                                      className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
+                                    >
+                                      <span className="text-[var(--text-muted)]">
+                                        {label}
+                                      </span>
+                                      <span className="min-w-0 break-words font-mono text-[11px] text-[var(--text-primary)]">
+                                        {value}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {privateUpdateAccessEnabled && (
+                                  <div
+                                    data-setting-id="private-release-access"
+                                    className={`mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3 transition-shadow ${getSettingTargetClass(
+                                      "private-release-access",
+                                    )}`}
+                                  >
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
+                                          <KeyRound size={14} />
+                                          Private GitHub release access
+                                        </div>
+                                        <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+                                          Token is stored in macOS Keychain and
+                                          is never shown after saving.
+                                        </div>
+                                      </div>
+                                      <span
+                                        className={`${settingsPillClass} ${
+                                          privateUpdateAuthStatus?.configured
+                                            ? "text-[var(--status-success)]"
+                                            : "text-[var(--status-warning)]"
+                                        }`}
+                                      >
+                                        {privateUpdateAuthStatus?.configured
+                                          ? "Configured"
+                                          : "Missing token"}
+                                      </span>
+                                    </div>
+                                    <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                                      <input
+                                        type="password"
+                                        autoComplete="off"
+                                        value={privateUpdateToken}
+                                        onChange={(event) =>
+                                          setPrivateUpdateToken(
+                                            event.currentTarget.value,
+                                          )
+                                        }
+                                        placeholder="Fine-grained GitHub token"
+                                        className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+                                      />
+                                      <button
+                                        type="button"
+                                        className={settingsActionButtonClass}
+                                        disabled={
+                                          privateUpdateAuthBusy ||
+                                          !privateUpdateToken.trim()
+                                        }
+                                        onClick={() => {
+                                          void savePrivateUpdateAccessToken();
+                                        }}
+                                      >
+                                        <Check size={14} />
+                                        Save Token
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={settingsActionButtonClass}
+                                        disabled={privateUpdateAuthBusy}
+                                        onClick={() => {
+                                          void clearPrivateUpdateAccessToken();
+                                        }}
+                                      >
+                                        <Trash2 size={14} />
+                                        Clear
+                                      </button>
+                                    </div>
+                                    <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
+                                      {privateUpdateAuthStatus?.reason ??
+                                        "Open this tab to load private update access status."}
+                                    </div>
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  className={`${settingsActionButtonClass} mt-4`}
+                                  disabled={autoUpdateBusy}
+                                  onClick={() => {
+                                    void runAutoUpdateCheckWithNotification();
+                                  }}
+                                >
+                                  <RefreshCw size={14} />
+                                  Check for Updates
+                                </button>
+                              </div>
+                            </SettingSection>
                           </div>
                         )}
 
@@ -4154,84 +4301,97 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               description="Manage integrated browser preview behavior."
                             />
 
-                            <div className={settingsPanelClass}>
-                              <div
-                                data-setting-id="markdown-links"
-                                className={`grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 transition-shadow lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center ${getSettingTargetClass(
-                                  "markdown-links",
-                                )}`}
-                              >
-                                <div className="min-w-0 pr-4">
-                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                    Markdown links
-                                  </div>
-                                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                                    Choose whether Markdown preview links open
-                                    directly in the system browser or first
-                                    inside Browser Preview.
-                                  </div>
-                                </div>
+                            <SettingSection title="Links">
+                              <div className={settingsPanelClass}>
                                 <div
-                                  role="group"
-                                  aria-label="Markdown links"
-                                  className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+                                  data-setting-id="markdown-links"
+                                  className={`grid gap-4 px-4 py-4 transition-shadow lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center ${getSettingTargetClass(
+                                    "markdown-links",
+                                  )}`}
                                 >
-                                  {markdownLinkOpenModeOptions.map((option) => (
-                                    <button
-                                      key={option.value}
-                                      type="button"
-                                      aria-pressed={
-                                        markdownLinkOpenMode === option.value
-                                      }
-                                      onClick={() =>
-                                        setMarkdownLinkOpenMode(option.value)
-                                      }
-                                      className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                                        markdownLinkOpenMode === option.value
-                                          ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                                          : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                                      }`}
-                                    >
-                                      {option.label}
-                                    </button>
-                                  ))}
+                                  <div className="min-w-0 pr-4">
+                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                      Markdown links
+                                    </div>
+                                    <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                                      Choose whether Markdown preview links open
+                                      directly in the system browser or first
+                                      inside Browser Preview.
+                                    </div>
+                                  </div>
+                                  <div
+                                    role="group"
+                                    aria-label="Markdown links"
+                                    className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+                                  >
+                                    {markdownLinkOpenModeOptions.map(
+                                      (option) => (
+                                        <button
+                                          key={option.value}
+                                          type="button"
+                                          aria-pressed={
+                                            markdownLinkOpenMode ===
+                                            option.value
+                                          }
+                                          onClick={() =>
+                                            setMarkdownLinkOpenMode(
+                                              option.value,
+                                            )
+                                          }
+                                          className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                                            markdownLinkOpenMode ===
+                                            option.value
+                                              ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                                              : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                                          }`}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      ),
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                              <SwitchRow
-                                title="Auto-open Preview"
-                                description="Open browser preview automatically when the terminal reports a local URL."
-                                checked={autoOpenFromTerminal}
-                                onCheckedChange={setAutoOpenFromTerminal}
-                                settingId="auto-open-preview"
-                                highlighted={
-                                  highlightedSettingId === "auto-open-preview"
-                                }
-                              />
-                              <SwitchRow
-                                title="Reuse Session Window"
-                                description="Keep one preview window per terminal session instead of spawning new ones."
-                                checked={reuseWindowPerSession}
-                                onCheckedChange={setReuseWindowPerSession}
-                                settingId="reuse-session-window"
-                                highlighted={
-                                  highlightedSettingId ===
-                                  "reuse-session-window"
-                                }
-                              />
-                              <SwitchRow
-                                title="Close on Session Exit"
-                                description="Close auto-opened preview windows when the terminal session ends."
-                                checked={closeAutoOpenedOnTerminalExit}
-                                onCheckedChange={
-                                  setCloseAutoOpenedOnTerminalExit
-                                }
-                                settingId="close-on-session-exit"
-                                highlighted={
-                                  highlightedSettingId ===
-                                  "close-on-session-exit"
-                                }
-                              />
-                            </div>
+                            </SettingSection>
+
+                            <SettingSection title="Terminal automation">
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Auto-open preview"
+                                  description="Open browser preview automatically when the terminal reports a local URL."
+                                  checked={autoOpenFromTerminal}
+                                  onCheckedChange={setAutoOpenFromTerminal}
+                                  settingId="auto-open-preview"
+                                  highlighted={
+                                    highlightedSettingId === "auto-open-preview"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Reuse session window"
+                                  description="Keep one preview window per terminal session instead of spawning new ones."
+                                  checked={reuseWindowPerSession}
+                                  onCheckedChange={setReuseWindowPerSession}
+                                  settingId="reuse-session-window"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "reuse-session-window"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Close on session exit"
+                                  description="Close auto-opened preview windows when the terminal session ends."
+                                  checked={closeAutoOpenedOnTerminalExit}
+                                  onCheckedChange={
+                                    setCloseAutoOpenedOnTerminalExit
+                                  }
+                                  settingId="close-on-session-exit"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "close-on-session-exit"
+                                  }
+                                />
+                              </div>
+                            </SettingSection>
                           </div>
                         )}
 
