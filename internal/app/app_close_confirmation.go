@@ -26,6 +26,7 @@ func (a *App) ConfirmApplicationClose() bool {
 	}
 	a.closeConfirmationAllowed.Store(true)
 	a.closeConfirmationPending.Store(false)
+	a.emitApplicationWillTerminate()
 	if a.wailsApp == nil {
 		return false
 	}
@@ -45,6 +46,7 @@ func (a *App) shouldQuitApplication() bool {
 	allowed := a.allowOrRequestApplicationClose("quit")
 	if allowed {
 		a.closeConfirmationAllowed.Store(true)
+		a.emitApplicationWillTerminate()
 	}
 	return allowed
 }

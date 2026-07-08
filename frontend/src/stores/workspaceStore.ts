@@ -601,11 +601,11 @@ const initializeProjectSessionWorkspace = async (
       session.sessionId,
       projectPath,
     );
-    useWorkspaceStore.getState().setReady(true);
     const opened = await openProjectPromise;
     if (opened === false) {
       throw new Error("Project window session opener is unavailable.");
     }
+    useWorkspaceStore.getState().setReady(true);
     useWorkspaceStore
       .getState()
       .setActiveFramework(

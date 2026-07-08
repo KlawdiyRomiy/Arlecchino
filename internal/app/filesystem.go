@@ -268,8 +268,20 @@ type projectEntryDeletedEvent struct {
 }
 
 func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
+	return a.readDirectoryForSession(a.activeProjectSession(), dirPath)
+}
+
+func (a *App) ReadDirectoryForProjectSession(sessionID string, dirPath string) ([]FileEntry, error) {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return a.readDirectoryForSession(session, dirPath)
+}
+
+func (a *App) readDirectoryForSession(session *ProjectRuntimeSession, dirPath string) ([]FileEntry, error) {
 	var err error
-	dirPath, err = a.resolveRendererProjectPath(dirPath, "directory path", true)
+	dirPath, err = a.resolveRendererProjectPathForSession(session, dirPath, "directory path", true)
 	if err != nil {
 		return nil, err
 	}
@@ -299,8 +311,20 @@ func shouldHideProjectExplorerEntry(name string) bool {
 }
 
 func (a *App) InspectEditorFile(filePath string) (EditorFileInspection, error) {
+	return a.inspectEditorFileForSession(a.activeProjectSession(), filePath)
+}
+
+func (a *App) InspectEditorFileForProjectSession(sessionID string, filePath string) (EditorFileInspection, error) {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return EditorFileInspection{}, err
+	}
+	return a.inspectEditorFileForSession(session, filePath)
+}
+
+func (a *App) inspectEditorFileForSession(session *ProjectRuntimeSession, filePath string) (EditorFileInspection, error) {
 	var err error
-	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	filePath, err = a.resolveRendererProjectPathForSession(session, filePath, "file path", true)
 	if err != nil {
 		return EditorFileInspection{}, err
 	}
@@ -308,8 +332,20 @@ func (a *App) InspectEditorFile(filePath string) (EditorFileInspection, error) {
 }
 
 func (a *App) ReadEditorFilePreview(filePath string, maxBytes int) (EditorFilePreview, error) {
+	return a.readEditorFilePreviewForSession(a.activeProjectSession(), filePath, maxBytes)
+}
+
+func (a *App) ReadEditorFilePreviewForProjectSession(sessionID string, filePath string, maxBytes int) (EditorFilePreview, error) {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return EditorFilePreview{}, err
+	}
+	return a.readEditorFilePreviewForSession(session, filePath, maxBytes)
+}
+
+func (a *App) readEditorFilePreviewForSession(session *ProjectRuntimeSession, filePath string, maxBytes int) (EditorFilePreview, error) {
 	var err error
-	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	filePath, err = a.resolveRendererProjectPathForSession(session, filePath, "file path", true)
 	if err != nil {
 		return EditorFilePreview{}, err
 	}
@@ -346,8 +382,20 @@ func (a *App) ReadEditorFilePreview(filePath string, maxBytes int) (EditorFilePr
 }
 
 func (a *App) ReadEditorVisualFile(filePath string) (EditorVisualFile, error) {
+	return a.readEditorVisualFileForSession(a.activeProjectSession(), filePath)
+}
+
+func (a *App) ReadEditorVisualFileForProjectSession(sessionID string, filePath string) (EditorVisualFile, error) {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return EditorVisualFile{}, err
+	}
+	return a.readEditorVisualFileForSession(session, filePath)
+}
+
+func (a *App) readEditorVisualFileForSession(session *ProjectRuntimeSession, filePath string) (EditorVisualFile, error) {
 	var err error
-	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	filePath, err = a.resolveRendererProjectPathForSession(session, filePath, "file path", true)
 	if err != nil {
 		return EditorVisualFile{}, err
 	}
@@ -387,8 +435,20 @@ func (a *App) ReadEditorVisualFile(filePath string) (EditorVisualFile, error) {
 }
 
 func (a *App) ReadFile(filePath string) (string, error) {
+	return a.readFileForSession(a.activeProjectSession(), filePath)
+}
+
+func (a *App) ReadFileForProjectSession(sessionID string, filePath string) (string, error) {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return a.readFileForSession(session, filePath)
+}
+
+func (a *App) readFileForSession(session *ProjectRuntimeSession, filePath string) (string, error) {
 	var err error
-	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	filePath, err = a.resolveRendererProjectPathForSession(session, filePath, "file path", true)
 	if err != nil {
 		return "", err
 	}
@@ -705,8 +765,20 @@ func formatFileSize(bytes int64) string {
 }
 
 func (a *App) WriteFile(filePath string, content string) error {
+	return a.writeFileForSession(a.activeProjectSession(), filePath, content)
+}
+
+func (a *App) WriteFileForProjectSession(sessionID string, filePath string, content string) error {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return err
+	}
+	return a.writeFileForSession(session, filePath, content)
+}
+
+func (a *App) writeFileForSession(session *ProjectRuntimeSession, filePath string, content string) error {
 	var err error
-	filePath, err = a.resolveRendererProjectPath(filePath, "file path", false)
+	filePath, err = a.resolveRendererProjectPathForSession(session, filePath, "file path", false)
 	if err != nil {
 		return err
 	}
@@ -720,7 +792,7 @@ func (a *App) WriteFile(filePath string, content string) error {
 		return err
 	}
 
-	if engine := a.activeCoreEngine(); engine != nil {
+	if engine := a.activeCoreEngineForPath(filePath); engine != nil {
 		if created {
 			engine.OnFileCreated(filePath, []byte(content))
 		} else {
@@ -865,12 +937,25 @@ func normalizeRequiredPath(rawPath string, fieldName string) (string, error) {
 }
 
 func (a *App) resolveRendererProjectPath(rawPath string, fieldName string, mustExist bool) (string, error) {
+	return a.resolveRendererProjectPathForSession(a.activeProjectSession(), rawPath, fieldName, mustExist)
+}
+
+func (a *App) resolveRendererProjectPathForSession(session *ProjectRuntimeSession, rawPath string, fieldName string, mustExist bool) (string, error) {
 	projectPath := ""
-	if a != nil {
-		projectPath = strings.TrimSpace(a.currentProjectPath())
+	if session != nil {
+		projectPath = strings.TrimSpace(session.currentProjectPath())
 	}
 	if projectPath == "" {
-		return "", fmt.Errorf("active project is required for %s", fieldName)
+		path, err := normalizeRequiredPath(rawPath, fieldName)
+		if err != nil {
+			return "", err
+		}
+		if mustExist {
+			if _, err := os.Stat(path); err != nil {
+				return "", err
+			}
+		}
+		return path, nil
 	}
 	root, err := resolveProjectEntryRootFromPath(projectPath)
 	if err != nil {
@@ -881,6 +966,18 @@ func (a *App) resolveRendererProjectPath(rawPath string, fieldName string, mustE
 		return "", err
 	}
 	return resolved.Path, nil
+}
+
+func (a *App) projectSessionByExplicitID(sessionID string) (*ProjectRuntimeSession, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = defaultProjectSessionID
+	}
+	session := a.projectSessionByID(sessionID)
+	if session == nil {
+		return nil, fmt.Errorf("project session not found: %s", sessionID)
+	}
+	return session, nil
 }
 
 func sanitizeProjectEntryName(name string) (string, error) {

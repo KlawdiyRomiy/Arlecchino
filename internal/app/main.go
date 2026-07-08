@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -83,6 +84,8 @@ func Run(assets fs.FS) {
 	app.attachWailsApplication(wailsApp)
 	registerOpenIntentApplicationEvents(app, wailsApp)
 	registerApplicationLifecycleEvents(app, wailsApp)
+	stopTerminationSignalBridge := registerTerminationSignalBridge(app, wailsApp)
+	defer stopTerminationSignalBridge()
 
 	mainWindow := wailsApp.Window.NewWithOptions(mainWebviewWindowOptions())
 	app.attachMainWindow(mainWindow)
@@ -91,6 +94,41 @@ func Run(assets fs.FS) {
 
 	if err := wailsApp.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
+	}
+}
+
+func registerTerminationSignalBridge(app *App, wailsApp *application.App) func() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+
+	go func() {
+		select {
+		case <-signals:
+			if app != nil {
+				app.emitApplicationWillTerminate()
+			}
+			if wailsApp != nil {
+				go func() {
+					timer := time.NewTimer(2 * time.Second)
+					defer timer.Stop()
+					select {
+					case <-done:
+					case <-timer.C:
+						os.Exit(0)
+					}
+				}()
+				wailsApp.Quit()
+				return
+			}
+			os.Exit(0)
+		case <-done:
+		}
+	}()
+
+	return func() {
+		signal.Stop(signals)
+		close(done)
 	}
 }
 

@@ -67,8 +67,20 @@ type editorBinaryClassification struct {
 }
 
 func (a *App) ReadEditorBinaryFile(filePath string) (EditorBinaryFile, error) {
+	return a.readEditorBinaryFileForSession(a.activeProjectSession(), filePath)
+}
+
+func (a *App) ReadEditorBinaryFileForProjectSession(sessionID string, filePath string) (EditorBinaryFile, error) {
+	session, err := a.projectSessionByExplicitID(sessionID)
+	if err != nil {
+		return EditorBinaryFile{}, err
+	}
+	return a.readEditorBinaryFileForSession(session, filePath)
+}
+
+func (a *App) readEditorBinaryFileForSession(session *ProjectRuntimeSession, filePath string) (EditorBinaryFile, error) {
 	var err error
-	filePath, err = a.resolveRendererProjectPath(filePath, "file path", true)
+	filePath, err = a.resolveRendererProjectPathForSession(session, filePath, "file path", true)
 	if err != nil {
 		return EditorBinaryFile{}, err
 	}

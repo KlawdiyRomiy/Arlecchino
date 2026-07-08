@@ -1,8 +1,23 @@
 import {
+  InspectEditorFile as generatedInspectEditorFile,
   PositionNativeWindowControls as generatedPositionNativeWindowControls,
+  ReadDirectory as generatedReadDirectory,
+  ReadEditorBinaryFile as generatedReadEditorBinaryFile,
+  ReadEditorFilePreview as generatedReadEditorFilePreview,
+  ReadEditorVisualFile as generatedReadEditorVisualFile,
+  ReadFile as generatedReadFile,
   RefreshNativeWindowControls as generatedRefreshNativeWindowControls,
   SetNativeWindowControlsVisible as generatedSetNativeWindowControlsVisible,
+  WriteFile as generatedWriteFile,
 } from "../../bindings/arlecchino/internal/app/app";
+import type {
+  EditorBinaryFile,
+  EditorFileInspection,
+  EditorFilePreview,
+  EditorVisualFile,
+  FileEntry,
+} from "../../bindings/arlecchino/internal/app/models";
+import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 
 export * from "../../bindings/arlecchino/internal/app/app";
 
@@ -51,6 +66,10 @@ interface CloseConfirmationBridge {
 
 interface ProjectWindowBridge {
   OpenProjectWindow?: (path: string) => Promise<unknown> | unknown;
+  OpenProjectWindowForProjectSession?: (
+    sessionId: string,
+    path: string,
+  ) => Promise<unknown> | unknown;
   OpenProjectWindowSession?: (
     sessionId: string,
     path: string,
@@ -363,6 +382,12 @@ const projectWindowMethodNames = [
   "arlecchino.App.OpenProjectWindow",
 ] as const;
 
+const openProjectWindowForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.OpenProjectWindowForProjectSession",
+  "main.App.OpenProjectWindowForProjectSession",
+  "arlecchino.App.OpenProjectWindowForProjectSession",
+] as const;
+
 const projectWindowSessionMethodNames = [
   "arlecchino/internal/app.App.GetProjectWindowSession",
   "main.App.GetProjectWindowSession",
@@ -379,6 +404,48 @@ const currentProjectWindowSessionMethodNames = [
   "arlecchino/internal/app.App.GetCurrentProjectWindowSession",
   "main.App.GetCurrentProjectWindowSession",
   "arlecchino.App.GetCurrentProjectWindowSession",
+] as const;
+
+const inspectEditorFileForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.InspectEditorFileForProjectSession",
+  "main.App.InspectEditorFileForProjectSession",
+  "arlecchino.App.InspectEditorFileForProjectSession",
+] as const;
+
+const readDirectoryForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.ReadDirectoryForProjectSession",
+  "main.App.ReadDirectoryForProjectSession",
+  "arlecchino.App.ReadDirectoryForProjectSession",
+] as const;
+
+const readEditorBinaryFileForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.ReadEditorBinaryFileForProjectSession",
+  "main.App.ReadEditorBinaryFileForProjectSession",
+  "arlecchino.App.ReadEditorBinaryFileForProjectSession",
+] as const;
+
+const readEditorFilePreviewForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.ReadEditorFilePreviewForProjectSession",
+  "main.App.ReadEditorFilePreviewForProjectSession",
+  "arlecchino.App.ReadEditorFilePreviewForProjectSession",
+] as const;
+
+const readEditorVisualFileForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.ReadEditorVisualFileForProjectSession",
+  "main.App.ReadEditorVisualFileForProjectSession",
+  "arlecchino.App.ReadEditorVisualFileForProjectSession",
+] as const;
+
+const readFileForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.ReadFileForProjectSession",
+  "main.App.ReadFileForProjectSession",
+  "arlecchino.App.ReadFileForProjectSession",
+] as const;
+
+const writeFileForProjectSessionMethodNames = [
+  "arlecchino/internal/app.App.WriteFileForProjectSession",
+  "main.App.WriteFileForProjectSession",
+  "arlecchino.App.WriteFileForProjectSession",
 ] as const;
 
 const startRecentProjectIndexMethodNames = [
@@ -543,12 +610,31 @@ let cancelApplicationCloseMethodName:
   (typeof cancelApplicationCloseMethodNames)[number] | undefined;
 let projectWindowMethodName:
   (typeof projectWindowMethodNames)[number] | undefined;
+let openProjectWindowForProjectSessionMethodName:
+  (typeof openProjectWindowForProjectSessionMethodNames)[number] | undefined;
 let projectWindowSessionMethodName:
   (typeof projectWindowSessionMethodNames)[number] | undefined;
 let openProjectWindowSessionMethodName:
   (typeof openProjectWindowSessionMethodNames)[number] | undefined;
 let currentProjectWindowSessionMethodName:
   (typeof currentProjectWindowSessionMethodNames)[number] | undefined;
+let inspectEditorFileForProjectSessionMethodName:
+  (typeof inspectEditorFileForProjectSessionMethodNames)[number] | undefined;
+let readDirectoryForProjectSessionMethodName:
+  (typeof readDirectoryForProjectSessionMethodNames)[number] | undefined;
+let readEditorBinaryFileForProjectSessionMethodName:
+  (typeof readEditorBinaryFileForProjectSessionMethodNames)[number] | undefined;
+let readEditorFilePreviewForProjectSessionMethodName:
+  | (typeof readEditorFilePreviewForProjectSessionMethodNames)[number]
+  | undefined;
+let readEditorVisualFileForProjectSessionMethodName:
+  (typeof readEditorVisualFileForProjectSessionMethodNames)[number] | undefined;
+let readFileForProjectSessionMethodName:
+  (typeof readFileForProjectSessionMethodNames)[number] | undefined;
+let writeFileForProjectSessionMethodName:
+  (typeof writeFileForProjectSessionMethodNames)[number] | undefined;
+let projectSessionRuntimeMethodsUnavailable = false;
+let openProjectWindowForProjectSessionUnavailable = false;
 let startRecentProjectIndexMethodName:
   (typeof startRecentProjectIndexMethodNames)[number] | undefined;
 let recentProjectIndexStatusesMethodName:
@@ -792,6 +878,194 @@ const callRuntimeBridgeMethod = async <T>(
 
   throw new Error("Wails runtime method is unavailable.");
 };
+
+const callProjectSessionRuntimeMethod = async <T>(
+  cachedMethodName: string | undefined,
+  setCachedMethodName: (methodName: string | undefined) => void,
+  methodNames: readonly string[],
+  args: unknown[] = [],
+): Promise<T> => {
+  if (
+    projectSessionRuntimeMethodsUnavailable &&
+    shouldFallbackToGeneratedProjectSessionCall()
+  ) {
+    throw new Error("Project-session runtime bridge is unavailable.");
+  }
+
+  return callRuntimeBridgeMethod<T>(
+    cachedMethodName,
+    setCachedMethodName,
+    methodNames,
+    [getCurrentProjectSessionId(), ...args],
+  );
+};
+
+const markProjectSessionRuntimeMethodsUnavailable = () => {
+  if (shouldFallbackToGeneratedProjectSessionCall()) {
+    projectSessionRuntimeMethodsUnavailable = true;
+  }
+};
+
+const shouldFallbackToGeneratedProjectSessionCall = (): boolean =>
+  getCurrentProjectSessionId() === "main";
+
+export async function InspectEditorFile(
+  filePath: string,
+): Promise<EditorFileInspection> {
+  try {
+    return await callProjectSessionRuntimeMethod<EditorFileInspection>(
+      inspectEditorFileForProjectSessionMethodName,
+      (methodName) => {
+        inspectEditorFileForProjectSessionMethodName = methodName as
+          | (typeof inspectEditorFileForProjectSessionMethodNames)[number]
+          | undefined;
+      },
+      inspectEditorFileForProjectSessionMethodNames,
+      [filePath],
+    );
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedInspectEditorFile(filePath);
+  }
+}
+
+export async function ReadEditorBinaryFile(
+  filePath: string,
+): Promise<EditorBinaryFile> {
+  try {
+    return await callProjectSessionRuntimeMethod<EditorBinaryFile>(
+      readEditorBinaryFileForProjectSessionMethodName,
+      (methodName) => {
+        readEditorBinaryFileForProjectSessionMethodName = methodName as
+          | (typeof readEditorBinaryFileForProjectSessionMethodNames)[number]
+          | undefined;
+      },
+      readEditorBinaryFileForProjectSessionMethodNames,
+      [filePath],
+    );
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedReadEditorBinaryFile(filePath);
+  }
+}
+
+export async function ReadEditorFilePreview(
+  filePath: string,
+  maxBytes: number,
+): Promise<EditorFilePreview> {
+  try {
+    return await callProjectSessionRuntimeMethod<EditorFilePreview>(
+      readEditorFilePreviewForProjectSessionMethodName,
+      (methodName) => {
+        readEditorFilePreviewForProjectSessionMethodName = methodName as
+          | (typeof readEditorFilePreviewForProjectSessionMethodNames)[number]
+          | undefined;
+      },
+      readEditorFilePreviewForProjectSessionMethodNames,
+      [filePath, maxBytes],
+    );
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedReadEditorFilePreview(filePath, maxBytes);
+  }
+}
+
+export async function ReadEditorVisualFile(
+  filePath: string,
+): Promise<EditorVisualFile> {
+  try {
+    return await callProjectSessionRuntimeMethod<EditorVisualFile>(
+      readEditorVisualFileForProjectSessionMethodName,
+      (methodName) => {
+        readEditorVisualFileForProjectSessionMethodName = methodName as
+          | (typeof readEditorVisualFileForProjectSessionMethodNames)[number]
+          | undefined;
+      },
+      readEditorVisualFileForProjectSessionMethodNames,
+      [filePath],
+    );
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedReadEditorVisualFile(filePath);
+  }
+}
+
+export async function ReadFile(filePath: string): Promise<string> {
+  try {
+    return await callProjectSessionRuntimeMethod<string>(
+      readFileForProjectSessionMethodName,
+      (methodName) => {
+        readFileForProjectSessionMethodName = methodName as
+          (typeof readFileForProjectSessionMethodNames)[number] | undefined;
+      },
+      readFileForProjectSessionMethodNames,
+      [filePath],
+    );
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedReadFile(filePath);
+  }
+}
+
+export async function ReadDirectory(dirPath: string): Promise<FileEntry[]> {
+  try {
+    return await callProjectSessionRuntimeMethod<FileEntry[]>(
+      readDirectoryForProjectSessionMethodName,
+      (methodName) => {
+        readDirectoryForProjectSessionMethodName = methodName as
+          | (typeof readDirectoryForProjectSessionMethodNames)[number]
+          | undefined;
+      },
+      readDirectoryForProjectSessionMethodNames,
+      [dirPath],
+    );
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedReadDirectory(dirPath);
+  }
+}
+
+export async function WriteFile(
+  filePath: string,
+  content: string,
+): Promise<void> {
+  try {
+    await callProjectSessionRuntimeMethod<void>(
+      writeFileForProjectSessionMethodName,
+      (methodName) => {
+        writeFileForProjectSessionMethodName = methodName as
+          (typeof writeFileForProjectSessionMethodNames)[number] | undefined;
+      },
+      writeFileForProjectSessionMethodNames,
+      [filePath, content],
+    );
+    return;
+  } catch (error) {
+    if (!shouldFallbackToGeneratedProjectSessionCall()) {
+      throw error;
+    }
+    markProjectSessionRuntimeMethodsUnavailable();
+    return generatedWriteFile(filePath, content);
+  }
+}
 
 export async function SetNativeWindowControlsVisible(
   visible: boolean,
@@ -1250,7 +1524,43 @@ export async function GetLocalPreviewURL(
 }
 
 export async function OpenProjectWindow(path: string): Promise<boolean> {
+  const currentSessionId = getCurrentProjectSessionId();
   const bridge = getProjectWindowBridge();
+  if (bridge?.OpenProjectWindowForProjectSession) {
+    try {
+      await Promise.resolve(
+        bridge.OpenProjectWindowForProjectSession(currentSessionId, path),
+      );
+      return true;
+    } catch (error) {
+      if (currentSessionId !== "main") {
+        throw error;
+      }
+      // Fall back to Wails v3 runtime name lookup or the legacy main-window binding.
+    }
+  }
+
+  if (!openProjectWindowForProjectSessionUnavailable) {
+    try {
+      await callRuntimeBridgeMethod<unknown>(
+        openProjectWindowForProjectSessionMethodName,
+        (methodName) => {
+          openProjectWindowForProjectSessionMethodName = methodName as
+            | (typeof openProjectWindowForProjectSessionMethodNames)[number]
+            | undefined;
+        },
+        openProjectWindowForProjectSessionMethodNames,
+        [currentSessionId, path],
+      );
+      return true;
+    } catch (error) {
+      if (currentSessionId !== "main") {
+        throw error;
+      }
+      openProjectWindowForProjectSessionUnavailable = true;
+    }
+  }
+
   if (bridge?.OpenProjectWindow) {
     try {
       await Promise.resolve(bridge.OpenProjectWindow(path));

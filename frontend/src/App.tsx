@@ -115,6 +115,12 @@ const appShellStyle: React.CSSProperties = {
   background: "transparent",
 };
 
+const appSurfaceBackgroundStyle: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  background: "var(--surface-canvas)",
+};
+
 const registeredCustomFontFaces = new Map<string, FontFace>();
 
 const parentDirectoryForFilePath = (path: string): string | null => {
@@ -966,7 +972,7 @@ const App: React.FC = () => {
           data-testid="app-scaled-surface"
           style={buildScaledSurfaceStyle(effectiveUiScale)}
         >
-          <div className="blackprint-bg" />
+          <div aria-hidden="true" style={appSurfaceBackgroundStyle} />
         </div>
         <MCPApprovalDialog />
         <AppNotificationStack />
@@ -993,7 +999,7 @@ const App: React.FC = () => {
         data-testid="app-scaled-surface"
         style={buildScaledSurfaceStyle(effectiveUiScale)}
       >
-        <div className="blackprint-bg" />
+        <div aria-hidden="true" style={appSurfaceBackgroundStyle} />
         <ProjectSwitchTransition
           layoutKey={activeProjectPath ?? "__welcome__"}
           direction={activeProject ? switchDirection : 0}
@@ -1012,6 +1018,7 @@ const App: React.FC = () => {
                   onReorderProjects={handleReorderProjects}
                 >
                   <ProjectScreen
+                    key={activeProject.path}
                     projectPath={activeProject.path}
                     fileToOpen={fileToOpen}
                     onFileOpened={() => setFileToOpen(null)}

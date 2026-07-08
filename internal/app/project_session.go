@@ -249,7 +249,7 @@ func (r *ProjectSessionRegistry) findSessionByPath(path string) *ProjectRuntimeS
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, session := range r.sessions {
-		if session == nil {
+		if session == nil || session.IsDefault {
 			continue
 		}
 		if canonicalProjectSessionPath(session.projectWindowProjectPath()) == canonical {

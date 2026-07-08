@@ -13,6 +13,10 @@ func registerApplicationLifecycleEvents(owner *App, wailsApp *application.App) {
 	}
 
 	wailsApp.Event.OnApplicationEvent(events.Mac.ApplicationWillTerminate, func(event *application.ApplicationEvent) {
+		if owner != nil {
+			owner.emitApplicationWillTerminate()
+			return
+		}
 		wailsApp.Event.Emit(appWillTerminateEvent)
 	})
 
@@ -38,4 +42,19 @@ func shouldRestoreWindowForMacReopen(contextHasVisibleWindows, registryHasVisibl
 
 func shouldFocusWindowForMacReopen(contextHasVisibleWindows, registryHasVisibleWindow bool) bool {
 	return contextHasVisibleWindows || registryHasVisibleWindow || shouldRestoreWindowForMacReopen(contextHasVisibleWindows, registryHasVisibleWindow)
+}
+
+func (a *App) emitApplicationWillTerminate() {
+	if a == nil || !a.appWillTerminateEmitted.CompareAndSwap(false, true) {
+		return
+	}
+	if a.wailsApp != nil {
+		a.wailsApp.Event.Emit(appWillTerminateEvent)
+		return
+	}
+	a.emitEvent(appWillTerminateEvent)
+}
+
+func (a *App) isApplicationTerminating() bool {
+	return a != nil && a.appWillTerminateEmitted.Load()
 }

@@ -101,6 +101,7 @@ type App struct {
 	closeConfirmationEnabled atomic.Bool
 	closeConfirmationAllowed atomic.Bool
 	closeConfirmationPending atomic.Bool
+	appWillTerminateEmitted  atomic.Bool
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc

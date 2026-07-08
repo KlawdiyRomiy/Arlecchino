@@ -1,8 +1,16 @@
 const PROJECT_WINDOW_RESTORE_STORAGE_KEY = "project-window-restore.v1";
+const APP_WILL_TERMINATE_EVENT = "app:will-terminate";
+const PROJECT_WINDOW_CLOSING_EVENT = "project-window:closing";
 
 interface ProjectWindowRestoreState {
   version: 1;
   paths: string[];
+}
+
+interface ProjectWindowClosingPayload {
+  sessionId?: string;
+  projectPath?: string;
+  windowName?: string;
 }
 
 type RuntimeEventBridge = {
@@ -103,9 +111,32 @@ export const bindProjectWindowRestoreLifecycle = (path: string) => {
 
   let appIsTerminating = false;
   let lifecycleDisposed = false;
+  let projectWindowIsClosing = false;
   const unsubscribeTerminateCallbacks: Array<() => void> = [];
   const handleAppWillTerminate = () => {
     appIsTerminating = true;
+  };
+  const handleProjectWindowClosing = (
+    payload?: ProjectWindowClosingPayload,
+  ) => {
+    const closingPath =
+      typeof payload?.projectPath === "string"
+        ? normalizeProjectPath(payload.projectPath)
+        : "";
+    if (closingPath && closingPath !== normalizedPath) {
+      return;
+    }
+    projectWindowIsClosing = true;
+    if (!appIsTerminating) {
+      forgetProjectWindowRestorePath(normalizedPath);
+    }
+  };
+  const handleProjectWindowClosingEvent = (payload?: unknown) => {
+    handleProjectWindowClosing(
+      payload && typeof payload === "object"
+        ? (payload as ProjectWindowClosingPayload)
+        : undefined,
+    );
   };
   const registerTerminateSubscription = (unsubscribe: (() => void) | void) => {
     if (typeof unsubscribe !== "function") {
@@ -121,13 +152,25 @@ export const bindProjectWindowRestoreLifecycle = (path: string) => {
   const runtime = (window as typeof window & { runtime?: RuntimeEventBridge })
     .runtime;
   registerTerminateSubscription(
-    runtime?.EventsOn?.("app:will-terminate", handleAppWillTerminate),
+    runtime?.EventsOn?.(APP_WILL_TERMINATE_EVENT, handleAppWillTerminate),
+  );
+  registerTerminateSubscription(
+    runtime?.EventsOn?.(
+      PROJECT_WINDOW_CLOSING_EVENT,
+      handleProjectWindowClosingEvent,
+    ),
   );
 
   void import("../wails/runtime")
     .then(({ EventsOn }) => {
       registerTerminateSubscription(
-        EventsOn("app:will-terminate", handleAppWillTerminate),
+        EventsOn(APP_WILL_TERMINATE_EVENT, handleAppWillTerminate),
+      );
+      registerTerminateSubscription(
+        EventsOn<[ProjectWindowClosingPayload | undefined]>(
+          PROJECT_WINDOW_CLOSING_EVENT,
+          handleProjectWindowClosingEvent,
+        ),
       );
     })
     .catch(() => {
@@ -135,7 +178,7 @@ export const bindProjectWindowRestoreLifecycle = (path: string) => {
     });
 
   const handlePageHide = () => {
-    if (!appIsTerminating) {
+    if (projectWindowIsClosing && !appIsTerminating) {
       forgetProjectWindowRestorePath(normalizedPath);
     }
   };

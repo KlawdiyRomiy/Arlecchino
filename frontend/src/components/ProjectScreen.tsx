@@ -511,6 +511,23 @@ const readStoredActiveEditorTabId = (
   }
 };
 
+const readStoredEditorTabState = (
+  storageKey: string,
+  legacyStorageKey: string,
+): { tabs: Tab[]; activeTabId: string | null } => {
+  const storedTabs = readStoredEditorTabs(storageKey, legacyStorageKey);
+  const storedActiveTabId = readStoredActiveEditorTabId(
+    storageKey,
+    legacyStorageKey,
+  );
+  const activeTabId =
+    storedActiveTabId && storedTabs.some((tab) => tab.id === storedActiveTabId)
+      ? storedActiveTabId
+      : (storedTabs[0]?.id ?? null);
+
+  return { tabs: storedTabs, activeTabId };
+};
+
 const EditorSplitDropZone: React.FC<{
   side: EditorSplitDropSide;
   isActive: boolean;
@@ -673,12 +690,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     [projectPath],
   );
 
-  const [tabs, setTabs] = useState<Tab[]>(() =>
-    readStoredEditorTabs(tabStorageKey, legacyTabStorageKey),
+  const [tabs, setTabs] = useState<Tab[]>(
+    () => readStoredEditorTabState(tabStorageKey, legacyTabStorageKey).tabs,
   );
 
-  const [activeTab, setActiveTab] = useState<string | null>(() =>
-    readStoredActiveEditorTabId(tabStorageKey, legacyTabStorageKey),
+  const [activeTab, setActiveTab] = useState<string | null>(
+    () =>
+      readStoredEditorTabState(tabStorageKey, legacyTabStorageKey).activeTabId,
   );
 
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
@@ -733,7 +751,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     null,
   );
   const pendingTypingActivityRef = useRef(0);
-  const tabsRef = useRef<Tab[]>([]);
+  const tabsRef = useRef<Tab[]>(tabs);
   const fileContentsRef = useRef<Record<string, string>>({});
   const fileLoadStatesRef = useRef<Record<string, EditorFileLoadState>>({});
   const tabFileLoadRequestsRef = useRef<
@@ -756,6 +774,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const fileOpenLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const lastFileToOpenRef = useRef<string | null>(null);
   const quickLookRequestRef = useRef(0);
   const reopenClosedTabRequestRef = useRef(0);
   const tabSwitcherSelectionRef = useRef<string | null>(null);
@@ -1181,8 +1200,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       window.clearTimeout(timeout);
     };
   }, [tabs, activeTab, tabStorageKey, legacyTabStorageKey]);
-
-  const lastFileToOpenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!fileToOpen) return;
@@ -3885,10 +3902,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     const loadState = fileLoadStates[tabData.id];
     if (!loadState && fileContents[tabData.id] === undefined) {
       return (
-        <div
-          className="relative h-full min-h-0 w-full overflow-hidden"
-          style={codeEditorChromeStyle}
-          aria-hidden="true"
+        <EditorFileLoadingView
+          file={createEditorFileLoadingLoad(tabData.path, tabData.label)}
         />
       );
     }
