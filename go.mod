@@ -46,6 +46,7 @@ require (
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/sourcegraph/beaut v0.0.0-20240611013027-627e4c25335a // indirect
 	go.lsp.dev/uri v1.0.1 // indirect
+	go.uber.org/goleak v1.3.0 // indirect
 	golang.org/x/image v0.40.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect

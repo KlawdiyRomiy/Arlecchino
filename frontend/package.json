@@ -8,7 +8,12 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "test:smoke": "playwright test"
+    "test:smoke": "playwright test",
+    "internal:lint": "eslint --max-warnings 0 src tests/unit vite.config.ts vitest.config.ts",
+    "internal:lint:fix": "eslint --fix src tests/unit vite.config.ts vitest.config.ts",
+    "internal:test:unit": "vitest run --config vitest.config.ts",
+    "internal:test:unit:watch": "vitest --config vitest.config.ts",
+    "internal:analyze:bundle": "vite build --mode internal-analyze"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -80,19 +85,33 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@playwright/test": "^1.61.1",
     "@prettier/plugin-php": "^0.25.0",
     "@rolldown/pluginutils": "^1.0.1",
     "@tailwindcss/postcss": "^4.3.2",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
     "@types/dagre": "^0.7.54",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react-swc": "^4.3.1",
     "autoprefixer": "^10.5.2",
+    "eslint": "10.0.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "jsdom": "29.1.1",
     "postcss": "^8.5.16",
     "prettier": "^3.9.4",
+    "rollup-plugin-visualizer": "7.0.1",
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
-    "vite": "^8.1.3"
+    "typescript-eslint": "8.61.0",
+    "vite": "^8.1.3",
+    "vitest": "4.1.8"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true,
+    "@swc/core@1.15.18": true
   }
 }

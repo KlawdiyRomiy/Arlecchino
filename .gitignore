@@ -48,6 +48,9 @@ test-results/
 playwright-report/
 .playwright-mcp/
 test-html.html
+coverage/
+frontend/.internal-reports/
+frontend/coverage/
 
 # Debug screenshots
 before-*.png

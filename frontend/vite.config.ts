@@ -1,5 +1,6 @@
-import { defineConfig } from "vite";
+import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react-swc";
+import { visualizer } from "rollup-plugin-visualizer";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(dirname, "..");
+const internalReportDir = path.resolve(dirname, ".internal-reports");
 
 const goEnv = (name: string): string => {
   try {
@@ -65,7 +67,11 @@ const resolveBundledWailsRuntime = (): string => {
   return runtimePath;
 };
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
+  const internalAnalyze =
+    command === "build" &&
+    (process.env.ARLECCHINO_BUNDLE_ANALYZE === "1" ||
+      mode === "internal-analyze");
   const useWailsRuntimeStub =
     process.env.ARLECCHINO_TEST_WAILS_RUNTIME === "1" ||
     process.env.ARLECCHINO_WEB_ONLY_WAILS_RUNTIME === "1" ||
@@ -80,8 +86,23 @@ export default defineConfig(({ command }) => {
     ? path.dirname(wailsRuntimeModule)
     : null;
 
+  const plugins: PluginOption[] = [react()];
+  if (internalAnalyze) {
+    plugins.push(
+      visualizer({
+        filename: path.join(internalReportDir, "bundle", "stats.html"),
+        title: "Arlecchino internal bundle report",
+        template: "treemap",
+        gzipSize: true,
+        brotliSize: true,
+        open: false,
+        projectRoot,
+      }) as PluginOption,
+    );
+  }
+
   return {
-    plugins: [react()],
+    plugins,
     resolve: {
       alias: [
         ...(command === "serve"
@@ -124,7 +145,7 @@ export default defineConfig(({ command }) => {
       },
     },
     build: {
-      rollupOptions: {
+      rolldownOptions: {
         external: ["/wails/runtime.js"],
         onwarn(warning, warn) {
           if (
