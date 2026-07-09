@@ -155,6 +155,7 @@ const projectSessionRoutePayload = readProjectSessionRoutePayload();
 const workspaceStorageName = workspaceStorageNameForProjectSession(
   projectSessionRoutePayload,
 );
+const DEFERRED_PROJECT_WINDOW_RESTORE_DELAY_MS = 1500;
 
 const createWorkspaceStore = (storageName: string) =>
   create<WorkspaceState>()(
@@ -538,6 +539,38 @@ const restoreProjectWindows = async (paths: string[]) => {
   }
 };
 
+const scheduleProjectWindowRestore = (paths: string[]) => {
+  const restorePaths = uniqueProjectPaths(paths);
+  if (restorePaths.length === 0) {
+    return;
+  }
+
+  const restore = () => {
+    void restoreProjectWindows(restorePaths);
+  };
+  const browserWindow = typeof window === "undefined" ? null : window;
+  const restoreAfterPaint = () => {
+    if (!browserWindow?.requestAnimationFrame) {
+      restore();
+      return;
+    }
+
+    browserWindow.requestAnimationFrame(() => {
+      browserWindow.requestAnimationFrame(restore);
+    });
+  };
+
+  if (browserWindow?.setTimeout) {
+    browserWindow.setTimeout(
+      restoreAfterPaint,
+      DEFERRED_PROJECT_WINDOW_RESTORE_DELAY_MS,
+    );
+    return;
+  }
+
+  setTimeout(restoreAfterPaint, DEFERRED_PROJECT_WINDOW_RESTORE_DELAY_MS);
+};
+
 const activateProjectSessionWorkspaceStorage = (sessionId: string) => {
   const payload = { sessionId };
   setProjectSessionRoutePayloadOverride(payload);
@@ -709,7 +742,7 @@ export const initializeWorkspace = async () => {
               .filter((candidate) => candidate.path !== project.path)
               .map((candidate) => candidate.path),
           ]).filter((candidate) => candidate !== project.path);
-          await restoreProjectWindows(windowRestorePaths);
+          scheduleProjectWindowRestore(windowRestorePaths);
         }
         return;
       } catch (error) {
