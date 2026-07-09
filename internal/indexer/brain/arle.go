@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,6 +65,7 @@ type ArleConfig struct {
 	DataDir         string
 	ContextSize     int
 	MaxGhostTokens  int
+	MaxRerankItems  int
 	LazyLoadDelay   time.Duration
 	IdleUnloadTime  time.Duration
 	EnableLearning  bool
@@ -104,7 +106,8 @@ func DefaultArleConfig() ArleConfig {
 		VocabPath:       vocabPath,
 		DataDir:         dataDir,
 		ContextSize:     128,
-		MaxGhostTokens:  20,
+		MaxGhostTokens:  4,
+		MaxRerankItems:  12,
 		LazyLoadDelay:   0,
 		IdleUnloadTime:  5 * time.Minute,
 		EnableLearning:  true,
@@ -284,7 +287,10 @@ func NewArle(config ArleConfig) *Arle {
 		config.ContextSize = 1024
 	}
 	if config.MaxGhostTokens == 0 {
-		config.MaxGhostTokens = 20
+		config.MaxGhostTokens = 4
+	}
+	if config.MaxRerankItems == 0 {
+		config.MaxRerankItems = 12
 	}
 	if config.IdleUnloadTime == 0 {
 		config.IdleUnloadTime = 5 * time.Minute
@@ -294,7 +300,7 @@ func NewArle(config ArleConfig) *Arle {
 		config: config,
 	}
 	a.state.Store(int32(ArleUnloaded))
-	log.Printf("[ARLE] lifecycle: phase=create mode=%s state=%s lazyLoadDelay=%s idleUnload=%s rerank=%v ghostText=%v backendLoad=deferred", config.Mode, ArleUnloaded, config.LazyLoadDelay, config.IdleUnloadTime, config.EnableRerank, config.EnableGhostText)
+	log.Printf("[ARLE] lifecycle: phase=create mode=%s state=%s lazyLoadDelay=%s idleUnload=%s rerank=%v rerankItems=%d ghostText=%v ghostTokens=%d backendLoad=deferred", config.Mode, ArleUnloaded, config.LazyLoadDelay, config.IdleUnloadTime, config.EnableRerank, config.MaxRerankItems, config.EnableGhostText, config.MaxGhostTokens)
 
 	if config.Mode == ArleModeNone {
 		return a
@@ -506,7 +512,11 @@ func (a *Arle) Rerank(suggestions []Suggestion, ctx CompletionContext) []Suggest
 		return suggestions
 	}
 
-	for i := range suggestions {
+	rerankLimit := minInt(len(suggestions), a.config.MaxRerankItems)
+	for i := 0; i < rerankLimit; i++ {
+		if ctx.Ctx != nil && ctx.Ctx.Err() != nil {
+			return suggestions
+		}
 		score := a.scoreMultiToken(contextTokens, suggestions[i].Text)
 		suggestions[i].Score = suggestions[i].Score*0.6 + score*0.4
 	}
@@ -525,25 +535,10 @@ func (a *Arle) Rerank(suggestions []Suggestion, ctx CompletionContext) []Suggest
 }
 
 func (a *Arle) scoreMultiToken(contextTokens []int, text string) float64 {
-	tokens := a.tokenizer.Tokenize(text, 10)
-	if len(tokens) == 0 {
+	if strings.TrimSpace(text) == "" {
 		return 0.5
 	}
-
-	if len(tokens) == 1 {
-		return a.backend.ScoreSuggestion(contextTokens, text)
-	}
-
-	product := 1.0
-	for _, token := range tokens {
-		tokenText := a.tokenizer.Detokenize([]int{token})
-		score := a.backend.ScoreSuggestion(contextTokens, tokenText)
-		if score > 0 {
-			product *= score
-		}
-	}
-
-	return geometricMean(product, len(tokens))
+	return a.backend.ScoreSuggestion(contextTokens, text)
 }
 
 func geometricMean(product float64, n int) float64 {
@@ -573,11 +568,17 @@ func (a *Arle) GenerateGhostText(ctx CompletionContext) string {
 	if ctx.InString || ctx.InComment || ctx.InImport {
 		return ""
 	}
+	if ctx.Ctx != nil && ctx.Ctx.Err() != nil {
+		return ""
+	}
 
 	a.touchLastUsed()
 
 	contextTokens := a.tokenizer.TokenizeWithLanguage(string(ctx.Content), ctx.Language, a.config.ContextSize)
 	if len(contextTokens) < 10 {
+		return ""
+	}
+	if ctx.Ctx != nil && ctx.Ctx.Err() != nil {
 		return ""
 	}
 

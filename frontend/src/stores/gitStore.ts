@@ -31,6 +31,7 @@ import { usePerformanceStore } from "./performanceStore";
 import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
 const fileRefreshDebounceMs = 320;
+const contentFileRefreshDebounceMs = 2500;
 const fileMarkerRefreshDebounceMs = 1200;
 const fallbackPollIntervalMs = 15000;
 const gitMetadataCacheTtlMs = 30000;
@@ -241,7 +242,10 @@ const clearGitSync = (): void => {
   markerRefreshTimers.clear();
 };
 
-const scheduleRefresh = (get: () => GitStoreState): void => {
+const scheduleRefresh = (
+  get: () => GitStoreState,
+  delayMs = fileRefreshDebounceMs,
+): void => {
   if (get().activeConsumers <= 0) {
     return;
   }
@@ -255,7 +259,7 @@ const scheduleRefresh = (get: () => GitStoreState): void => {
       return;
     }
     void get().refresh();
-  }, fileRefreshDebounceMs);
+  }, delayMs);
 };
 
 const scheduleFileMarkerRefresh = (
@@ -320,7 +324,7 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
 
   const unsubscribeFileChanged = EventsOn("file:changed", (value) => {
     if (typeof value === "string" && shouldRefreshForPath(value)) {
-      scheduleRefresh(get);
+      scheduleRefresh(get, contentFileRefreshDebounceMs);
       scheduleFileMarkerRefresh(get, value);
     }
   });
