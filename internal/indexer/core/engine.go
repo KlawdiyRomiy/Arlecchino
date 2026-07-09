@@ -82,7 +82,7 @@ const (
 	criticalProjectFileCount        = 15000
 	speculativeChangeMaxBytes       = 256 << 10
 	foregroundIndexMaxBytes         = 1 << 20
-	dependencyIndexFingerprint      = "depgraph-v2"
+	dependencyIndexFingerprint      = "depgraph-v3"
 	dependencyIndexPendingMarker    = ":pending:"
 )
 

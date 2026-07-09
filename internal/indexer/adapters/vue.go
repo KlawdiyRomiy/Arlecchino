@@ -12,6 +12,9 @@ type VueAdapter struct {
 	templateTagRegex *regexp.Regexp
 	styleTagRegex    *regexp.Regexp
 	importRegex      *regexp.Regexp
+	sideEffectImport *regexp.Regexp
+	exportFromRegex  *regexp.Regexp
+	dynamicImport    *regexp.Regexp
 	exportDefault    *regexp.Regexp
 	componentName    *regexp.Regexp
 	defineComponent  *regexp.Regexp
@@ -32,6 +35,9 @@ func NewVueAdapter() *VueAdapter {
 		templateTagRegex: regexp.MustCompile(`<template[^>]*>`),
 		styleTagRegex:    regexp.MustCompile(`<style[^>]*>`),
 		importRegex:      regexp.MustCompile(`import\s+(?:{[^}]+}|[^'"]+)\s+from\s+['"]([^'"]+)['"]`),
+		sideEffectImport: regexp.MustCompile(`^\s*import\s+['"]([^'"]+)['"]`),
+		exportFromRegex:  regexp.MustCompile(`^\s*export\s+(?:\*|{[^}]+})\s+from\s+['"]([^'"]+)['"]`),
+		dynamicImport:    regexp.MustCompile(`\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)`),
 		exportDefault:    regexp.MustCompile(`export\s+default\s+`),
 		componentName:    regexp.MustCompile(`name:\s*['"](\w+)['"]`),
 		defineComponent:  regexp.MustCompile(`defineComponent\s*\(\s*{`),
@@ -117,10 +123,10 @@ func (a *VueAdapter) parseLines(path string, iterate indexLineIterator) ([]core.
 
 		braceDepth += strings.Count(line, "{") - strings.Count(line, "}")
 
-		if m := a.importRegex.FindStringSubmatch(line); m != nil {
+		if target := a.dependencyTarget(line); target != "" {
 			edges = append(edges, core.Edge{
 				FromSymbol: componentName,
-				ToSymbol:   m[1],
+				ToSymbol:   target,
 				Kind:       core.EdgeKindImports,
 				FilePath:   path,
 				Line:       lineNum,
@@ -238,4 +244,13 @@ func (a *VueAdapter) parseLines(path string, iterate indexLineIterator) ([]core.
 	})
 
 	return symbols, edges, err
+}
+
+func (a *VueAdapter) dependencyTarget(line string) string {
+	for _, pattern := range []*regexp.Regexp{a.importRegex, a.sideEffectImport, a.exportFromRegex, a.dynamicImport} {
+		if match := pattern.FindStringSubmatch(line); match != nil {
+			return match[1]
+		}
+	}
+	return ""
 }

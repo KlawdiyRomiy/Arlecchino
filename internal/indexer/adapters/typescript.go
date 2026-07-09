@@ -13,6 +13,7 @@ type TypeScriptAdapter struct {
 	sideEffectImportRegex *regexp.Regexp
 	exportFromRegex       *regexp.Regexp
 	dynamicImportRegex    *regexp.Regexp
+	commonJSRequireRegex  *regexp.Regexp
 	classRegex            *regexp.Regexp
 	interfaceRegex        *regexp.Regexp
 	typeRegex             *regexp.Regexp
@@ -34,6 +35,7 @@ func NewTypeScriptAdapter() *TypeScriptAdapter {
 		sideEffectImportRegex: regexp.MustCompile(`^import\s+['"]([^'"]+)['"]`),
 		exportFromRegex:       regexp.MustCompile(`^export\s+(?:type\s+)?(?:\*|\{[^}]+\}|[^'"]+)\s+from\s+['"]([^'"]+)['"]`),
 		dynamicImportRegex:    regexp.MustCompile(`\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)`),
+		commonJSRequireRegex:  regexp.MustCompile(`^\s*(?:(?:const|let|var)\s+(?:\{[^}]+\}|\[[^]]+\]|\w+)\s*=\s*)?require\s*\(\s*['"]([^'"]+)['"]\s*\)`),
 		classRegex:            regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)`),
 		interfaceRegex:        regexp.MustCompile(`^(?:export\s+)?interface\s+(\w+)`),
 		typeRegex:             regexp.MustCompile(`^(?:export\s+)?type\s+(\w+)`),
@@ -69,6 +71,8 @@ func (a *TypeScriptAdapter) ParseContent(path string, content []byte) ([]core.Sy
 func (a *TypeScriptAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
+	dependencyBlockComment := false
+	templateLiteral := false
 
 	var currentClass string
 	var currentClassID string
@@ -77,7 +81,17 @@ func (a *TypeScriptAdapter) parseLines(path string, iterate indexLineIterator) (
 	moduleName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 
 	err := iterate(func(lineNum int, line string) error {
+		if templateLiteral {
+			line = stripDelimitedLiteral(line, &templateLiteral, '`')
+			line = stripCStyleComments(line, &dependencyBlockComment)
+		} else {
+			line = stripCStyleComments(line, &dependencyBlockComment)
+			line = stripDelimitedLiteral(line, &templateLiteral, '`')
+		}
 		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			return nil
+		}
 
 		if m := a.decoratorRegex.FindStringSubmatch(trimmed); m != nil {
 			lastDecorator = m[1]
@@ -247,14 +261,20 @@ func (a *TypeScriptAdapter) parseLines(path string, iterate indexLineIterator) (
 }
 
 func (a *TypeScriptAdapter) importTarget(line string) string {
+	line = strings.TrimSpace(line)
 	for _, pattern := range []*regexp.Regexp{
 		a.importRegex,
 		a.sideEffectImportRegex,
 		a.exportFromRegex,
-		a.dynamicImportRegex,
+		a.commonJSRequireRegex,
 	} {
 		if m := pattern.FindStringSubmatch(line); m != nil {
 			return m[1]
+		}
+	}
+	for _, match := range a.dynamicImportRegex.FindAllStringSubmatchIndex(line, -1) {
+		if len(match) >= 4 && match[2] >= 0 && dependencyTokenOutsideQuotedString(line, match[0]) {
+			return line[match[2]:match[3]]
 		}
 	}
 	return ""

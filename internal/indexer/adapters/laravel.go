@@ -10,33 +10,37 @@ import (
 
 type LaravelAdapter struct {
 	*PHPAdapter
-	routeRegex      *regexp.Regexp
-	bladeDirective  *regexp.Regexp
-	bladeInclude    *regexp.Regexp
-	bladeExtends    *regexp.Regexp
-	bladeComponent  *regexp.Regexp
-	configRegex     *regexp.Regexp
-	envRegex        *regexp.Regexp
-	facadeUse       *regexp.Regexp
-	middlewareRegex *regexp.Regexp
-	livewireMount   *regexp.Regexp
-	eventDispatch   *regexp.Regexp
+	routeRegex              *regexp.Regexp
+	bladeDirective          *regexp.Regexp
+	bladeInclude            *regexp.Regexp
+	bladeExtends            *regexp.Regexp
+	bladeComponent          *regexp.Regexp
+	bladeComponentDirective *regexp.Regexp
+	bladeEach               *regexp.Regexp
+	configRegex             *regexp.Regexp
+	envRegex                *regexp.Regexp
+	facadeUse               *regexp.Regexp
+	middlewareRegex         *regexp.Regexp
+	livewireMount           *regexp.Regexp
+	eventDispatch           *regexp.Regexp
 }
 
 func NewLaravelAdapter() *LaravelAdapter {
 	return &LaravelAdapter{
-		PHPAdapter:      NewPHPAdapter(),
-		routeRegex:      regexp.MustCompile(`Route::(get|post|put|patch|delete|options|any)\s*\(\s*['"]([^'"]+)['"]\s*,`),
-		bladeDirective:  regexp.MustCompile(`@(\w+)\s*(?:\(([^)]*)\))?`),
-		bladeInclude:    regexp.MustCompile(`@include\s*\(\s*['"]([^'"]+)['"]`),
-		bladeExtends:    regexp.MustCompile(`@extends\s*\(\s*['"]([^'"]+)['"]`),
-		bladeComponent:  regexp.MustCompile(`<x-([a-z0-9\-\.]+)`),
-		configRegex:     regexp.MustCompile(`config\s*\(\s*['"]([^'"]+)['"]`),
-		envRegex:        regexp.MustCompile(`env\s*\(\s*['"]([^'"]+)['"]`),
-		facadeUse:       regexp.MustCompile(`([A-Z][a-z]+)::\w+`),
-		middlewareRegex: regexp.MustCompile(`->middleware\s*\(\s*\[?['"]?([^'"\])]+)`),
-		livewireMount:   regexp.MustCompile(`mount\s*\(\s*\)`),
-		eventDispatch:   regexp.MustCompile(`event\s*\(\s*new\s+(\w+)`),
+		PHPAdapter:              NewPHPAdapter(),
+		routeRegex:              regexp.MustCompile(`Route::(get|post|put|patch|delete|options|any)\s*\(\s*['"]([^'"]+)['"]\s*,`),
+		bladeDirective:          regexp.MustCompile(`@(\w+)\s*(?:\(([^)]*)\))?`),
+		bladeInclude:            regexp.MustCompile(`@include\s*\(\s*['"]([^'"]+)['"]`),
+		bladeExtends:            regexp.MustCompile(`@extends\s*\(\s*['"]([^'"]+)['"]`),
+		bladeComponent:          regexp.MustCompile(`<x-([a-z0-9\-\.]+)`),
+		bladeComponentDirective: regexp.MustCompile(`@component\s*\(\s*['"]([^'"]+)['"]`),
+		bladeEach:               regexp.MustCompile(`@each\s*\(\s*['"]([^'"]+)['"]`),
+		configRegex:             regexp.MustCompile(`config\s*\(\s*['"]([^'"]+)['"]`),
+		envRegex:                regexp.MustCompile(`env\s*\(\s*['"]([^'"]+)['"]`),
+		facadeUse:               regexp.MustCompile(`([A-Z][a-z]+)::\w+`),
+		middlewareRegex:         regexp.MustCompile(`->middleware\s*\(\s*\[?['"]?([^'"\])]+)`),
+		livewireMount:           regexp.MustCompile(`mount\s*\(\s*\)`),
+		eventDispatch:           regexp.MustCompile(`event\s*\(\s*new\s+(\w+)`),
 	}
 }
 
@@ -83,6 +87,7 @@ func (a *LaravelAdapter) parseLines(path string, iterate indexLineIterator) ([]c
 func (a *LaravelAdapter) parseBlade(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
+	markupComment := markupCommentNone
 
 	viewName := a.extractViewName(path)
 	symbols = append(symbols, core.Symbol{
@@ -95,6 +100,20 @@ func (a *LaravelAdapter) parseBlade(path string, iterate indexLineIterator) ([]c
 	})
 
 	err := iterate(func(lineNum int, line string) error {
+		line = stripMarkupComments(line, &markupComment)
+		if strings.TrimSpace(line) == "" {
+			return nil
+		}
+		for _, m := range htmlAttrPattern.FindAllStringSubmatch(line, -1) {
+			edges = append(edges, core.Edge{
+				FromSymbol: viewName,
+				ToSymbol:   m[1],
+				Kind:       core.EdgeKindReferences,
+				FilePath:   path,
+				Line:       lineNum,
+			})
+		}
+
 		if m := a.bladeExtends.FindStringSubmatch(line); m != nil {
 			edges = append(edges, core.Edge{
 				FromSymbol: viewName,
@@ -113,6 +132,18 @@ func (a *LaravelAdapter) parseBlade(path string, iterate indexLineIterator) ([]c
 				FilePath:   path,
 				Line:       lineNum,
 			})
+		}
+
+		for _, pattern := range []*regexp.Regexp{a.bladeComponentDirective, a.bladeEach} {
+			if m := pattern.FindStringSubmatch(line); m != nil {
+				edges = append(edges, core.Edge{
+					FromSymbol: viewName,
+					ToSymbol:   m[1],
+					Kind:       core.EdgeKindRenders,
+					FilePath:   path,
+					Line:       lineNum,
+				})
+			}
 		}
 
 		for _, m := range a.bladeComponent.FindAllStringSubmatch(line, -1) {

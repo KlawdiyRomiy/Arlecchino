@@ -19,11 +19,12 @@ type RubyAdapter struct {
 	includeRegex  *regexp.Regexp
 	extendRegex   *regexp.Regexp
 	prependRegex  *regexp.Regexp
+	renderRegex   *regexp.Regexp
 }
 
 func NewRubyAdapter() *RubyAdapter {
 	return &RubyAdapter{
-		requireRegex:  regexp.MustCompile(`^\s*require(?:_relative)?\s+['"]([^'"]+)['"]`),
+		requireRegex:  regexp.MustCompile(`^\s*(?:<%[-=#]?\s*)?require(?:_relative)?\s+['"]([^'"]+)['"]`),
 		classRegex:    regexp.MustCompile(`^\s*class\s+([A-Z]\w*)\s*(?:<\s*([A-Z][\w:]*))?\s*$`),
 		moduleRegex:   regexp.MustCompile(`^\s*module\s+([A-Z]\w*)`),
 		methodRegex:   regexp.MustCompile(`^\s*def\s+(\w+[?!=]?)`),
@@ -34,6 +35,7 @@ func NewRubyAdapter() *RubyAdapter {
 		includeRegex:  regexp.MustCompile(`^\s*include\s+([A-Z]\w*)`),
 		extendRegex:   regexp.MustCompile(`^\s*extend\s+([A-Z]\w*)`),
 		prependRegex:  regexp.MustCompile(`^\s*prepend\s+([A-Z]\w*)`),
+		renderRegex:   regexp.MustCompile(`\brender\s+(?:partial:\s*)?['"]([^'"]+)['"]`),
 	}
 }
 
@@ -112,6 +114,26 @@ func (a *RubyAdapter) parseLines(path string, iterate indexLineIterator) ([]core
 
 	err := iterate(func(lineNum int, line string) error {
 		trimmed := strings.TrimSpace(line)
+		if dependencyPathHasSuffix(path, ".erb") {
+			for _, m := range htmlAttrPattern.FindAllStringSubmatch(line, -1) {
+				edges = append(edges, core.Edge{
+					FromSymbol: path,
+					ToSymbol:   m[1],
+					Kind:       core.EdgeKindReferences,
+					FilePath:   path,
+					Line:       lineNum,
+				})
+			}
+			if m := a.renderRegex.FindStringSubmatch(line); m != nil {
+				edges = append(edges, core.Edge{
+					FromSymbol: path,
+					ToSymbol:   m[1],
+					Kind:       core.EdgeKindRenders,
+					FilePath:   path,
+					Line:       lineNum,
+				})
+			}
+		}
 
 		if trimmed == "end" {
 			if methodDepth > 0 {

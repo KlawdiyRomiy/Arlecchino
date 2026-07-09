@@ -14,6 +14,8 @@ type PHPAdapter struct {
 	propertyRegex  *regexp.Regexp
 	namespaceRegex *regexp.Regexp
 	useRegex       *regexp.Regexp
+	fileInclude    *regexp.Regexp
+	heredocStart   *regexp.Regexp
 	interfaceRegex *regexp.Regexp
 	traitRegex     *regexp.Regexp
 	constRegex     *regexp.Regexp
@@ -29,6 +31,8 @@ func NewPHPAdapter() *PHPAdapter {
 		methodRegex:    regexp.MustCompile(`^\s*(?:public|protected|private)\s+(?:static\s+)?function\s+(\w+)\s*\(`),
 		propertyRegex:  regexp.MustCompile(`^\s*(?:public|protected|private)\s+(?:static\s+)?(?:\??\w+\s+)?\$(\w+)`),
 		useRegex:       regexp.MustCompile(`^\s*use\s+([^;]+)`),
+		fileInclude:    regexp.MustCompile(`(?i)^\s*(?:(?:return|yield)\s+|(?:\$?[A-Za-z_]\w*)\s*=\s*)?(?:require|include)(?:_once)?\s*(?:\(\s*)?['"]([^'"]+)['"]`),
+		heredocStart:   regexp.MustCompile(`<<<\s*(?:"([A-Za-z_]\w*)"|'([A-Za-z_]\w*)'|([A-Za-z_]\w*))`),
 		constRegex:     regexp.MustCompile(`^\s*(?:public|protected|private)?\s*const\s+(\w+)`),
 	}
 }
@@ -52,15 +56,39 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 func (a *PHPAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
+	dependencyBlockComment := false
+	heredocTerminator := ""
 
 	var namespace string
 	var currentClass string
 	var currentClassID string
 
 	err := iterate(func(lineNum int, line string) error {
+		if heredocTerminator != "" {
+			line = a.stripHeredoc(line, &heredocTerminator)
+		} else {
+			line = stripCStyleComments(line, &dependencyBlockComment)
+			if !dependencyBlockComment {
+				line = a.stripHeredoc(line, &heredocTerminator)
+			}
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			return nil
+		}
 		if m := a.namespaceRegex.FindStringSubmatch(line); m != nil {
 			namespace = m[1]
 			return nil
+		}
+
+		if m := a.fileInclude.FindStringSubmatch(line); m != nil {
+			edges = append(edges, core.Edge{
+				FromSymbol: path,
+				ToSymbol:   m[1],
+				Kind:       core.EdgeKindImports,
+				FilePath:   path,
+				Line:       lineNum,
+			})
 		}
 
 		if m := a.classRegex.FindStringSubmatch(line); m != nil {
@@ -183,6 +211,28 @@ func (a *PHPAdapter) parseLines(path string, iterate indexLineIterator) ([]core.
 	})
 
 	return symbols, edges, err
+}
+
+func (a *PHPAdapter) stripHeredoc(line string, terminator *string) string {
+	if *terminator != "" {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == *terminator || trimmed == *terminator+";" {
+			*terminator = ""
+		}
+		return ""
+	}
+
+	match := a.heredocStart.FindStringSubmatchIndex(line)
+	if len(match) < 8 || !dependencyTokenOutsideQuotedString(line, match[0]) {
+		return line
+	}
+	for group := 2; group+1 < len(match); group += 2 {
+		if match[group] >= 0 {
+			*terminator = line[match[group]:match[group+1]]
+			break
+		}
+	}
+	return line[:match[0]]
 }
 
 func phpUseTargets(value string) []string {
