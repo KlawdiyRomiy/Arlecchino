@@ -63,6 +63,9 @@ FRONTEND_DEV_HOST="${ARLE_WAILS3_FRONTEND_DEV_HOST:-127.0.0.1}"
 FRONTEND_DEV_PORT="${ARLE_WAILS3_FRONTEND_DEV_PORT:-5173}"
 WEB_ONLY="0"
 KEEP_STALE_MCP="${ARLE_WAILS3_KEEP_STALE_MCP:-0}"
+PREPARE_ONNX_RUNTIME="${ARLE_WAILS3_PREPARE_ONNX_RUNTIME:-1}"
+DOWNLOAD_ONNX_RUNTIME="${ARLE_WAILS3_DOWNLOAD_ONNX_RUNTIME:-1}"
+LOCKED_ONNX_RUNTIME="${ARLE_WAILS3_LOCKED_ONNX_RUNTIME:-1}"
 APP_ARGS=()
 app_pid=""
 frontend_pid=""
@@ -100,6 +103,8 @@ Options:
   --frontend-dev-host <host>   Frontend dev server host (default: $FRONTEND_DEV_HOST)
   --frontend-dev-port <port>   Frontend dev server port (default: $FRONTEND_DEV_PORT)
   --web-only                   Run browser-friendly Vite only with the Wails runtime stub
+  --skip-onnx-runtime          Do not prepare ARLE ONNX Runtime for the app process
+  --no-onnx-runtime-download   Do not download the locked ONNX Runtime archive
   -h, --help                   Show this help
 EOF
 }
@@ -244,6 +249,64 @@ wait_for_frontend_dev_server() {
   return 1
 }
 
+runtime_arch_for_go_target() {
+  local goarch="${GOARCH:-}"
+  if [[ -z "$goarch" ]]; then
+    goarch="$(go env GOARCH 2>/dev/null || true)"
+  fi
+
+  case "$goarch" in
+    amd64)
+      echo "x86_64"
+      ;;
+    arm64)
+      echo "arm64"
+      ;;
+    *)
+      uname -m
+      ;;
+  esac
+}
+
+prepare_onnx_runtime_env() {
+  if [[ "$PREPARE_ONNX_RUNTIME" != "1" || "$WEB_ONLY" == "1" || "$BUILD_ONLY" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  local resolver="$ROOT_DIR/scripts/resolve-onnxruntime-macos.sh"
+  if [[ ! -x "$resolver" ]]; then
+    echo "ERROR: ONNX Runtime resolver is missing or not executable: $resolver" >&2
+    exit 1
+  fi
+
+  local arch runtime_path resolver_args
+  arch="$(runtime_arch_for_go_target)"
+  resolver_args=(--arch "$arch" --cache-dir "$BUILD_DIR/onnxruntime")
+
+  runtime_path="$("$resolver" "${resolver_args[@]}" 2>/dev/null || true)"
+  if [[ -z "$runtime_path" && "$DOWNLOAD_ONNX_RUNTIME" == "1" ]]; then
+    resolver_args+=(--download)
+    if [[ "$LOCKED_ONNX_RUNTIME" == "1" ]]; then
+      resolver_args+=(--locked-only --require-checksum)
+    fi
+    runtime_path="$("$resolver" "${resolver_args[@]}")"
+  fi
+
+  if [[ -z "$runtime_path" || ! -s "$runtime_path" ]]; then
+    echo "ERROR: ONNX Runtime is required for ARLE autocomplete but was not found for $arch." >&2
+    echo "Set ARLE_ONNX_RUNTIME_PATH/ARLE_ONNX_RUNTIME_DIR, install ONNX Runtime, or allow the locked runtime download." >&2
+    echo "For a frontend/build-only run, pass --skip-onnx-runtime or --build-only." >&2
+    exit 1
+  fi
+
+  export ARLE_ONNX_RUNTIME_PATH="$runtime_path"
+  echo "Using ONNX Runtime for ARLE dev run: $ARLE_ONNX_RUNTIME_PATH" >&2
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-only)
@@ -288,6 +351,14 @@ while [[ $# -gt 0 ]]; do
     --web-only)
       WEB_ONLY="1"
       FRONTEND_DEV_SERVER="1"
+      shift
+      ;;
+    --skip-onnx-runtime)
+      PREPARE_ONNX_RUNTIME="0"
+      shift
+      ;;
+    --no-onnx-runtime-download)
+      DOWNLOAD_ONNX_RUNTIME="0"
       shift
       ;;
     -h|--help)
@@ -350,6 +421,8 @@ echo "Built Wails v3 spike binary: $OUTPUT"
 if [[ "$BUILD_ONLY" = "1" ]]; then
   exit 0
 fi
+
+prepare_onnx_runtime_env
 
 "$OUTPUT" "${APP_ARGS[@]}" &
 app_pid="$!"

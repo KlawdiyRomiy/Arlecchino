@@ -1,42 +1,31 @@
 package brain
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-var onnxRuntimeFound bool
+const (
+	onnxRuntimePathEnv = "ARLE_ONNX_RUNTIME_PATH"
+	onnxRuntimeDirEnv  = "ARLE_ONNX_RUNTIME_DIR"
+)
 
-func init() {
-	var candidates []string
-	switch runtime.GOOS {
-	case "darwin":
-		candidates = []string{
-			"/opt/homebrew/lib/libonnxruntime.dylib",
-			"/usr/local/lib/libonnxruntime.dylib",
-		}
-	case "linux":
-		candidates = []string{
-			"/usr/lib/libonnxruntime.so",
-			"/usr/local/lib/libonnxruntime.so",
-		}
-	}
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			log.Printf("[ARLE-BACKEND] ONNX Runtime found at %s", path)
-			ort.SetSharedLibraryPath(path)
-			onnxRuntimeFound = true
-			return
-		}
-	}
-	log.Printf("[ARLE-BACKEND] WARNING: ONNX Runtime not found, candidates: %v", candidates)
-}
+var (
+	onnxRuntimeMu             sync.Mutex
+	onnxRuntimeFound          bool
+	onnxRuntimePath           string
+	onnxRuntimeCandidatePaths = defaultONNXRuntimeCandidatePaths
+	newONNXBackend            = NewONNXBackend
+)
 
 type ArleBackend interface {
 	ScoreSuggestion(contextTokens []int, suggestion string) float64
@@ -46,17 +35,22 @@ type ArleBackend interface {
 }
 
 func NewArleBackend(modelPath string) (ArleBackend, error) {
-	log.Printf("[ARLE-BACKEND] NewArleBackend called, modelPath=%s onnxRuntimeFound=%v", modelPath, onnxRuntimeFound)
+	runtimePath, runtimeAvailable, runtimeCandidates := inspectONNXRuntimeForModel(modelPath)
+	log.Printf("[ARLE-BACKEND] NewArleBackend called, modelPath=%s onnxRuntimeConfigured=%v onnxRuntimeAvailable=%v onnxRuntimePath=%s onnxRuntimeCandidates=%d", modelPath, onnxRuntimeFound, runtimeAvailable, runtimePath, runtimeCandidates)
 
 	if modelPath != "" && filepath.Ext(modelPath) == ".onnx" {
 		if _, err := os.Stat(modelPath); err == nil {
-			log.Printf("[ARLE-BACKEND] attempting ONNX backend for %s", modelPath)
-			backend, err := NewONNXBackend(modelPath)
-			if err == nil && backend.loaded {
-				log.Printf("[ARLE-BACKEND] ONNX backend loaded successfully")
-				return backend, nil
+			if !configureONNXRuntimeForModel(modelPath) {
+				log.Printf("[ARLE-BACKEND] ONNX Runtime unavailable, skipping ONNX backend for %s", modelPath)
+			} else {
+				log.Printf("[ARLE-BACKEND] attempting ONNX backend for %s", modelPath)
+				backend, err := newONNXBackend(modelPath)
+				if err == nil && backend != nil && backend.loaded {
+					log.Printf("[ARLE-BACKEND] ONNX backend loaded successfully")
+					return backend, nil
+				}
+				log.Printf("[ARLE-BACKEND] ONNX backend failed: %v", err)
 			}
-			log.Printf("[ARLE-BACKEND] ONNX backend failed: %v", err)
 		} else {
 			log.Printf("[ARLE-BACKEND] model file not found: %s", modelPath)
 		}
@@ -64,6 +58,166 @@ func NewArleBackend(modelPath string) (ArleBackend, error) {
 
 	log.Printf("[ARLE-BACKEND] falling back to PureGoBackend")
 	return NewPureGoBackend(), nil
+}
+
+func configureONNXRuntimeForModel(modelPath string) bool {
+	onnxRuntimeMu.Lock()
+	defer onnxRuntimeMu.Unlock()
+
+	if onnxRuntimeFound && onnxRuntimePath != "" {
+		log.Printf("[ARLE-BACKEND] ONNX Runtime already configured at %s", onnxRuntimePath)
+		return true
+	}
+
+	candidates := onnxRuntimeCandidatePaths(modelPath)
+	for _, candidate := range candidates {
+		if !isReadableRuntimeLibrary(candidate) {
+			continue
+		}
+		ort.SetSharedLibraryPath(candidate)
+		onnxRuntimePath = candidate
+		onnxRuntimeFound = true
+		log.Printf("[ARLE-BACKEND] ONNX Runtime found at %s", candidate)
+		return true
+	}
+
+	log.Printf("[ARLE-BACKEND] WARNING: ONNX Runtime not found, candidates: %v", candidates)
+	onnxRuntimeFound = false
+	onnxRuntimePath = ""
+	return false
+}
+
+func inspectONNXRuntimeForModel(modelPath string) (string, bool, int) {
+	candidates := onnxRuntimeCandidatePaths(modelPath)
+	for _, candidate := range candidates {
+		if isReadableRuntimeLibrary(candidate) {
+			return candidate, true, len(candidates)
+		}
+	}
+	return "", false, len(candidates)
+}
+
+func defaultONNXRuntimeCandidatePaths(modelPath string) []string {
+	runtimeFile := onnxRuntimeLibraryFileName()
+	if runtimeFile == "" {
+		return nil
+	}
+
+	var candidates []string
+	addPath := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		candidates = append(candidates, filepath.Clean(path))
+	}
+	addDir := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		addPath(filepath.Join(dir, runtimeFile))
+	}
+
+	addPath(os.Getenv(onnxRuntimePathEnv))
+	addDir(os.Getenv(onnxRuntimeDirEnv))
+
+	if modelPath != "" {
+		modelDir := filepath.Dir(modelPath)
+		addDir(modelDir)
+		addDir(filepath.Join(modelDir, "onnxruntime"))
+	}
+
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		exeDir := filepath.Dir(exe)
+		if runtime.GOOS == "darwin" {
+			addDir(filepath.Join(exeDir, "..", "Frameworks"))
+			addDir(filepath.Join(exeDir, "..", "Resources"))
+			addDir(filepath.Join(exeDir, "..", "Resources", "onnxruntime"))
+			addDir(filepath.Join(exeDir, "..", "Resources", "assets"))
+		}
+		addDir(filepath.Join(exeDir, "onnxruntime"))
+	}
+
+	for _, dir := range installerRuntimeDirs() {
+		addDir(dir)
+	}
+
+	return uniqueNonEmptyPaths(candidates)
+}
+
+func onnxRuntimeLibraryFileName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "libonnxruntime.dylib"
+	case "linux":
+		return "libonnxruntime.so"
+	case "windows":
+		return "onnxruntime.dll"
+	default:
+		return ""
+	}
+}
+
+func installerRuntimeDirs() []string {
+	var dirs []string
+	add := func(dir string) {
+		if strings.TrimSpace(dir) != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		add("/opt/homebrew/opt/onnxruntime/lib")
+		add("/opt/homebrew/lib")
+		add("/usr/local/opt/onnxruntime/lib")
+		add("/usr/local/lib")
+		add("/opt/local/lib")
+		add("/Library/Frameworks/onnxruntime/lib")
+	case "linux":
+		add("/usr/lib")
+		add("/usr/local/lib")
+		add("/usr/lib64")
+		add("/usr/local/lib64")
+	}
+
+	add(filepath.Join(os.Getenv("CONDA_PREFIX"), "lib"))
+	add(filepath.Join(os.Getenv("MAMBA_ROOT_PREFIX"), "lib"))
+	for _, profile := range strings.Fields(os.Getenv("NIX_PROFILES")) {
+		add(filepath.Join(profile, "lib"))
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		add(filepath.Join(home, ".nix-profile", "lib"))
+	}
+	add("/run/current-system/sw/lib")
+
+	return dirs
+}
+
+func uniqueNonEmptyPaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		result = append(result, path)
+	}
+	return result
+}
+
+func isReadableRuntimeLibrary(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Size() > 0
 }
 
 type ONNXBackend struct {
@@ -102,6 +256,10 @@ func NewONNXBackend(modelPath string) (*ONNXBackend, error) {
 		}
 	}
 
+	if !configureONNXRuntimeForModel(modelPath) {
+		return backend, fmt.Errorf("ONNX Runtime shared library not found")
+	}
+
 	if err := backend.load(); err != nil {
 		log.Printf("[ONNX] load() failed: %v", err)
 		return backend, err
@@ -111,6 +269,7 @@ func NewONNXBackend(modelPath string) (*ONNXBackend, error) {
 }
 
 func (b *ONNXBackend) load() error {
+	started := time.Now()
 	log.Printf("[ONNX] load() starting")
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -138,7 +297,8 @@ func (b *ONNXBackend) load() error {
 	b.sepTokenID = 4 // <SEP> is token 4 in new tokenizer (PAD=0, UNK=1, BOS=2, EOS=3, SEP=4)
 	log.Printf("[ONNX] using RANKING model format")
 
-	log.Printf("[ONNX] creating session for %s", b.modelPath)
+	runtimePath, runtimeAvailable, runtimeCandidates := inspectONNXRuntimeForModel(b.modelPath)
+	log.Printf("[ONNX] creating session for %s runtimeAvailable=%v runtimePath=%s runtimeCandidates=%d", b.modelPath, runtimeAvailable, runtimePath, runtimeCandidates)
 	session, err := ort.NewDynamicAdvancedSession(
 		b.modelPath,
 		inputNames,
@@ -164,6 +324,7 @@ func (b *ONNXBackend) load() error {
 	}
 
 	b.loaded = true
+	log.Printf("[ONNX] model state: loaded=%v model=%s tokenizer=%s tokenizerLoaded=%v seqLen=%d vocabSize=%d sepTokenID=%d duration=%s", b.loaded, b.modelPath, b.tokenizerPath, b.tokenizer != nil, b.seqLen, b.vocabSize, b.sepTokenID, time.Since(started))
 	return nil
 }
 

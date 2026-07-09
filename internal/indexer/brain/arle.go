@@ -20,6 +20,19 @@ const (
 	ArleModeArleProvider                 // Deterministic + local ML + external AI
 )
 
+func (m ArleMode) String() string {
+	switch m {
+	case ArleModeNone:
+		return "none"
+	case ArleModeArle:
+		return "arle"
+	case ArleModeArleProvider:
+		return "arle-provider"
+	default:
+		return "unknown"
+	}
+}
+
 type ArleState int
 
 const (
@@ -28,6 +41,21 @@ const (
 	ArleReady
 	ArleFailed
 )
+
+func (s ArleState) String() string {
+	switch s {
+	case ArleUnloaded:
+		return "unloaded"
+	case ArleLoading:
+		return "loading"
+	case ArleReady:
+		return "ready"
+	case ArleFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
 
 type ArleConfig struct {
 	Mode            ArleMode
@@ -70,19 +98,52 @@ func DefaultArleConfig() ArleConfig {
 		log.Printf("[ARLE] tokenizer found at %s", vocabPath)
 	}
 
-	return ArleConfig{
+	config := ArleConfig{
 		Mode:            ArleModeArle,
 		ModelPath:       modelPath,
 		VocabPath:       vocabPath,
 		DataDir:         dataDir,
 		ContextSize:     128,
 		MaxGhostTokens:  20,
-		LazyLoadDelay:   500 * time.Millisecond,
+		LazyLoadDelay:   0,
 		IdleUnloadTime:  5 * time.Minute,
 		EnableLearning:  true,
 		EnableGhostText: true,
 		EnableRerank:    true,
 	}
+
+	logArleConfiguredModelState(config)
+	return config
+}
+
+func logArleConfiguredModelState(config ArleConfig) {
+	modelInfo, modelErr := os.Stat(config.ModelPath)
+	modelExists := modelErr == nil && !modelInfo.IsDir()
+	tokenizerInfo, tokenizerErr := os.Stat(config.VocabPath)
+	tokenizerExists := tokenizerErr == nil && !tokenizerInfo.IsDir()
+	runtimePath, runtimeAvailable, runtimeCandidates := inspectONNXRuntimeForModel(config.ModelPath)
+	log.Printf(
+		"[ARLE] model state: phase=config mode=%s state=%s backend=deferred modelExists=%v modelBytes=%d modelPath=%s tokenizerExists=%v tokenizerBytes=%d tokenizerPath=%s onnxRuntimeAvailable=%v onnxRuntimePath=%s onnxRuntimeCandidates=%d lazyLoadDelay=%s",
+		config.Mode,
+		ArleUnloaded,
+		modelExists,
+		fileSizeOrZero(modelInfo, modelExists),
+		config.ModelPath,
+		tokenizerExists,
+		fileSizeOrZero(tokenizerInfo, tokenizerExists),
+		config.VocabPath,
+		runtimeAvailable,
+		runtimePath,
+		runtimeCandidates,
+		config.LazyLoadDelay,
+	)
+}
+
+func fileSizeOrZero(info os.FileInfo, ok bool) int64 {
+	if !ok || info == nil {
+		return 0
+	}
+	return info.Size()
 }
 
 func findAssetsDir() string {
@@ -225,9 +286,6 @@ func NewArle(config ArleConfig) *Arle {
 	if config.MaxGhostTokens == 0 {
 		config.MaxGhostTokens = 20
 	}
-	if config.LazyLoadDelay == 0 {
-		config.LazyLoadDelay = 500 * time.Millisecond
-	}
 	if config.IdleUnloadTime == 0 {
 		config.IdleUnloadTime = 5 * time.Minute
 	}
@@ -236,6 +294,7 @@ func NewArle(config ArleConfig) *Arle {
 		config: config,
 	}
 	a.state.Store(int32(ArleUnloaded))
+	log.Printf("[ARLE] lifecycle: phase=create mode=%s state=%s lazyLoadDelay=%s idleUnload=%s rerank=%v ghostText=%v backendLoad=deferred", config.Mode, ArleUnloaded, config.LazyLoadDelay, config.IdleUnloadTime, config.EnableRerank, config.EnableGhostText)
 
 	if config.Mode == ArleModeNone {
 		return a
@@ -255,6 +314,21 @@ func NewArle(config ArleConfig) *Arle {
 	}
 
 	return a
+}
+
+func (a *Arle) StartLoadingAsync() {
+	if a.config.Mode == ArleModeNone {
+		return
+	}
+	if a.State() != ArleUnloaded {
+		return
+	}
+	log.Printf("[ARLE] model state: phase=async-load-request mode=%s state=%s modelPath=%s", a.config.Mode, a.State(), a.config.ModelPath)
+	go func() {
+		if err := a.EnsureLoaded(); err != nil {
+			log.Printf("[ARLE] async load failed: %v", err)
+		}
+	}()
 }
 
 func (a *Arle) State() ArleState {
@@ -314,6 +388,7 @@ func (a *Arle) EnsureLoaded() error {
 }
 
 func (a *Arle) load() error {
+	started := time.Now()
 	log.Printf("[ARLE] load() starting, modelPath=%s vocabPath=%s", a.config.ModelPath, a.config.VocabPath)
 	a.state.Store(int32(ArleLoading))
 
@@ -345,7 +420,7 @@ func (a *Arle) load() error {
 
 	a.scheduleIdleUnload()
 
-	log.Printf("[ARLE] load() complete, state=ArleReady")
+	log.Printf("[ARLE] model state: phase=ready mode=%s state=%s backend=%s duration=%s modelPath=%s", a.config.Mode, ArleReady, a.backend.Type(), time.Since(started), a.config.ModelPath)
 	return nil
 }
 
@@ -412,7 +487,8 @@ func (a *Arle) Rerank(suggestions []Suggestion, ctx CompletionContext) []Suggest
 		return suggestions
 	}
 
-	if err := a.EnsureLoaded(); err != nil {
+	if a.State() != ArleReady {
+		a.StartLoadingAsync()
 		return suggestions
 	}
 
@@ -482,7 +558,8 @@ func (a *Arle) GenerateGhostText(ctx CompletionContext) string {
 		return ""
 	}
 
-	if err := a.EnsureLoaded(); err != nil {
+	if a.State() != ArleReady {
+		a.StartLoadingAsync()
 		return ""
 	}
 

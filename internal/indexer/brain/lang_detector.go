@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -78,13 +79,8 @@ func NewLangDetector(assetsDir string) (*LangDetector, error) {
 		ld.tokenizer, _ = NewArleTokenizer("")
 	}
 
-	// Load ONNX model
-	if err := ld.loadModel(); err != nil {
-		log.Printf("[LANG-DETECTOR] Model load failed: %v", err)
-		return ld, nil
-	}
-
-	log.Printf("[LANG-DETECTOR] Loaded: %d languages, model=%s", ld.numLangs, modelPath)
+	runtimePath, runtimeAvailable, runtimeCandidates := inspectONNXRuntimeForModel(modelPath)
+	log.Printf("[LANG-DETECTOR] model state: phase=prepared loaded=%v languages=%d model=%s tokenizerLoaded=%v onnxRuntimeAvailable=%v onnxRuntimePath=%s onnxRuntimeCandidates=%d", ld.loaded, ld.numLangs, modelPath, ld.tokenizer != nil, runtimeAvailable, runtimePath, runtimeCandidates)
 	return ld, nil
 }
 
@@ -142,12 +138,20 @@ func (ld *LangDetector) initDefaultMapping() {
 }
 
 func (ld *LangDetector) loadModel() error {
-	if !onnxRuntimeFound {
+	started := time.Now()
+	if !configureONNXRuntimeForModel(ld.modelPath) {
+		log.Printf("[LANG-DETECTOR] model state: phase=load-skip loaded=%v reason=onnx-runtime-unavailable model=%s", ld.loaded, ld.modelPath)
 		return nil
 	}
 
 	ld.mu.Lock()
 	defer ld.mu.Unlock()
+
+	if ld.loaded {
+		log.Printf("[LANG-DETECTOR] model state: phase=load-skip loaded=true reason=already-loaded model=%s", ld.modelPath)
+		return nil
+	}
+	log.Printf("[LANG-DETECTOR] model state: phase=load-start loaded=false model=%s languages=%d", ld.modelPath, ld.numLangs)
 
 	if err := ort.InitializeEnvironment(); err != nil {
 		if err.Error() != "The onnxruntime has already been initialized" {
@@ -166,12 +170,35 @@ func (ld *LangDetector) loadModel() error {
 		nil,
 	)
 	if err != nil {
+		log.Printf("[LANG-DETECTOR] model state: phase=load-failed loaded=false model=%s error=%v duration=%s", ld.modelPath, err, time.Since(started))
 		return err
 	}
 
 	ld.session = session
 	ld.loaded = true
+	log.Printf("[LANG-DETECTOR] model state: phase=loaded loaded=true model=%s languages=%d duration=%s", ld.modelPath, ld.numLangs, time.Since(started))
 	return nil
+}
+
+func (ld *LangDetector) EnsureLoaded() bool {
+	if ld == nil {
+		return false
+	}
+	ld.mu.RLock()
+	loaded := ld.loaded
+	modelPath := ld.modelPath
+	ld.mu.RUnlock()
+	if loaded {
+		return true
+	}
+	if modelPath == "" {
+		return false
+	}
+	if err := ld.loadModel(); err != nil {
+		log.Printf("[LANG-DETECTOR] Model load failed: %v", err)
+		return false
+	}
+	return ld.IsLoaded()
 }
 
 // Detect predicts the programming language of the given code
@@ -185,6 +212,10 @@ func (ld *LangDetector) Detect(code string) (string, float32) {
 
 // DetectTopK returns top K language predictions
 func (ld *LangDetector) DetectTopK(code string, k int) []LangPrediction {
+	if !ld.EnsureLoaded() {
+		return ld.detectByHeuristics(code, k)
+	}
+
 	ld.mu.RLock()
 	defer ld.mu.RUnlock()
 
