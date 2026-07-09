@@ -852,6 +852,22 @@ func validatePackagedRuntimeAssets(appPath string) error {
 		}
 		_ = file.Close()
 	}
+	onnxRuntimePath := filepath.Join(appPath, "Contents", "Frameworks", "libonnxruntime.dylib")
+	info, err := os.Stat(onnxRuntimePath)
+	if err != nil {
+		return fmt.Errorf("staged Arlecchino.app is missing ONNX Runtime: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("staged Arlecchino.app ONNX Runtime is a directory")
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("staged Arlecchino.app ONNX Runtime is empty")
+	}
+	file, err := os.Open(onnxRuntimePath)
+	if err != nil {
+		return fmt.Errorf("staged Arlecchino.app ONNX Runtime is unreadable: %w", err)
+	}
+	_ = file.Close()
 	return nil
 }
 

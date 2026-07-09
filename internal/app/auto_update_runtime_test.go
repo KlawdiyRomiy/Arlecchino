@@ -380,6 +380,7 @@ func buildTestUpdateZipWithVersion(t *testing.T, includeApp bool, version string
 		addZipFile(t, writer, "Arlecchino.app/Contents/MacOS/Arlecchino", 0o755, "#!/bin/zsh\nexit 0\n")
 		addZipFile(t, writer, "Arlecchino.app/Contents/Resources/assets/arle_model.onnx", 0o644, "model\n")
 		addZipFile(t, writer, "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json", 0o644, "{}\n")
+		addZipFile(t, writer, "Arlecchino.app/Contents/Frameworks/libonnxruntime.dylib", 0o755, "onnxruntime\n")
 	} else {
 		addZipFile(t, writer, "README.txt", 0o644, "no app here\n")
 	}

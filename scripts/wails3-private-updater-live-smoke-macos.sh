@@ -152,7 +152,8 @@ rg '(^__MACOSX/|(^|/)\._)' "$ZIP_LIST" > "$ZIP_APPLEDOUBLE" || true
 : > "$ZIP_RUNTIME_ASSETS"
 for entry in \
   "Arlecchino.app/Contents/Resources/assets/arle_model.onnx" \
-  "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json"; do
+  "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json" \
+  "Arlecchino.app/Contents/Frameworks/libonnxruntime.dylib"; do
   asset_tmp="$TMP_DIR/$(basename "$entry")"
   if unzip -p "$ZIP_PATH" "$entry" > "$asset_tmp" 2>/dev/null; then
     size="$(wc -c < "$asset_tmp" | tr -d '[:space:]')"
@@ -250,6 +251,7 @@ const zipSha256 = fs.existsSync(process.env.ZIP_PATH)
 const requiredRuntimeAssetEntries = [
   "Arlecchino.app/Contents/Resources/assets/arle_model.onnx",
   "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json",
+  "Arlecchino.app/Contents/Frameworks/libonnxruntime.dylib",
 ];
 const checks = {
   appBundleName: path.basename(process.env.APP_BUNDLE) === "Arlecchino.app",

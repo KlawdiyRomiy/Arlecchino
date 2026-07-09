@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -116,16 +117,18 @@ type Wails3SmokeRuntimeAssetsProbe struct {
 	AssetsDir               string                           `json:"assetsDir"`
 	Model                   Wails3SmokeRuntimeAssetFileProbe `json:"model"`
 	Tokenizer               Wails3SmokeRuntimeAssetFileProbe `json:"tokenizer"`
+	ONNXRuntime             Wails3SmokeRuntimeAssetFileProbe `json:"onnxRuntime"`
 	UsingAppBundleResources bool                             `json:"usingAppBundleResources"`
 	Status                  ShellCapabilityStatus            `json:"status"`
 	Reason                  string                           `json:"reason"`
 }
 
 type Wails3SmokeRuntimeAssetFileProbe struct {
-	Path     string `json:"path"`
-	Exists   bool   `json:"exists"`
-	Readable bool   `json:"readable"`
-	Size     int64  `json:"size"`
+	Path     string   `json:"path"`
+	Exists   bool     `json:"exists"`
+	Readable bool     `json:"readable"`
+	Size     int64    `json:"size"`
+	Archs    []string `json:"archs,omitempty"`
 }
 
 type Wails3SmokeCheck struct {
@@ -584,21 +587,29 @@ func buildWails3SmokeRuntimeAssetsProbe(appBundle Wails3SmokeAppBundleSnapshot) 
 	}
 	model := probeWails3RuntimeAsset(filepath.Join(assetsDir, "arle_model.onnx"))
 	tokenizer := probeWails3RuntimeAsset(filepath.Join(assetsDir, "arle_tokenizer.json"))
+	onnxRuntimePath := ""
 
 	expectedBundleAssetsDir := ""
 	usingBundleResources := false
 	if appBundle.Path != "" {
 		expectedBundleAssetsDir = filepath.Clean(filepath.Join(appBundle.Path, "Contents", "Resources", "assets"))
 		usingBundleResources = canonicalSmokePath(assetsDir) == canonicalSmokePath(expectedBundleAssetsDir)
+		onnxRuntimePath = filepath.Join(appBundle.Path, "Contents", "Frameworks", "libonnxruntime.dylib")
 	}
+	onnxRuntime := probeWails3RuntimeAsset(onnxRuntimePath)
 
 	assetsReady := model.Exists && model.Readable && model.Size > 0 &&
 		tokenizer.Exists && tokenizer.Readable && tokenizer.Size > 0
+	onnxRuntimeReady := appBundle.LaunchMode != "packaged-app" ||
+		(onnxRuntime.Exists && onnxRuntime.Readable && onnxRuntime.Size > 0)
 	status := ShellCapabilityAvailable
 	reason := "Runtime assets are present and readable."
 	if !assetsReady {
 		status = ShellCapabilityUnavailable
 		reason = "Runtime assets are missing, unreadable, or empty."
+	} else if !onnxRuntimeReady {
+		status = ShellCapabilityUnavailable
+		reason = "Packaged app is missing bundled ONNX Runtime."
 	} else if appBundle.LaunchMode == "packaged-app" && !usingBundleResources {
 		status = ShellCapabilityUnavailable
 		reason = "Packaged app did not resolve runtime assets from Contents/Resources/assets."
@@ -608,6 +619,7 @@ func buildWails3SmokeRuntimeAssetsProbe(appBundle Wails3SmokeAppBundleSnapshot) 
 		AssetsDir:               filepath.Clean(assetsDir),
 		Model:                   model,
 		Tokenizer:               tokenizer,
+		ONNXRuntime:             onnxRuntime,
 		UsingAppBundleResources: usingBundleResources,
 		Status:                  status,
 		Reason:                  reason,
@@ -615,6 +627,9 @@ func buildWails3SmokeRuntimeAssetsProbe(appBundle Wails3SmokeAppBundleSnapshot) 
 }
 
 func probeWails3RuntimeAsset(path string) Wails3SmokeRuntimeAssetFileProbe {
+	if strings.TrimSpace(path) == "" {
+		return Wails3SmokeRuntimeAssetFileProbe{}
+	}
 	probe := Wails3SmokeRuntimeAssetFileProbe{Path: filepath.Clean(path)}
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
@@ -627,7 +642,23 @@ func probeWails3RuntimeAsset(path string) Wails3SmokeRuntimeAssetFileProbe {
 		probe.Readable = true
 		_ = file.Close()
 	}
+	probe.Archs = probeMachOArchs(path)
 	return probe
+}
+
+func probeMachOArchs(path string) []string {
+	if runtime.GOOS != "darwin" || strings.TrimSpace(path) == "" {
+		return nil
+	}
+	output, err := exec.Command("lipo", "-archs", path).Output()
+	if err != nil {
+		return nil
+	}
+	fields := strings.Fields(strings.TrimSpace(string(output)))
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
 }
 
 func canonicalSmokePath(path string) string {

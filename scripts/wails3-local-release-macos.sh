@@ -119,6 +119,12 @@ Options:
 This profile is for local beta smoke without Apple Developer ID trust. Use
 local-identity only after explicitly creating and trusting a local code-signing
 certificate named by ARLE_WAILS3_LOCAL_CODESIGN_IDENTITY.
+
+ONNX Runtime:
+  Before building, this release script runs
+  scripts/onnxruntime-release-preflight-macos.sh. Dependency refreshes that bump
+  github.com/yalue/onnxruntime_go must update scripts/onnxruntime-runtime-lock.zsh.
+  Universal releases require both arm64 and x86_64 locked archives with sha256.
 EOF
 }
 
@@ -398,6 +404,23 @@ validate_runtime_assets_in_app() {
       return 1
     fi
   done
+  local onnx_runtime_path="$app_bundle/Contents/Frameworks/libonnxruntime.dylib"
+  if [[ ! -r "$onnx_runtime_path" || ! -s "$onnx_runtime_path" ]]; then
+    echo "ERROR: required packaged ONNX Runtime is missing, unreadable, or empty: $onnx_runtime_path" >&2
+    return 1
+  fi
+  if command -v lipo >/dev/null 2>&1; then
+    local executable_path="$app_bundle/Contents/MacOS/$APP_NAME"
+    local executable_archs runtime_archs arch
+    executable_archs="$(lipo -archs "$executable_path" 2>/dev/null || true)"
+    runtime_archs="$(lipo -archs "$onnx_runtime_path" 2>/dev/null || true)"
+    for arch in ${(z)executable_archs}; do
+      if [[ " $runtime_archs " != *" $arch "* ]]; then
+        echo "ERROR: packaged ONNX Runtime archs do not cover app executable arch $arch: $onnx_runtime_path ($runtime_archs)" >&2
+        return 1
+      fi
+    done
+  fi
 }
 
 validate_dmg_runtime_assets() {
@@ -434,6 +457,12 @@ validate_dmg_runtime_assets() {
   DMG_RUNTIME_ASSETS_REASON="mounted DMG app contains required runtime assets"
   return 0
 }
+
+# ONNX Runtime is a release dependency, not an end-user installer step. This
+# preflight catches dependency-refresh drift between github.com/yalue/
+# onnxruntime_go and the bundled libonnxruntime.dylib before expensive builds,
+# signing, and upload.
+"$ROOT_DIR/scripts/onnxruntime-release-preflight-macos.sh" --arch "$ARCH_TARGET" --download
 
 if [[ "$ARCH_TARGET" == "universal" ]]; then
   ARM64_BINARY="$RELEASE_DIR/bin/$APP_NAME-arm64"
@@ -592,6 +621,12 @@ const sha256 = (value) => {
     return "";
   }
 };
+const lipoArchsFor = (value) => {
+  if (!value || !fs.existsSync(value)) return [];
+  const result = spawnSync("lipo", ["-archs", value], { encoding: "utf8" });
+  if (result.status !== 0) return [];
+  return [...new Set((result.stdout || "").trim().split(/\s+/).filter(Boolean))].sort();
+};
 const runtimeAssetsForApp = (appBundle) => {
   const names = ["arle_model.onnx", "arle_tokenizer.json"];
   const assetsDir = path.join(appBundle || "", "Contents", "Resources", "assets");
@@ -619,10 +654,26 @@ const runtimeAssetsForApp = (appBundle) => {
       matchesSource: Boolean(packagedSha256 && sourceSha256 && packagedSha256 === sourceSha256),
     };
   });
+  const onnxRuntimePath = path.join(appBundle || "", "Contents", "Frameworks", "libonnxruntime.dylib");
+  const onnxRuntime = {
+    name: "libonnxruntime.dylib",
+    path: onnxRuntimePath,
+    exists: exists(onnxRuntimePath),
+    readable: exists(onnxRuntimePath),
+    size: statSize(onnxRuntimePath),
+    sha256: sha256(onnxRuntimePath),
+    archs: lipoArchsFor(onnxRuntimePath),
+  };
   return {
     assetsDir,
     files,
-    passed: files.every((file) => file.exists && file.readable && file.size > 0 && file.sha256 && file.matchesSource),
+    onnxRuntime,
+    passed:
+      files.every((file) => file.exists && file.readable && file.size > 0 && file.sha256 && file.matchesSource) &&
+      onnxRuntime.exists &&
+      onnxRuntime.readable &&
+      onnxRuntime.size > 0 &&
+      Boolean(onnxRuntime.sha256),
   };
 };
 const parseArchs = (lipoInfo) => {
@@ -677,6 +728,10 @@ const spctlStatus = spctlExit === 0
     ? "rejected"
     : "expected-rejected";
 const gatekeeperExpectedWarning = signMode !== "developer-id" && spctlExit !== 0;
+const binaryArchs = parseArchs(env.ARLE_RELEASE_LIPO_INFO || "");
+const runtimeAssets = runtimeAssetsForApp(env.ARLE_RELEASE_APP_BUNDLE);
+runtimeAssets.onnxRuntime.coversBinaryArchs =
+  binaryArchs.every((arch) => runtimeAssets.onnxRuntime.archs.includes(arch));
 const report = {
   runtime: "wails",
   platform: "darwin",
@@ -725,11 +780,11 @@ const report = {
   target: {
     arch: env.ARLE_RELEASE_ARCH_TARGET,
     publicArch: env.ARLE_RELEASE_PUBLIC_ARCH_LABEL,
-    binaryArchs: parseArchs(env.ARLE_RELEASE_LIPO_INFO || ""),
+    binaryArchs,
     minMacOS: env.ARLE_RELEASE_MIN_MACOS,
     supportedMacOSRange: env.ARLE_RELEASE_SUPPORTED_MACOS_RANGE,
-    intelSupported: parseArchs(env.ARLE_RELEASE_LIPO_INFO || "").includes("x86_64"),
-    appleSiliconSupported: parseArchs(env.ARLE_RELEASE_LIPO_INFO || "").includes("arm64"),
+    intelSupported: binaryArchs.includes("x86_64"),
+    appleSiliconSupported: binaryArchs.includes("arm64"),
   },
   app: {
     bundleId: env.ARLE_RELEASE_BUNDLE_ID,
@@ -794,7 +849,7 @@ const report = {
       },
     },
   },
-  runtimeAssets: runtimeAssetsForApp(env.ARLE_RELEASE_APP_BUNDLE),
+  runtimeAssets,
   autoUpdate: {
     channel: env.ARLE_RELEASE_UPDATE_CHANNEL,
     manifestUrl: env.ARLE_RELEASE_UPDATE_MANIFEST_URL || "",
@@ -832,6 +887,10 @@ const report = {
 fs.mkdirSync(require("path").dirname(env.ARLE_RELEASE_REPORT_PATH), { recursive: true });
 fs.writeFileSync(env.ARLE_RELEASE_REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
 if (!report.runtimeAssets.passed) {
+  console.error(JSON.stringify(report, null, 2));
+  process.exit(1);
+}
+if (!report.runtimeAssets.onnxRuntime.coversBinaryArchs) {
   console.error(JSON.stringify(report, null, 2));
   process.exit(1);
 }

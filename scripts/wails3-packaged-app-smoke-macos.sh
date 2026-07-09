@@ -159,10 +159,17 @@ fi
 node -e '
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const fail = (message) => {
   console.error(message);
   process.exit(1);
+};
+const lipoArchsFor = (value) => {
+  if (!value || !fs.existsSync(value)) return [];
+  const result = spawnSync("lipo", ["-archs", value], { encoding: "utf8" });
+  if (result.status !== 0) return [];
+  return [...new Set((result.stdout || "").trim().split(/\s+/).filter(Boolean))].sort();
 };
 if (report.runtime !== "wails-v3") fail("runtime must be wails-v3");
 if (!report.appBundle || report.appBundle.launchMode !== "packaged-app") {
@@ -190,6 +197,22 @@ for (const [label, fileName] of [["model", "arle_model.onnx"], ["tokenizer", "ar
   }
   if (realpath(probe.path) !== path.join(expectedAssetsDir, fileName)) {
     fail(`runtime asset ${label} path = ${probe.path}`);
+  }
+}
+const onnxRuntime = runtimeAssets.onnxRuntime || {};
+const expectedONNXRuntimePath = path.join(realpath(report.appBundle.path), "Contents", "Frameworks", "libonnxruntime.dylib");
+if (!onnxRuntime.exists || !onnxRuntime.readable || !onnxRuntime.size) {
+  fail("bundled ONNX Runtime is missing, unreadable, or empty");
+}
+if (realpath(onnxRuntime.path) !== expectedONNXRuntimePath) {
+  fail(`ONNX Runtime path = ${onnxRuntime.path}`);
+}
+const binaryArchs = lipoArchsFor(report.buildTarget);
+const runtimeArchs = Array.isArray(onnxRuntime.archs) ? onnxRuntime.archs : [];
+if (binaryArchs.length > 0) {
+  const missingArchs = binaryArchs.filter((arch) => !runtimeArchs.includes(arch));
+  if (missingArchs.length > 0) {
+    fail(`ONNX Runtime archs ${runtimeArchs.join(",") || "(none)"} do not cover app binary archs ${binaryArchs.join(",")}`);
   }
 }
 ' "$REPORT" "$BUNDLE_ID"

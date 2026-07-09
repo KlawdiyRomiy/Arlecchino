@@ -102,7 +102,20 @@ case "$MODE" in
     ;;
 esac
 
-/usr/bin/codesign --force --deep --options runtime --timestamp=none --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+sign_nested_framework_dylibs() {
+  local frameworks_dir="$APP_BUNDLE/Contents/Frameworks"
+  if [[ ! -d "$frameworks_dir" ]]; then
+    return 0
+  fi
+
+  local dylib
+  while IFS= read -r -d '' dylib; do
+    /usr/bin/codesign --force --options runtime --timestamp=none --sign "$SIGN_IDENTITY" "$dylib"
+  done < <(/usr/bin/find "$frameworks_dir" -type f -name '*.dylib' -print0)
+}
+
+sign_nested_framework_dylibs
+/usr/bin/codesign --force --options runtime --timestamp=none --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
 if [[ "$MODE" == "developer-id" && "$NOTARIZE" == "1" ]]; then

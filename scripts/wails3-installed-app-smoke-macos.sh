@@ -221,6 +221,7 @@ DEV_ORPHANS_OUT="$DEV_ORPHANS_OUT" \
 node <<'NODE'
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 const readText = (file) => {
   try {
@@ -235,6 +236,13 @@ const readLines = (file) =>
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+
+const lipoArchsFor = (value) => {
+  if (!value || !fs.existsSync(value)) return [];
+  const result = spawnSync("lipo", ["-archs", value], { encoding: "utf8" });
+  if (result.status !== 0) return [];
+  return [...new Set((result.stdout || "").trim().split(/\s+/).filter(Boolean))].sort();
+};
 
 const parseProcessLine = (line) => {
   const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/);
@@ -314,6 +322,7 @@ const hasDevOrphans = devOrphans.length > 0;
 const shouldLaunch = process.env.SHOULD_LAUNCH === "1";
 const runtimeAssetNames = ["arle_model.onnx", "arle_tokenizer.json"];
 const runtimeAssetsDir = path.join(appBundlePath, "Contents", "Resources", "assets");
+const onnxRuntimePath = path.join(appBundlePath, "Contents", "Frameworks", "libonnxruntime.dylib");
 const runtimeAssetFiles = runtimeAssetNames.map((name) => {
   const assetPath = path.join(runtimeAssetsDir, name);
   let readable = false;
@@ -337,9 +346,34 @@ const runtimeAssetFiles = runtimeAssetNames.map((name) => {
     size,
   };
 });
+let onnxRuntimeReadable = false;
+try {
+  fs.accessSync(onnxRuntimePath, fs.constants.R_OK);
+  onnxRuntimeReadable = true;
+} catch {
+  onnxRuntimeReadable = false;
+}
+let onnxRuntimeSize = 0;
+try {
+  onnxRuntimeSize = fs.statSync(onnxRuntimePath).size;
+} catch {
+  onnxRuntimeSize = 0;
+}
+const onnxRuntimeFile = {
+  name: "libonnxruntime.dylib",
+  path: onnxRuntimePath,
+  exists: fs.existsSync(onnxRuntimePath),
+  readable: onnxRuntimeReadable,
+  size: onnxRuntimeSize,
+  archs: lipoArchsFor(onnxRuntimePath),
+};
+const executableArchs = lipoArchsFor(executablePath);
+const onnxRuntimeCoversExecutableArchs = executableArchs.every((arch) =>
+  onnxRuntimeFile.archs.includes(arch),
+);
 const runtimeAssetsPassed = runtimeAssetFiles.every(
   (file) => file.exists && file.readable && file.size > 0,
-);
+) && onnxRuntimeFile.exists && onnxRuntimeFile.readable && onnxRuntimeFile.size > 0 && onnxRuntimeCoversExecutableArchs;
 const codesignDisplay = parseCodesignDisplay(codesignDisplayOutput);
 const designatedRequirementIsCdhashOnly = /^(?:#\s*)?designated\s*=>\s*cdhash\s+/m.test(designatedRequirement);
 const identityKind = inferIdentityKind({
@@ -364,6 +398,7 @@ const report = {
     exists: appExists,
     executablePath,
     executableExists,
+    executableArchs,
     infoPlistPath: process.env.INFO_PLIST,
     infoPlist: {
       CFBundleName: infoPlist.CFBundleName || null,
@@ -430,6 +465,10 @@ const report = {
   runtimeAssets: {
     assetsDir: runtimeAssetsDir,
     files: runtimeAssetFiles,
+    onnxRuntime: {
+      ...onnxRuntimeFile,
+      coversExecutableArchs: onnxRuntimeCoversExecutableArchs,
+    },
     passed: runtimeAssetsPassed,
   },
   network: {
