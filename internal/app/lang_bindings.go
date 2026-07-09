@@ -11,7 +11,7 @@ type LanguagePrediction struct {
 }
 
 func (a *App) DetectLanguage(code string) []LanguagePrediction {
-	if a.langDetector == nil || !a.langDetector.IsLoaded() {
+	if a.langDetector == nil {
 		return []LanguagePrediction{{Language: "unknown", Confidence: 0}}
 	}
 
@@ -31,7 +31,7 @@ func (a *App) DetectLanguageFromFile(filePath string, content string) string {
 		return language
 	}
 
-	if a.langDetector != nil && a.langDetector.IsLoaded() && content != "" {
+	if a.langDetector != nil && content != "" {
 		lang, conf := a.langDetector.Detect(content)
 		if conf > 0.7 {
 			if language := knownCanonicalLanguage(lang, filePath); language != "" {
