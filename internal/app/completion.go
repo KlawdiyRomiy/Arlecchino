@@ -23,7 +23,7 @@ import (
 
 const (
 	editorCompletionTimeout            = 325 * time.Millisecond
-	editorAccessChainCompletionTimeout = 2400 * time.Millisecond
+	editorAccessChainCompletionTimeout = 4500 * time.Millisecond
 	editorCompletionResolveTimeout     = time.Second
 	editorCompletionResolveRefTTL      = 60 * time.Second
 	editorCompletionResolveRefLimit    = 512

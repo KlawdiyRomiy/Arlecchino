@@ -25,22 +25,11 @@ import (
 	"arlecchino/internal/predictive"
 )
 
-var shortPrefixExternalLanguages = map[string]struct{}{
-	"bash":  {},
-	"go":    {},
-	"shell": {},
-	"sh":    {},
-	"zsh":   {},
-}
-
 func externalCompletionMinPrefixRunes(ctx CompletionContext) int {
 	if ctx.InImport {
 		return 0
 	}
-	if _, ok := shortPrefixExternalLanguages[strings.ToLower(ctx.Language)]; ok {
-		return 1
-	}
-	return 2
+	return 1
 }
 
 func heavySourceSkipReason(ctx CompletionContext) string {
@@ -53,7 +42,7 @@ func heavySourceSkipReason(ctx CompletionContext) string {
 	if language == "unknown" || language == "plaintext" || language == "text" {
 		return "skipped-unknown-language"
 	}
-	if ctx.AccessChain != "" {
+	if isAccessCompletionRequest(ctx) {
 		return ""
 	}
 	if ctx.TriggerChar != "" {
@@ -128,7 +117,7 @@ var debugLoggingEnabled = strings.EqualFold(os.Getenv("ARLE_DEBUG"), "1") ||
 
 const (
 	lspCompletionTimeout       = 500 * time.Millisecond
-	lspAccessCompletionTimeout = 1800 * time.Millisecond
+	lspAccessCompletionTimeout = 3800 * time.Millisecond
 	lspFallbackFastWait        = 120 * time.Millisecond
 	lspNoFallbackGenericWait   = 250 * time.Millisecond
 	lspNoFallbackFocusedWait   = lspAccessCompletionTimeout
@@ -867,7 +856,13 @@ func runProviderGroupWithBudget(
 }
 
 func lspWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
-	if ctx.InImport || isAccessCompletionRequest(ctx) {
+	if ctx.InImport {
+		return lspNoFallbackFocusedWait
+	}
+	if isAccessCompletionRequest(ctx) && fallbackCount > 0 {
+		return lspFallbackFastWait
+	}
+	if isAccessCompletionRequest(ctx) {
 		return lspNoFallbackFocusedWait
 	}
 	if fallbackCount > 0 {
@@ -1385,7 +1380,10 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		externalGroup.statuses["lsp"] = externalGroup.lspStatus
 	}
 	trace.LSPStatus = externalGroup.lspStatus
-	trace.LSPListIncomplete = externalGroup.lspIncomplete
+	trace.LSPListIncomplete = externalGroup.lspIncomplete ||
+		(externalGroup.lspStatus == "timeout" &&
+			isAccessCompletionRequest(ctx) &&
+			len(suggestions) > 0)
 	mergeDurations(trace.SourceDurationsMs, externalGroup.durations)
 	mergeStatuses(trace.SourceStatuses, externalGroup.statuses)
 	mergeCounts(counts, externalGroup.counts)
@@ -1402,7 +1400,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 
 	beforeFilter := len(suggestions)
 	suggestions = b.prepareCompletionMatchKeys(ctx, suggestions)
-	suggestions = b.filterByPrefix(ctx.Prefix, ctx.Language, suggestions)
+	suggestions = b.filterByPrefix(ctx, suggestions)
 	afterPrefixFilter := len(suggestions)
 	suggestions = b.filterByContext(ctx, suggestions)
 	afterContextFilter := len(suggestions)
@@ -2668,16 +2666,33 @@ func lspCompletionTrigger(ctx CompletionContext) lsp.CompletionTrigger {
 			AccessMemberIntent:       true,
 		}
 	}
+	accessMemberIntent := isAccessCompletionRequest(ctx)
 	switch ctx.CompletionTriggerKind {
 	case 2:
 		if triggerChar != "" {
 			return lsp.CompletionTrigger{
-				TriggerKind:      2,
-				TriggerCharacter: triggerChar,
+				TriggerKind:              2,
+				TriggerCharacter:         triggerChar,
+				RetryInvokedOnEmpty:      accessMemberIntent,
+				RetryInvokedOnIncomplete: accessMemberIntent,
+				AccessMemberIntent:       accessMemberIntent,
 			}
 		}
 	case 3:
-		return lsp.CompletionTrigger{TriggerKind: 3}
+		return lsp.CompletionTrigger{
+			TriggerKind:              3,
+			RetryInvokedOnEmpty:      accessMemberIntent,
+			RetryInvokedOnIncomplete: accessMemberIntent,
+			AccessMemberIntent:       accessMemberIntent,
+		}
+	}
+	if accessMemberIntent {
+		return lsp.CompletionTrigger{
+			TriggerKind:              1,
+			RetryInvokedOnEmpty:      true,
+			RetryInvokedOnIncomplete: true,
+			AccessMemberIntent:       true,
+		}
 	}
 	return lsp.CompletionTrigger{TriggerKind: 1}
 }
@@ -3683,7 +3698,9 @@ func sameAccessOwner(left, right string) bool {
 	return left == right || namespaceHasTokenSuffix(left, right) || namespaceHasTokenSuffix(right, left)
 }
 
-func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []Suggestion) []Suggestion {
+func (b *PredictionBrain) filterByPrefix(ctx CompletionContext, suggestions []Suggestion) []Suggestion {
+	prefix := ctx.Prefix
+	language := ctx.Language
 	normalizedPrefix := normalizePrefixForLanguage(prefix, language)
 	limitToVariables := false
 	if language == "bash" && strings.HasPrefix(prefix, "$") {
@@ -3707,6 +3724,26 @@ func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []
 		return result
 	}
 
+	if isAccessCompletionRequest(ctx) {
+		result := make([]Suggestion, 0, len(suggestions)/2)
+		for i := range suggestions {
+			s := suggestions[i]
+			if limitToVariables && !isVariableLikeKind(s.Kind) {
+				continue
+			}
+			if !accessSuggestionStartsWithPrefix(s, normalizedPrefix) {
+				continue
+			}
+			s.MatchResult = &predictive.MatchResult{
+				Matched: true,
+				Score:   1,
+				Type:    predictive.MatchPrefix,
+			}
+			result = append(result, s)
+		}
+		return result
+	}
+
 	result := make([]Suggestion, 0, len(suggestions)/2)
 	for i := range suggestions {
 		s := &suggestions[i]
@@ -3724,7 +3761,7 @@ func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []
 		}
 
 		if matchResult.Matched {
-			if isExactSelfEchoSuggestion(*s, normalizedPrefix) {
+			if !isAccessCompletionRequest(ctx) && isExactSelfEchoSuggestion(*s, normalizedPrefix) {
 				continue
 			}
 			s.MatchResult = &matchResult
@@ -3733,6 +3770,26 @@ func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []
 	}
 
 	return result
+}
+
+func accessSuggestionStartsWithPrefix(s Suggestion, prefix string) bool {
+	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	if normalizedPrefix == "" {
+		return true
+	}
+	values := []string{
+		suggestionMatchText(s),
+		s.DisplayText,
+		s.Text,
+		s.InsertText,
+	}
+	for _, value := range values {
+		normalizedValue := strings.ToLower(strings.TrimSpace(value))
+		if normalizedValue != "" && strings.HasPrefix(normalizedValue, normalizedPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func suggestionMatchText(s Suggestion) string {

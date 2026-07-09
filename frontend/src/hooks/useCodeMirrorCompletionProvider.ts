@@ -62,6 +62,7 @@ import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import type { AdaptiveEditorFeatureBudget } from "../stores/performanceStore";
 import {
   createCompletionSessionController,
+  filterAccessCompletionOptions,
   incompleteAccessCompletionResult,
   lspCommitCharacters,
   stableAccessCompletionResult,
@@ -207,6 +208,11 @@ type CompletionResolvePayload = EditorCompletionResolveResult & {
   primaryTextEdit?: PrimaryTextEditJSON | null;
 };
 
+type AccessCompletionSnapshot = {
+  version: number;
+  options: readonly Completion[];
+};
+
 type EditorCompletionResolveRequestPayload = {
   resolveToken: string;
   completionId?: string;
@@ -263,8 +269,7 @@ type CompletionApplyRejectReason =
   | "unknown";
 
 type CompletionApplyAttemptResult =
-  | { applied: true }
-  | { applied: false; reason: CompletionApplyRejectReason };
+  { applied: true } | { applied: false; reason: CompletionApplyRejectReason };
 
 type CompletionApplyRejectDiagnostic = {
   reason: CompletionApplyRejectReason;
@@ -326,25 +331,104 @@ function acceptVisibleCompletion(
   return false;
 }
 
+function completionOptionIsActionable(completion: Completion): boolean {
+  return !(completion as CompletionWithInsertText).__statusKind;
+}
+
+function completionOptionsHaveActionableCompletions(
+  options: readonly Completion[],
+): boolean {
+  return options.some(completionOptionIsActionable);
+}
+
+function firstActionableCompletionIndex(
+  options: readonly CompletionWithInsertText[],
+): number {
+  return options.findIndex(completionOptionIsActionable);
+}
+
+function actionableCompletionIsSelected(view: EditorView): boolean {
+  const selected = selectedCompletion(
+    view.state,
+  ) as CompletionWithInsertText | null;
+  return Boolean(selected && !selected.__statusKind);
+}
+
+function retryAcceptFirstActionableCompletion(
+  view: EditorView,
+  docAtAccept: EditorState["doc"],
+  selectionHeadAtAccept: number,
+  attemptsRemaining = 4,
+): void {
+  const retry = () => {
+    if (
+      view.state.doc !== docAtAccept ||
+      view.state.selection.main.head !== selectionHeadAtAccept ||
+      !completionRuntimeSessionIsOpen(completionStatus(view.state))
+    ) {
+      return;
+    }
+
+    if (!actionableCompletionIsSelected(view)) {
+      const options = currentCompletions(
+        view.state,
+      ) as CompletionWithInsertText[];
+      const firstActionableIndex = firstActionableCompletionIndex(options);
+      if (firstActionableIndex < 0) {
+        return;
+      }
+      view.dispatch({ effects: setSelectedCompletion(firstActionableIndex) });
+    }
+
+    if (acceptCompletion(view)) {
+      return;
+    }
+    if (attemptsRemaining <= 0) {
+      return;
+    }
+    window.setTimeout(
+      () =>
+        retryAcceptFirstActionableCompletion(
+          view,
+          docAtAccept,
+          selectionHeadAtAccept,
+          attemptsRemaining - 1,
+        ),
+      COMPLETION_FAST_BACKEND_GRACE_MS,
+    );
+  };
+
+  queueMicrotask(retry);
+}
+
 function acceptFirstActionableCompletion(view: EditorView): boolean {
   const status = completionStatus(view.state);
   if (status !== "active" && status !== "pending") {
     return false;
   }
   const options = currentCompletions(view.state) as CompletionWithInsertText[];
-  const firstActionableIndex = options.findIndex(
-    (completion) => !completion.__statusKind,
-  );
+  const firstActionableIndex = firstActionableCompletionIndex(options);
   if (firstActionableIndex < 0) {
     return false;
   }
-  const selected = selectedCompletion(
-    view.state,
-  ) as CompletionWithInsertText | null;
-  if (!selected || selected.__statusKind) {
+  if (!actionableCompletionIsSelected(view)) {
     view.dispatch({ effects: setSelectedCompletion(firstActionableIndex) });
   }
-  return acceptCompletion(view);
+  if (acceptCompletion(view)) {
+    return true;
+  }
+  retryAcceptFirstActionableCompletion(
+    view,
+    view.state.doc,
+    view.state.selection.main.head,
+  );
+  return true;
+}
+
+function hasActionableCompletions(state: EditorState): boolean {
+  return completionOptionsHaveActionableCompletions(
+    currentCompletions(state) as CompletionWithInsertText[],
+  );
 }
 
 function completionRuntimeSessionIsOpen(
@@ -397,6 +481,40 @@ function completionOutcomeResult(
     : null;
 }
 
+function completionOptionMergeKey(completion: Completion): string {
+  const metadata = completion as CompletionWithInsertText;
+  return (
+    metadata.__stableKey ||
+    metadata.__completionId ||
+    `${completion.displayLabel || completion.label}:${completion.type || ""}`
+  ).toLowerCase();
+}
+
+function mergeBackendAndInstantCompletionResults(
+  backendResult: CompletionResult,
+  instantResult: CompletionResult,
+): CompletionResult {
+  if (backendResult.from !== instantResult.from) {
+    return backendResult;
+  }
+
+  const options: Completion[] = [];
+  const seen = new Set<string>();
+  for (const option of [...backendResult.options, ...instantResult.options]) {
+    const key = completionOptionMergeKey(option);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    options.push(option);
+  }
+
+  return {
+    ...backendResult,
+    options,
+  };
+}
+
 function accessCompletionLSPStatus(
   result: EditorCompletionResultPayload | null,
 ): string {
@@ -419,7 +537,7 @@ function classifyAccessNoItemsResult(
   if (lspStatus === "canceled" || lspStatus === "stale") {
     return "canceled";
   }
-  if (lspStatus === "empty") {
+  if (lspStatus === "empty" || lspStatus === "ok") {
     return "empty";
   }
   return "error";
@@ -427,6 +545,157 @@ function classifyAccessNoItemsResult(
 
 function accessCompletionLabel(completion: Completion): string {
   return (completion.displayLabel || completion.label || "").toString();
+}
+
+function accessCompletionMembershipKey(completion: Completion): string {
+  const label = accessCompletionLabel(completion).trim().toLowerCase();
+  const type = (completion.type || "").toString().trim().toLowerCase();
+  return `${label}:${type}`;
+}
+
+function accessCompletionHasSafeEditPayload(completion: Completion): boolean {
+  const metadata = completion as CompletionWithInsertText;
+  return Boolean(
+    metadata.__hasAdditionalTextEdits ||
+    metadata.__autoImportAllowed ||
+    metadata.__requiresResolveBeforeApply ||
+    metadata.__requiresSafeEditsBeforeApply,
+  );
+}
+
+function preferAccessCompletionWithPayload(
+  current: Completion,
+  candidate: Completion,
+): Completion {
+  if (
+    accessCompletionHasSafeEditPayload(candidate) &&
+    !accessCompletionHasSafeEditPayload(current)
+  ) {
+    return candidate;
+  }
+  return current;
+}
+
+function uniqueAccessCompletionOptions(
+  options: readonly Completion[],
+): Completion[] {
+  const result: Completion[] = [];
+  const indexes = new Map<string, number>();
+  for (const option of options) {
+    const key = accessCompletionMembershipKey(option);
+    const existingIndex = indexes.get(key);
+    if (existingIndex === undefined) {
+      indexes.set(key, result.length);
+      result.push(option);
+      continue;
+    }
+    result[existingIndex] = preferAccessCompletionWithPayload(
+      result[existingIndex],
+      option,
+    );
+  }
+  return result;
+}
+
+function mergeWithKnownAccessMemberOptions(
+  options: readonly Completion[],
+  knownOptions: readonly Completion[],
+): Completion[] {
+  const knownActionableOptions = uniqueAccessCompletionOptions(
+    knownOptions.filter(completionOptionIsActionable),
+  );
+  if (knownActionableOptions.length === 0) {
+    return uniqueAccessCompletionOptions(options);
+  }
+
+  const knownByKey = new Map<string, Completion>();
+  for (const option of knownActionableOptions) {
+    knownByKey.set(accessCompletionMembershipKey(option), option);
+  }
+
+  const merged: Completion[] = [];
+  const seen = new Set<string>();
+  for (const option of options) {
+    const key = accessCompletionMembershipKey(option);
+    const knownOption = knownByKey.get(key);
+    if (!knownOption || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(preferAccessCompletionWithPayload(option, knownOption));
+  }
+  for (const option of knownActionableOptions) {
+    const key = accessCompletionMembershipKey(option);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(option);
+  }
+
+  return merged.length > 0 ? merged : uniqueAccessCompletionOptions(options);
+}
+
+function accessCompletionSnapshotKey(filePath: string, sessionKey: string) {
+  return `${filePath}\u0000${sessionKey}`;
+}
+
+function actionableAccessOptionsFromSnapshot(
+  snapshot: AccessCompletionSnapshot | undefined,
+  prefix: string,
+): readonly Completion[] {
+  return snapshot
+    ? filterAccessCompletionOptions(snapshot.options, prefix).filter(
+        completionOptionIsActionable,
+      )
+    : [];
+}
+
+function actionableAccessOptionsFromSession(
+  session: CompletionSessionRecord | null | undefined,
+  prefix: string,
+): readonly Completion[] {
+  return session?.result && !session.isIncomplete
+    ? filterAccessCompletionOptions(session.result.options, prefix).filter(
+        completionOptionIsActionable,
+      )
+    : [];
+}
+
+function rememberableAccessCompletionOptions(
+  options: readonly Completion[],
+): readonly Completion[] {
+  return uniqueAccessCompletionOptions(
+    options.filter(completionOptionIsActionable),
+  );
+}
+
+function accessCompletionOptionsCanBeRemembered(
+  options: readonly Completion[],
+): boolean {
+  return completionOptionsHaveActionableCompletions(options);
+}
+
+function mergeAccessCompletionMemoryOptions(
+  snapshotOptions: readonly Completion[],
+  sessionOptions: readonly Completion[],
+): readonly Completion[] {
+  return uniqueAccessCompletionOptions([...snapshotOptions, ...sessionOptions]);
+}
+
+function accessCompletionOptionsForKnownScope(
+  options: readonly Completion[],
+  knownOptions: readonly Completion[],
+): Completion[] {
+  return completionOptionsHaveActionableCompletions(knownOptions)
+    ? mergeWithKnownAccessMemberOptions(options, knownOptions)
+    : uniqueAccessCompletionOptions(options);
+}
+
+function accessCompletionOptionsAreActionable(
+  options: readonly Completion[],
+): boolean {
+  return options.some(completionOptionIsActionable);
 }
 
 function accessCompletionTypePriority(completion: Completion): number {
@@ -635,6 +904,180 @@ function extractGoPackageNamePrefix(textBeforeLine: string): string | null {
 }
 
 const CSS_LANGUAGES = new Set(["css", "scss", "sass", "less"]);
+const HTML_LIKE_CONTAINER_LANGUAGES = new Set([
+  "astro",
+  "blade",
+  "html",
+  "svelte",
+  "vue",
+]);
+
+type EmbeddedCompletionRegion = {
+  language: string;
+  contentFrom: number;
+  contentTo: number;
+};
+
+function htmlAttributeValue(attributes: string, name: string): string {
+  const match = attributes.match(
+    new RegExp(
+      `\\b${escapeRegExp(name)}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`,
+      "i",
+    ),
+  );
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
+}
+
+function htmlEmbeddedRegionInText(
+  text: string,
+  pos: number,
+  tagName: string,
+): { attributes: string; contentFrom: number; contentTo: number } | null {
+  const tagPattern = new RegExp(
+    `<\\s*(/?)\\s*${escapeRegExp(tagName)}\\b([^>]*)>`,
+    "gi",
+  );
+  let match: RegExpExecArray | null;
+  let openRegion: { attributes: string; contentFrom: number } | null = null;
+  while ((match = tagPattern.exec(text)) !== null) {
+    if (match[1]) {
+      if (openRegion && pos >= openRegion.contentFrom && pos <= match.index) {
+        return {
+          ...openRegion,
+          contentTo: match.index,
+        };
+      }
+      openRegion = null;
+      continue;
+    }
+    const attributes = match[2] || "";
+    openRegion = /\/\s*$/.test(attributes)
+      ? null
+      : { attributes, contentFrom: tagPattern.lastIndex };
+  }
+
+  if (openRegion && pos >= openRegion.contentFrom) {
+    return {
+      ...openRegion,
+      contentTo: text.length,
+    };
+  }
+  return null;
+}
+
+function scriptCompletionLanguage(attributes: string): string | null {
+  const lang = htmlAttributeValue(attributes, "lang").toLowerCase();
+  if (lang === "ts" || lang === "tsx" || lang === "typescript") {
+    return "typescript";
+  }
+  if (lang === "js" || lang === "jsx" || lang === "javascript") {
+    return "javascript";
+  }
+
+  const type = htmlAttributeValue(attributes, "type").toLowerCase();
+  if (!type || type === "module") {
+    return "javascript";
+  }
+  if (type.includes("typescript")) {
+    return "typescript";
+  }
+  if (
+    type.includes("javascript") ||
+    type.includes("ecmascript") ||
+    type.includes("babel")
+  ) {
+    return "javascript";
+  }
+  return null;
+}
+
+function styleCompletionLanguage(attributes: string): string | null {
+  const lang = htmlAttributeValue(attributes, "lang").toLowerCase();
+  if (lang === "scss" || lang === "sass" || lang === "less") {
+    return lang;
+  }
+  if (lang === "css") {
+    return "css";
+  }
+
+  const type = htmlAttributeValue(attributes, "type").toLowerCase();
+  if (type.includes("scss")) return "scss";
+  if (type.includes("sass")) return "sass";
+  if (type.includes("less")) return "less";
+  if (type.includes("css")) return "css";
+  return null;
+}
+
+function embeddedCompletionLanguageAt(
+  state: EditorState,
+  pos: number,
+  language: string,
+): string {
+  const region = embeddedCompletionRegionInDocument(
+    state.doc.toString(),
+    pos,
+    language,
+  );
+  return region?.language ?? language;
+}
+
+function embeddedCompletionRegionInDocument(
+  text: string,
+  pos: number,
+  language: string,
+): EmbeddedCompletionRegion | null {
+  if (!HTML_LIKE_CONTAINER_LANGUAGES.has(language)) {
+    return null;
+  }
+
+  const scriptRegion = htmlEmbeddedRegionInText(text, pos, "script");
+  if (scriptRegion !== null) {
+    const scriptLanguage = scriptCompletionLanguage(scriptRegion.attributes);
+    if (scriptLanguage) {
+      return { language: scriptLanguage, ...scriptRegion };
+    }
+  }
+  const styleRegion = htmlEmbeddedRegionInText(text, pos, "style");
+  if (styleRegion !== null) {
+    return {
+      language: styleCompletionLanguage(styleRegion.attributes) ?? "css",
+      ...styleRegion,
+    };
+  }
+  return null;
+}
+
+function paddedEmbeddedCompletionDocument(
+  text: string,
+  region: EmbeddedCompletionRegion,
+): string {
+  let result = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (index >= region.contentFrom && index < region.contentTo) {
+      result += char;
+    } else {
+      result += char === "\n" || char === "\r" ? char : " ";
+    }
+  }
+  return result;
+}
+
+function embeddedBackendCompletionDocument(
+  state: EditorState,
+  pos: number,
+  language: string,
+): { language: string; fullText: string } {
+  const fullText = state.doc.toString();
+  const region = embeddedCompletionRegionInDocument(fullText, pos, language);
+  if (!region) {
+    return { language, fullText };
+  }
+  return {
+    language: region.language,
+    fullText: paddedEmbeddedCompletionDocument(fullText, region),
+  };
+}
 
 function getPrefixCharClass(language: string): string {
   if (CSS_LANGUAGES.has(language)) {
@@ -784,7 +1227,7 @@ function primaryTextEditToChange(
   if (!edit) {
     return null;
   }
-  const range = edit.insert || edit.range || edit.replace;
+  const range = edit.replace || edit.range || edit.insert;
   if (!range) {
     return null;
   }
@@ -908,6 +1351,16 @@ function applyCompletionTextEditChanges(
   };
 }
 
+function completionSelectionAnchorAfterChange(
+  mapping: ChangeDesc,
+  change: CompletionTextEditChange,
+): number {
+  if (change.from === change.to) {
+    return mapping.mapPos(change.to, 1);
+  }
+  return mapping.mapPos(change.to, -1);
+}
+
 function snippetInsertedTextForMapping(snippetText: string): string {
   return snippetText
     .replace(/\$\{[0-9]+:([^}]*)\}/g, "$1")
@@ -1014,12 +1467,23 @@ function applyBackendCompletion(
   }
 
   if (additionalChanges.length > 0 || primaryChange) {
-    const changes = [
-      ...additionalChanges,
-      primaryChange || { from, to, insert: plainText },
-    ].sort((a, b) => a.from - b.from);
+    const primaryCompletionChange = primaryChange || {
+      from,
+      to,
+      insert: plainText,
+    };
+    const changes = [...additionalChanges, primaryCompletionChange].sort(
+      (a, b) => a.from - b.from,
+    );
+    const changeSet = view.state.changes(changes);
     view.dispatch({
-      changes: view.state.changes(changes),
+      changes: changeSet,
+      selection: {
+        anchor: completionSelectionAnchorAfterChange(
+          changeSet,
+          primaryCompletionChange,
+        ),
+      },
       annotations: [
         pickedCompletion.of(completionToApply),
         Transaction.userEvent.of("input.complete"),
@@ -1524,16 +1988,24 @@ function completionSemanticKeyAt(
   language: string,
 ): string | null {
   const pos = context.pos;
+  const completionLanguage = embeddedCompletionLanguageAt(
+    context.state,
+    pos,
+    language,
+  );
   const line = context.state.doc.lineAt(pos);
   const column = pos - line.from + 1;
   const textBeforeLine = line.text.slice(0, column - 1);
-  const accessInfo = extractAccessPrefix(textBeforeLine, language);
+  const accessInfo = extractAccessPrefix(textBeforeLine, completionLanguage);
   const stringPrefix = extractStringPrefix(textBeforeLine);
-  const bareAccessOperator = accessOperatorFromText(textBeforeLine, language);
+  const bareAccessOperator = accessOperatorFromText(
+    textBeforeLine,
+    completionLanguage,
+  );
   const accessIdentity =
     accessInfo?.accessChain ??
     (bareAccessOperator ? textBeforeLine.trimEnd() : null);
-  const braceCharClass = getPrefixCharClass(language);
+  const braceCharClass = getPrefixCharClass(completionLanguage);
   const inBraceContext = new RegExp(
     `\\{[^\\S\\r\\n]*([${braceCharClass}]*)$`,
   ).test(textBeforeLine);
@@ -1561,16 +2033,24 @@ function completionRequestKeyAt(
   language: string,
 ): string | null {
   const pos = context.pos;
+  const completionLanguage = embeddedCompletionLanguageAt(
+    context.state,
+    pos,
+    language,
+  );
   const line = context.state.doc.lineAt(pos);
   const column = pos - line.from + 1;
   const textBeforeLine = line.text.slice(0, column - 1);
-  const accessInfo = extractAccessPrefix(textBeforeLine, language);
+  const accessInfo = extractAccessPrefix(textBeforeLine, completionLanguage);
   const stringPrefix = extractStringPrefix(textBeforeLine);
-  const bareAccessOperator = accessOperatorFromText(textBeforeLine, language);
+  const bareAccessOperator = accessOperatorFromText(
+    textBeforeLine,
+    completionLanguage,
+  );
   const accessIdentity =
     accessInfo?.accessChain ??
     (bareAccessOperator ? textBeforeLine.trimEnd() : null);
-  const braceCharClass = getPrefixCharClass(language);
+  const braceCharClass = getPrefixCharClass(completionLanguage);
   const inBraceContext = new RegExp(
     `\\{[^\\S\\r\\n]*([${braceCharClass}]*)$`,
   ).test(textBeforeLine);
@@ -1867,6 +2347,9 @@ export const useCodeMirrorCompletionProvider = ({
   );
   const accessTransientRetryCountsRef = useRef<Map<string, number>>(new Map());
   const accessIncompleteSessionsRef = useRef<Map<string, boolean>>(new Map());
+  const lastCompleteAccessResultsRef = useRef<
+    Map<string, AccessCompletionSnapshot>
+  >(new Map());
   const lspTriggerCharactersRef = useRef<Map<string, Set<string>>>(new Map());
   const pendingCompletionAcceptIntentRef =
     useRef<PendingCompletionAcceptIntent | null>(null);
@@ -1902,8 +2385,10 @@ export const useCodeMirrorCompletionProvider = ({
 
   const currentDocumentVersion = useCallback(
     () =>
-      getEditorDocumentVersion(filePath, language) ??
-      documentVersionRef.current,
+      Math.max(
+        getEditorDocumentVersion(filePath, language) ?? 0,
+        documentVersionRef.current,
+      ),
     [filePath, language],
   );
 
@@ -1915,6 +2400,7 @@ export const useCodeMirrorCompletionProvider = ({
       accessIncompleteSessionsRef.current.clear();
       if (!options.preserveSession) {
         completionSessionControllerRef.current.clear();
+        lastCompleteAccessResultsRef.current.clear();
       }
       orchestrator.cancelPending();
     },
@@ -1993,6 +2479,7 @@ export const useCodeMirrorCompletionProvider = ({
     if (!enabled) return;
     const invalidateCompletionSession = () => {
       completionSessionControllerRef.current.clear();
+      lastCompleteAccessResultsRef.current.clear();
     };
     const offRuntimeRefreshed = EventsOn(
       "depsync:runtime-refreshed",
@@ -2005,9 +2492,10 @@ export const useCodeMirrorCompletionProvider = ({
     };
   }, [enabled]);
 
-  const recordDocumentChange = useCallback(
+  const recordLocalDocumentChange = useCallback(
     (value: string) => {
       if (!enabled) return;
+      if (lastUserChangeContentRef.current === value) return;
       lastUserChangeContentRef.current = value;
       documentVersionRef.current += 1;
       resetCompletionState({
@@ -2016,6 +2504,8 @@ export const useCodeMirrorCompletionProvider = ({
     },
     [enabled, resetCompletionState],
   );
+
+  const recordDocumentChange = recordLocalDocumentChange;
 
   const metrics = useMemo(() => {
     if (!enabled || !editorFeatureBudget.richEditorFeatures) {
@@ -2277,7 +2767,7 @@ export const useCodeMirrorCompletionProvider = ({
         }
       }
 
-      if (!prefix || prefix.length < 2) {
+      if (!prefix) {
         return [];
       }
 
@@ -2320,28 +2810,38 @@ export const useCodeMirrorCompletionProvider = ({
       if (context.aborted) return null;
 
       const pos = context.pos;
+      const completionLanguage = embeddedCompletionLanguageAt(
+        context.state,
+        pos,
+        language,
+      );
       const line = context.state.doc.lineAt(pos);
       const column = pos - line.from + 1;
       const textBeforeLine = line.text.slice(0, column - 1);
-      const accessInfo = extractAccessPrefix(textBeforeLine, language);
+      const accessInfo = extractAccessPrefix(
+        textBeforeLine,
+        completionLanguage,
+      );
       const stringPrefix = extractStringPrefix(textBeforeLine);
       const packageNamePrefix =
-        language === "go" ? extractGoPackageNamePrefix(textBeforeLine) : null;
+        completionLanguage === "go"
+          ? extractGoPackageNamePrefix(textBeforeLine)
+          : null;
 
       if (
         (stringPrefix !== null && packageNamePrefix === null) ||
-        isProbablyLineComment(textBeforeLine, language) ||
+        isProbablyLineComment(textBeforeLine, completionLanguage) ||
         hasOpenStringLiteral(textBeforeLine)
       ) {
         return null;
       }
 
-      const prefixMatch = getPrefixMatch(textBeforeLine, language);
+      const prefixMatch = getPrefixMatch(textBeforeLine, completionLanguage);
       const rawPrefix =
         packageNamePrefix ?? accessInfo?.prefix ?? prefixMatch?.prefix ?? "";
       const currentPrefix = normalizePrefixForLanguage(
         rawPrefix,
-        language,
+        completionLanguage,
         prefixMatch?.hasDollarPrefix ?? false,
       );
 
@@ -2365,7 +2865,6 @@ export const useCodeMirrorCompletionProvider = ({
       const instantDocumentOptions =
         !accessInfo &&
         packageNamePrefix === null &&
-        currentPrefix.length >= 2 &&
         context.state.doc.length <= 160_000
           ? getInstantDocumentCompletions(
               context.state.doc.toString(),
@@ -2375,7 +2874,7 @@ export const useCodeMirrorCompletionProvider = ({
       const keywordResult =
         !accessInfo && packageNamePrefix === null
           ? completeFromStaticList(
-              getInstantKeywordCompletionOptions(language),
+              getInstantKeywordCompletionOptions(completionLanguage),
               context,
             )
           : null;
@@ -2416,7 +2915,7 @@ export const useCodeMirrorCompletionProvider = ({
       return {
         from,
         options: completionOptions,
-        validFor: getValidForRegex(language, false),
+        validFor: getValidForRegex(completionLanguage, false),
       };
     },
     [enabled, language],
@@ -2427,25 +2926,36 @@ export const useCodeMirrorCompletionProvider = ({
       if (!enabled) return null;
       if (context.aborted) return null;
       const pos = context.pos;
+      const backendDocument = embeddedBackendCompletionDocument(
+        context.state,
+        pos,
+        language,
+      );
+      const completionLanguage = backendDocument.language;
       const line = context.state.doc.lineAt(pos);
       const lineNumber = line.number;
       const column = pos - line.from + 1;
-      const textBeforeLine = line.text.slice(0, column - 1);
-      const accessInfo = extractAccessPrefix(textBeforeLine, language);
+      const textBeforeLine = backendDocument.fullText.slice(line.from, pos);
+      const accessInfo = extractAccessPrefix(
+        textBeforeLine,
+        completionLanguage,
+      );
       const stringPrefix = extractStringPrefix(textBeforeLine);
       const packageNamePrefix =
-        language === "go" ? extractGoPackageNamePrefix(textBeforeLine) : null;
+        completionLanguage === "go"
+          ? extractGoPackageNamePrefix(textBeforeLine)
+          : null;
 
       if (
         (stringPrefix !== null && packageNamePrefix === null) ||
-        isProbablyLineComment(textBeforeLine, language) ||
+        isProbablyLineComment(textBeforeLine, completionLanguage) ||
         hasOpenStringLiteral(textBeforeLine)
       ) {
         return null;
       }
 
-      const prefixMatch = getPrefixMatch(textBeforeLine, language);
-      const braceCharClass = getPrefixCharClass(language);
+      const prefixMatch = getPrefixMatch(textBeforeLine, completionLanguage);
+      const braceCharClass = getPrefixCharClass(completionLanguage);
       const braceTailRegex = new RegExp(
         `\\{[^\\S\\r\\n]*([${braceCharClass}]*)$`,
       );
@@ -2457,10 +2967,10 @@ export const useCodeMirrorCompletionProvider = ({
         : null;
       const bareAccessOperator = accessOperatorFromText(
         textBeforeLine,
-        language,
+        completionLanguage,
       );
       const accessOperator = accessInfo
-        ? accessOperatorFromText(accessInfo.accessChain, language)
+        ? accessOperatorFromText(accessInfo.accessChain, completionLanguage)
         : bareAccessOperator;
       const accessTrigger = bareAccessOperator !== "";
       const hasAccessTrigger = accessTrigger || accessInfo !== null;
@@ -2475,16 +2985,12 @@ export const useCodeMirrorCompletionProvider = ({
       const hasDollarPrefix = prefixMatch?.hasDollarPrefix ?? false;
       const currentPrefix = normalizePrefixForLanguage(
         rawPrefix,
-        language,
+        completionLanguage,
         hasDollarPrefix,
       );
-      const shouldStripDollar = language === "bash" && hasDollarPrefix;
-      const htmlLike =
-        language === "astro" ||
-        language === "html" ||
-        language === "blade" ||
-        language === "vue" ||
-        language === "svelte";
+      const shouldStripDollar =
+        completionLanguage === "bash" && hasDollarPrefix;
+      const htmlLike = HTML_LIKE_CONTAINER_LANGUAGES.has(completionLanguage);
       let triggerChar = accessTrigger
         ? lspTriggerCharacterForAccessOperator(bareAccessOperator)
         : accessInfo
@@ -2496,7 +3002,7 @@ export const useCodeMirrorCompletionProvider = ({
       if (htmlLike && /<\s*[A-Za-z0-9:_-]*$/.test(textBeforeLine)) {
         triggerChar = "<";
       } else if (
-        CSS_LANGUAGES.has(language) &&
+        CSS_LANGUAGES.has(completionLanguage) &&
         /:\s*[^;]*$/.test(textBeforeLine)
       ) {
         triggerChar = ":";
@@ -2573,6 +3079,56 @@ export const useCodeMirrorCompletionProvider = ({
       const isAccessCompletion = accessInfo !== null || accessTrigger;
       const readSemanticKey: CompletionSemanticKeyReader = (updateContext) =>
         completionSemanticKeyAt(updateContext, language);
+      const completionValidFor = getValidForRegex(
+        completionLanguage,
+        stringPrefix !== null,
+        inBraceContext,
+      );
+      const accessPrefix = accessInfo?.prefix ?? "";
+      const accessMemoryKey = isAccessCompletion
+        ? accessCompletionSnapshotKey(filePath, sessionKey)
+        : null;
+      const accessMemorySnapshot = () =>
+        accessMemoryKey
+          ? lastCompleteAccessResultsRef.current.get(accessMemoryKey)
+          : undefined;
+      const accessCompletionResultForCurrentPrefix = (
+        resultOptions: readonly Completion[],
+        isIncomplete: boolean,
+      ): CompletionResult => {
+        const resultOptionsArgs = {
+          from,
+          options: resultOptions,
+          validFor: completionValidFor,
+          semanticKey: sessionKey,
+          readSemanticKey,
+          initialPrefix: accessPrefix,
+        };
+        return isIncomplete
+          ? incompleteAccessCompletionResult(resultOptionsArgs)
+          : stableAccessCompletionResult(resultOptionsArgs);
+      };
+      const accessResultForCurrentPrefix = (
+        session: CompletionSessionRecord,
+      ): CompletionResult =>
+        accessCompletionResultForCurrentPrefix(
+          session.result?.options ?? [],
+          session.isIncomplete,
+        );
+      const rememberedAccessResultForCurrentPrefix =
+        (): CompletionResult | null => {
+          const rememberedOptions = actionableAccessOptionsFromSnapshot(
+            accessMemorySnapshot(),
+            accessPrefix,
+          );
+          if (!accessCompletionOptionsAreActionable(rememberedOptions)) {
+            return null;
+          }
+          return accessCompletionResultForCurrentPrefix(
+            rememberedOptions,
+            false,
+          );
+        };
       const accessStatusResult = (
         completion: Completion,
         keepThroughPrefix: boolean,
@@ -2624,8 +3180,7 @@ export const useCodeMirrorCompletionProvider = ({
         isAccessCompletion &&
         currentSession?.status === "active" &&
         currentSession.result &&
-        (!currentSession.isIncomplete ||
-          requestVersion === currentSession.version)
+        requestVersion === currentSession.version
       ) {
         return currentSession.result;
       }
@@ -2676,8 +3231,8 @@ export const useCodeMirrorCompletionProvider = ({
           kind: "empty",
           result: accessEmptyResult(),
         });
-        const fullText = context.state.doc.toString();
-        const lineText = line.text;
+        const fullText = backendDocument.fullText;
+        const lineText = fullText.slice(line.from, line.to);
         const textBefore = fullText.slice(0, pos);
         const textAfter = fullText.slice(pos);
         const { currentClass, currentMethod, imports } = buildCompletionContext(
@@ -2701,7 +3256,7 @@ export const useCodeMirrorCompletionProvider = ({
           wasAccessSessionIncomplete;
         const completionTriggerKind = completionTriggerKindForRequest(
           triggerChar,
-          language,
+          completionLanguage,
           matchingSession,
           lspTriggerCharactersRef.current,
           accessTrigger,
@@ -2709,7 +3264,7 @@ export const useCodeMirrorCompletionProvider = ({
         );
         const requestPayload = {
           filePath,
-          language,
+          language: completionLanguage,
           line: lineNumber,
           column,
           version: requestVersion,
@@ -2749,7 +3304,11 @@ export const useCodeMirrorCompletionProvider = ({
           }
         }
 
-        updateLSPTriggerCharacters(lspTriggerCharactersRef, language, result);
+        updateLSPTriggerCharacters(
+          lspTriggerCharactersRef,
+          completionLanguage,
+          result,
+        );
         const sameCompletionContextStillCurrent = () => {
           if (!isAccessCompletion) {
             return (
@@ -2843,6 +3402,7 @@ export const useCodeMirrorCompletionProvider = ({
             const isSnippet =
               item.isSnippet === true || hasSnippetPlaceholder(insertText);
             if (
+              !isAccessCompletion &&
               isExactSelfEchoCompletion(item, currentPrefix, resolvedInsertText)
             ) {
               return [];
@@ -2967,7 +3527,7 @@ export const useCodeMirrorCompletionProvider = ({
                 }
                 const attempt = applyBackendCompletion(
                   view,
-                  language,
+                  completionLanguage,
                   completionToApply,
                   applyFrom,
                   applyTo,
@@ -3043,7 +3603,7 @@ export const useCodeMirrorCompletionProvider = ({
                   completionHasIdentifierSuffixAtPosition(
                     view.state,
                     applyTo,
-                    language,
+                    completionLanguage,
                   )
                 ) {
                   return rememberRejectReason("unsafe-plain-fallback");
@@ -3178,6 +3738,12 @@ export const useCodeMirrorCompletionProvider = ({
                   },
                 )
               ) {
+                if (
+                  !completionRequiresSafeEditsBeforeApply &&
+                  applyPlainFallback(insertText, isSnippet, [])
+                ) {
+                  return;
+                }
                 rejectCompletionApply(lastRejectReason, {
                   requiresSafeEdits: completionRequiresSafeEditsBeforeApply,
                   requiresAdditionalSafeEdits:
@@ -3245,9 +3811,44 @@ export const useCodeMirrorCompletionProvider = ({
         );
 
         const shouldStabilizeAccessList = isAccessCompletion;
+        const previousAccessScopedOptions =
+          shouldStabilizeAccessList && accessPrefix.length > 0
+            ? mergeAccessCompletionMemoryOptions(
+                actionableAccessOptionsFromSnapshot(
+                  accessMemorySnapshot(),
+                  accessPrefix,
+                ),
+                actionableAccessOptionsFromSession(
+                  matchingSession,
+                  accessPrefix,
+                ),
+              )
+            : [];
+        const accessScopedOptions = shouldStabilizeAccessList
+          ? filterAccessCompletionOptions(
+              sortAccessCompletionOptions([...pendingItems, ...completions]),
+              accessPrefix,
+            )
+          : [];
+        const stableAccessScopedOptions = shouldStabilizeAccessList
+          ? accessCompletionOptionsForKnownScope(
+              accessScopedOptions,
+              previousAccessScopedOptions,
+            )
+          : accessScopedOptions;
         const allOptions = shouldStabilizeAccessList
-          ? sortAccessCompletionOptions([...pendingItems, ...completions])
+          ? [...stableAccessScopedOptions]
           : [...pendingItems, ...completions];
+        if (
+          shouldStabilizeAccessList &&
+          accessPrefix.length > 0 &&
+          !completionOptionsHaveActionableCompletions(allOptions) &&
+          completionOptionsHaveActionableCompletions(
+            previousAccessScopedOptions,
+          )
+        ) {
+          allOptions.push(...previousAccessScopedOptions);
+        }
         if (!sameCompletionContextStillCurrent()) {
           return { kind: "canceled" };
         }
@@ -3275,11 +3876,6 @@ export const useCodeMirrorCompletionProvider = ({
         }
 
         const resultIsIncomplete = result.isIncomplete === true;
-        const completionValidFor = getValidForRegex(
-          language,
-          stringPrefix !== null,
-          inBraceContext,
-        );
         metricsRef.current.recordCompletionList(allOptions);
         orchestrator.markResponse(requestId);
         accessTransientRetryCountsRef.current.delete(transientRetryKey);
@@ -3298,6 +3894,7 @@ export const useCodeMirrorCompletionProvider = ({
                   validFor: completionValidFor,
                   semanticKey: sessionKey,
                   readSemanticKey,
+                  initialPrefix: accessPrefix,
                 })
               : {
                   from,
@@ -3314,6 +3911,7 @@ export const useCodeMirrorCompletionProvider = ({
               validFor: completionValidFor,
               semanticKey: sessionKey,
               readSemanticKey,
+              initialPrefix: accessPrefix,
             })
           : stableCompletionResult({
               from,
@@ -3322,6 +3920,17 @@ export const useCodeMirrorCompletionProvider = ({
               semanticKey: sessionKey,
               readSemanticKey,
             });
+        if (
+          isAccessCompletion &&
+          accessPrefix.length === 0 &&
+          accessMemoryKey &&
+          accessCompletionOptionsCanBeRemembered(allOptions)
+        ) {
+          lastCompleteAccessResultsRef.current.set(accessMemoryKey, {
+            version: versionAtRequest,
+            options: rememberableAccessCompletionOptions(allOptions),
+          });
+        }
         return {
           kind: "result",
           isIncomplete: false,
@@ -3340,7 +3949,9 @@ export const useCodeMirrorCompletionProvider = ({
 
       if (
         isAccessCompletion &&
-        (currentSession?.status !== "active" || currentSession.isIncomplete)
+        (currentSession?.status !== "active" ||
+          currentSession.isIncomplete ||
+          currentSession.version !== requestVersion)
       ) {
         completionSessionControllerRef.current.beginPending({
           id: sessionId,
@@ -3385,10 +3996,45 @@ export const useCodeMirrorCompletionProvider = ({
       });
 
       if (isAccessCompletion) {
-        const visibleResult =
+        const rememberedVisibleResult =
+          rememberedAccessResultForCurrentPrefix();
+        const currentVisibleResult =
           currentSession?.status === "active" && currentSession.result
-            ? currentSession.result
-            : accessPendingResult();
+            ? accessResultForCurrentPrefix(currentSession)
+            : null;
+        const visibleResult =
+          currentVisibleResult &&
+          completionOptionsHaveActionableCompletions(
+            currentVisibleResult.options,
+          )
+            ? currentVisibleResult
+            : (rememberedVisibleResult ??
+              currentVisibleResult ??
+              accessPendingResult());
+        const preservedAccessResultForPendingSession = (): {
+          result: CompletionResult;
+          isIncomplete: boolean;
+        } | null => {
+          const session = completionSessionControllerRef.current.current();
+          if (
+            !session ||
+            session.id !== sessionId ||
+            session.requestId !== requestId ||
+            session.filePath !== filePath ||
+            session.semanticKey !== sessionKey ||
+            session.status !== "pending"
+          ) {
+            return null;
+          }
+          const result = accessResultForCurrentPrefix(session);
+          if (!completionOptionsHaveActionableCompletions(result.options)) {
+            const remembered = rememberedAccessResultForCurrentPrefix();
+            return remembered
+              ? { result: remembered, isIncomplete: false }
+              : null;
+          }
+          return { result, isIncomplete: session.isIncomplete };
+        };
         metricsRef.current.recordInstantFallbackUsed();
         metricsRef.current.recordCompletionList([...visibleResult.options]);
         backendPromise.then((outcome) => {
@@ -3407,6 +4053,21 @@ export const useCodeMirrorCompletionProvider = ({
             return;
           }
           if (outcome.kind === "empty") {
+            const preserved = preservedAccessResultForPendingSession();
+            if (preserved) {
+              const updated = completionSessionControllerRef.current.activate(
+                sessionId,
+                preserved.result,
+                {
+                  version: requestVersion,
+                  requestId,
+                  isIncomplete: preserved.isIncomplete,
+                },
+              );
+              if (!updated) return;
+              refreshSameCompletionSession();
+              return;
+            }
             const updated = completionSessionControllerRef.current.finishEmpty(
               sessionId,
               outcome.result,
@@ -3417,6 +4078,21 @@ export const useCodeMirrorCompletionProvider = ({
             return;
           }
           if (outcome.kind === "error") {
+            const preserved = preservedAccessResultForPendingSession();
+            if (preserved) {
+              const updated = completionSessionControllerRef.current.activate(
+                sessionId,
+                preserved.result,
+                {
+                  version: requestVersion,
+                  requestId,
+                  isIncomplete: preserved.isIncomplete,
+                },
+              );
+              if (!updated) return;
+              refreshSameCompletionSession();
+              return;
+            }
             const updated = completionSessionControllerRef.current.finishError(
               sessionId,
               outcome.result,
@@ -3473,7 +4149,9 @@ export const useCodeMirrorCompletionProvider = ({
           backendPromise.then((outcome) => {
             const result = completionOutcomeResult(outcome);
             if (result) {
-              settle(result);
+              settle(
+                mergeBackendAndInstantCompletionResults(result, instantResult),
+              );
             } else {
               settleInstant();
             }
@@ -3572,21 +4250,29 @@ export const useCodeMirrorCompletionProvider = ({
       return true;
     };
     const acceptPendingAccessCompletion = (view: EditorView): boolean => {
+      if (completionDismissedVersionRef.current === currentDocumentVersion()) {
+        return false;
+      }
       const pos = view.state.selection.main.head;
+      const completionLanguage = embeddedCompletionLanguageAt(
+        view.state,
+        pos,
+        language,
+      );
       const line = view.state.doc.lineAt(pos);
       const textBeforeLine = line.text.slice(0, pos - line.from);
       const hasAccessIntent =
-        extractAccessPrefix(textBeforeLine, language) !== null ||
-        accessOperatorFromText(textBeforeLine, language) !== "";
-      const session = completionSessionControllerRef.current.current();
-      if (!hasAccessIntent && session?.isAccess !== true) {
+        extractAccessPrefix(textBeforeLine, completionLanguage) !== null ||
+        accessOperatorFromText(textBeforeLine, completionLanguage) !== "";
+      if (!hasAccessIntent) {
         return false;
       }
+      const session = completionSessionControllerRef.current.current();
       const semanticKey =
         completionSemanticKeyAt(
           new CompletionContext(view.state, pos, false),
           language,
-        ) ?? (session?.isAccess === true ? session.semanticKey : null);
+        ) ?? null;
       const docAtAccept = view.state.doc.toString();
       if (
         !recordPendingCompletionAcceptIntent(view, docAtAccept, semanticKey)
@@ -3631,6 +4317,7 @@ export const useCodeMirrorCompletionProvider = ({
           completionInFlightRequestsRef.current > 0;
         if (!update.docChanged) return;
         if (update.view.composing || update.view.compositionStarted) return;
+        recordLocalDocumentChange(update.state.doc.toString());
 
         let insertedNonWhitespace = false;
         let insertedAutocompleteWhitespace = false;
@@ -3662,9 +4349,14 @@ export const useCodeMirrorCompletionProvider = ({
           0,
           currentPos - currentLine.from,
         );
+        const completionLanguage = embeddedCompletionLanguageAt(
+          update.state,
+          currentPos,
+          language,
+        );
         const isWhitespaceCompletionTrigger =
           insertedAutocompleteWhitespace &&
-          language === "go" &&
+          completionLanguage === "go" &&
           extractGoPackageNamePrefix(textBeforeLine) !== null;
         if (!insertedNonWhitespace && !isWhitespaceCompletionTrigger) return;
 
@@ -3672,15 +4364,25 @@ export const useCodeMirrorCompletionProvider = ({
           Math.max(0, currentPos - 2),
           currentPos,
         );
-        const isAccessTrigger = endsWithAccessTrigger(recentText, language);
-        const activeIncompleteAccessSession =
-          completionSessionControllerRef.current.current()?.isAccess === true &&
-          completionSessionControllerRef.current.current()?.isIncomplete ===
-            true;
+        const isAccessTrigger = endsWithAccessTrigger(
+          recentText,
+          completionLanguage,
+        );
+        const isAccessContext =
+          isAccessTrigger ||
+          extractAccessPrefix(textBeforeLine, completionLanguage) !== null;
+        const activeCompletionSession =
+          completionSessionControllerRef.current.current();
+        const activeAccessSession =
+          activeCompletionSession?.isAccess === true &&
+          (activeCompletionSession.status === "active" ||
+            activeCompletionSession.status === "pending");
 
         if (
           status === "active" &&
-          !activeIncompleteAccessSession &&
+          hasActionableCompletions(update.state) &&
+          !isAccessContext &&
+          !activeAccessSession &&
           !isAccessTrigger &&
           !isWhitespaceCompletionTrigger
         ) {
@@ -3695,17 +4397,20 @@ export const useCodeMirrorCompletionProvider = ({
           const version = currentDocumentVersion();
           if (completionDismissedVersionRef.current === version) return;
           const nextStatus = completionStatus(view.state);
-          const nextActiveIncompleteAccessSession =
-            completionSessionControllerRef.current.current()?.isAccess ===
-              true &&
-            completionSessionControllerRef.current.current()?.isIncomplete ===
-              true;
+          const nextActiveCompletionSession =
+            completionSessionControllerRef.current.current();
+          const nextActiveAccessSession =
+            nextActiveCompletionSession?.isAccess === true &&
+            (nextActiveCompletionSession.status === "active" ||
+              nextActiveCompletionSession.status === "pending");
           completionRuntimeSessionOpenRef.current =
             completionRuntimeSessionIsOpen(nextStatus) ||
             completionInFlightRequestsRef.current > 0;
           if (
             nextStatus === "active" &&
-            !nextActiveIncompleteAccessSession &&
+            hasActionableCompletions(view.state) &&
+            !isAccessContext &&
+            !nextActiveAccessSession &&
             !isAccessTrigger &&
             !isWhitespaceCompletionTrigger
           ) {
@@ -3753,6 +4458,7 @@ export const useCodeMirrorCompletionProvider = ({
     enabled,
     language,
     currentDocumentVersion,
+    recordLocalDocumentChange,
     orchestrator,
   ]);
 

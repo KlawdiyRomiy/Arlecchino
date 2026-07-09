@@ -10,7 +10,6 @@ type InstantItem = {
 
 const MAX_INSTANT_OPTIONS = 32;
 const MAX_DOCUMENT_INDEX_LENGTH = 160_000;
-const DOCUMENT_SYMBOL_PREFIX_MIN = 2;
 const LANGUAGE_ALIASES: Record<string, string> = {
   ts: "typescript",
   tsx: "typescript",
@@ -330,10 +329,7 @@ export function getInstantDocumentCompletions(
   fullText: string,
   prefix: string,
 ): Completion[] {
-  if (
-    prefix.length < DOCUMENT_SYMBOL_PREFIX_MIN ||
-    fullText.length > MAX_DOCUMENT_INDEX_LENGTH
-  ) {
+  if (!prefix || fullText.length > MAX_DOCUMENT_INDEX_LENGTH) {
     return [];
   }
 

@@ -17,6 +17,7 @@ type StableCompletionResultOptions = {
   validFor: RegExp | CompletionResult["validFor"];
   semanticKey: string;
   readSemanticKey: CompletionSemanticKeyReader;
+  initialPrefix?: string;
 };
 
 type StableStatusCompletionResultOptions = Omit<
@@ -32,11 +33,7 @@ type AccessCompletionMetadata = Completion & {
 };
 
 export type CompletionSessionStatus =
-  | "pending"
-  | "active"
-  | "empty"
-  | "error"
-  | "dismissed";
+  "pending" | "active" | "empty" | "error" | "dismissed";
 
 export type CompletionSessionRecord = {
   id: string;
@@ -296,7 +293,7 @@ function accessCompletionOptionMatchesPrefix(
   );
 }
 
-function filterAccessCompletionOptions(
+export function filterAccessCompletionOptions(
   options: readonly Completion[],
   prefix: string,
 ): readonly Completion[] {
@@ -314,10 +311,12 @@ export function stableAccessCompletionResult({
   validFor,
   semanticKey,
   readSemanticKey,
+  initialPrefix = "",
 }: StableCompletionResultOptions): CompletionResult {
+  const initialOptions = filterAccessCompletionOptions(options, initialPrefix);
   return {
     from,
-    options,
+    options: initialOptions,
     filter: false,
     update(current, updateFrom, updateTo, context) {
       if (context.aborted) {
@@ -364,10 +363,12 @@ export function incompleteAccessCompletionResult({
   validFor,
   semanticKey,
   readSemanticKey,
+  initialPrefix = "",
 }: StableCompletionResultOptions): CompletionResult {
+  const initialOptions = filterAccessCompletionOptions(options, initialPrefix);
   return {
     from,
-    options,
+    options: initialOptions,
     filter: false,
     validFor,
     update(current, updateFrom, updateTo, context) {
