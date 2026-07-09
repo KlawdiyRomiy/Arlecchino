@@ -85,13 +85,13 @@ its tokenizer artifact.
 These files are project-owned Arlecchino artifacts licensed under the MIT
 License for redistribution with Arlecchino beta source archives and binary
 bundles. Keep the root `LICENSE`, this notice file, and
-`MODEL_PROVENANCE.md` with any distribution containing the artifacts.
+`docs/model-provenance.md` with any distribution containing the artifacts.
 
 The internal autocomplete model was trained for completion candidate ranking
 from public code-completion examples derived from The Stack / BigCode material.
 Arlecchino does not redistribute raw The Stack dataset files. Track dataset
 terms, citation requirements, and release-time memorization checks in
-`MODEL_PROVENANCE.md`.
+`docs/model-provenance.md`.
 
 ## Language Servers And Tooling
 
@@ -108,6 +108,6 @@ Before shipping a public binary:
    `codemirror-extension-inline-suggestion`.
 3. Refresh this file with any newly introduced licenses and package notices.
 4. Confirm The Stack terms/citation obligations and model memorization check.
-5. Include `LICENSE`, this notice file, `MODEL_PROVENANCE.md`, `PRIVACY.md`,
-   and any dependency-required notices in source archives and binary
-   distribution artifacts.
+5. Include `LICENSE`, this notice file, `docs/model-provenance.md`,
+   `PRIVACY.md`, and any dependency-required notices in source archives and
+   binary distribution artifacts.
