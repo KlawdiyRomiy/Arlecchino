@@ -221,7 +221,7 @@ verify_archive_checksum() {
   if [[ -z "$expected_sha" ]]; then
     if [[ "$REQUIRE_CHECKSUM" == "1" ]]; then
       echo "ERROR: missing sha256 for ONNX Runtime archive: $archive_path" >&2
-      exit 1
+      return 1
     fi
     return 0
   fi
@@ -232,12 +232,25 @@ verify_archive_checksum() {
     echo "ERROR: ONNX Runtime archive checksum mismatch: $archive_path" >&2
     echo "Expected: $expected_sha" >&2
     echo "Actual:   $actual_sha" >&2
-    exit 1
+    return 1
+  fi
+}
+
+verify_archive() {
+  local archive_path="$1"
+  local expected_sha="$2"
+
+  if ! verify_archive_checksum "$archive_path" "$expected_sha"; then
+    return 1
+  fi
+  if ! tar -tzf "$archive_path" >/dev/null 2>&1; then
+    echo "ERROR: ONNX Runtime archive is truncated or unreadable: $archive_path" >&2
+    return 1
   fi
 }
 
 download_locked_runtime() {
-  local archive_url archive_sha archive_name archive_path archive_stem extract_dir runtime_path
+  local archive_url archive_sha archive_name archive_path archive_stem extract_dir runtime_path partial_path
   archive_url="$(locked_archive_url)"
   archive_sha="$(locked_archive_sha256)"
   if [[ -z "$archive_url" ]]; then
@@ -261,13 +274,26 @@ download_locked_runtime() {
   archive_stem="${archive_name%.tgz}"
   archive_stem="${archive_stem%.tar.gz}"
   extract_dir="$CACHE_DIR/$archive_stem"
+  partial_path="${archive_path}.part.$$"
 
   mkdir -p "$CACHE_DIR"
+  if [[ -s "$archive_path" ]] && ! verify_archive "$archive_path" "$archive_sha" >/dev/null 2>&1; then
+    echo "WARNING: discarding invalid cached ONNX Runtime archive: $archive_path" >&2
+    rm -f "$archive_path"
+  fi
   if [[ ! -s "$archive_path" ]]; then
     echo "Downloading locked ONNX Runtime $VERSION for $ARCH..." >&2
-    curl -fL --retry 3 --connect-timeout 10 --max-time 240 "$archive_url" -o "$archive_path"
+    rm -f "$partial_path"
+    if ! curl -fL --retry 3 --connect-timeout 10 --max-time 240 "$archive_url" -o "$partial_path"; then
+      rm -f "$partial_path"
+      exit 1
+    fi
+    if ! verify_archive "$partial_path" "$archive_sha"; then
+      rm -f "$partial_path"
+      exit 1
+    fi
+    mv -f "$partial_path" "$archive_path"
   fi
-  verify_archive_checksum "$archive_path" "$archive_sha"
 
   rm -rf "$extract_dir"
   mkdir -p "$extract_dir"
