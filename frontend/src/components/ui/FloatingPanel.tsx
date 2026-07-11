@@ -163,6 +163,27 @@ const readInlineProjectedScale = (
   return { x: 1, y: 1 };
 };
 
+const readProjectedReadableScale = (
+  node: HTMLElement,
+  effectiveUiScale: number,
+): { x: number; y: number } => {
+  const rect = node.getBoundingClientRect();
+  const layoutWidth = logicalToScreenPixels(node.offsetWidth, effectiveUiScale);
+  const layoutHeight = logicalToScreenPixels(
+    node.offsetHeight,
+    effectiveUiScale,
+  );
+
+  if (layoutWidth > 0 && layoutHeight > 0) {
+    return {
+      x: clampProjectedReadableScale(rect.width / layoutWidth),
+      y: clampProjectedReadableScale(rect.height / layoutHeight),
+    };
+  }
+
+  return readInlineProjectedScale(node);
+};
+
 const writeProjectedReadableScale = (
   node: HTMLElement,
   scale: { x: number; y: number },
@@ -1786,7 +1807,11 @@ export const FloatingPanel = React.forwardRef<
         : flowLayoutMotionEnabled
           ? `floating-panel-${id}`
           : undefined;
-    const readableLayerLayoutMotionEnabled = fullscreenLayoutMotionEnabled;
+    // Shared-layout moves between snapped slots project scale onto the panel.
+    // Reuse the fullscreen inverse-scale layer so only the frame morphs while
+    // text and controls keep their natural proportions.
+    const readableLayerLayoutMotionEnabled =
+      fullscreenLayoutMotionEnabled || flowLayoutMotionEnabled;
     useLayoutEffect(() => {
       const panelNode = panelRef.current;
       const readableLayerNode = readableLayerRef.current;
@@ -1794,11 +1819,7 @@ export const FloatingPanel = React.forwardRef<
         return;
       }
 
-      if (
-        !readableLayerLayoutMotionEnabled ||
-        !fullscreenMotionActive ||
-        reduceMotion
-      ) {
+      if (!readableLayerLayoutMotionEnabled || reduceMotion) {
         writeProjectedReadableScale(readableLayerNode, { x: 1, y: 1 });
         return;
       }
@@ -1806,28 +1827,31 @@ export const FloatingPanel = React.forwardRef<
       const updateProjectedScale = () => {
         writeProjectedReadableScale(
           readableLayerNode,
-          readInlineProjectedScale(panelNode),
+          readProjectedReadableScale(panelNode, effectiveUiScale),
         );
       };
       const observer = new MutationObserver(() => {
         updateProjectedScale();
       });
 
-      observer.observe(panelNode, {
-        attributes: true,
-        attributeFilter: ["style"],
-      });
+      let projectedAncestor: HTMLElement | null = panelNode;
+      while (projectedAncestor) {
+        observer.observe(projectedAncestor, {
+          attributes: true,
+          attributeFilter: ["style"],
+        });
+        if (projectedAncestor.matches('[data-testid="panel-workspace"]')) {
+          break;
+        }
+        projectedAncestor = projectedAncestor.parentElement;
+      }
       updateProjectedScale();
 
       return () => {
         observer.disconnect();
         writeProjectedReadableScale(readableLayerNode, { x: 1, y: 1 });
       };
-    }, [
-      fullscreenMotionActive,
-      readableLayerLayoutMotionEnabled,
-      reduceMotion,
-    ]);
+    }, [effectiveUiScale, readableLayerLayoutMotionEnabled, reduceMotion]);
     const containerMotionStyle: MotionStyle = isDragging
       ? {
           ...(getContainerStyle() as MotionStyle),
@@ -2229,20 +2253,18 @@ export const FloatingPanel = React.forwardRef<
           </>
         )}
 
-        {readableLayerLayoutMotionEnabled ? (
-          <div style={readableClipStyle} data-panel-readable-clip="true">
-            <div
-              ref={readableLayerRef}
-              style={readableLayerStyle}
-              data-panel-readable-layer="true"
-              data-panel-readable-motion="true"
-            >
-              {panelBody}
-            </div>
+        <div style={readableClipStyle} data-panel-readable-clip="true">
+          <div
+            ref={readableLayerRef}
+            style={readableLayerStyle}
+            data-panel-readable-layer="true"
+            data-panel-readable-motion={
+              readableLayerLayoutMotionEnabled ? "true" : "false"
+            }
+          >
+            {panelBody}
           </div>
-        ) : (
-          panelBody
-        )}
+        </div>
       </motion.div>
     );
   },
