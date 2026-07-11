@@ -43,6 +43,11 @@ import { useOpenIntentEventBridge } from "./shell/openIntentEventBridge";
 import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
 import { useAutoUpdateBridge } from "./shell/autoUpdate";
 import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications";
+import {
+  normalizeApplicationCloseSource,
+  shouldSkipApplicationCloseConfirmation,
+  type ApplicationCloseSource,
+} from "./shell/applicationClosePolicy";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useSystemNotifications } from "./shell/systemNotifications";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
@@ -84,6 +89,7 @@ type PendingCloseConfirmation = CloseConfirmationRequest & {
 
 interface ApplicationCloseRequestPayload {
   sessionId?: string;
+  source?: string;
 }
 
 const toErrorMessage = (error: unknown): string =>
@@ -187,6 +193,8 @@ const App: React.FC = () => {
   const projectBackendOperationIdRef = useRef(0);
   const effectiveUiScale = clampUiScale(uiScale);
   const isDetachedHost = isDetachedAppletHostRoute();
+  const welcomeScreenVisible =
+    ready && !isDetachedHost && !(activeId && activeProject);
 
   useEffect(() => startAdaptivePerformanceMonitor(), []);
 
@@ -426,30 +434,36 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const requestApplicationClose = useCallback(() => {
-    const confirmApplicationClose = async () => {
-      await AppFunctions.ConfirmApplicationClose();
-    };
+  const requestApplicationClose = useCallback(
+    (source: ApplicationCloseSource) => {
+      const confirmApplicationClose = async () => {
+        await AppFunctions.ConfirmApplicationClose();
+      };
 
-    if (!confirmBeforeCloseRef.current) {
-      void confirmApplicationClose().catch((error) => {
-        console.error("Error while closing application:", error);
-        showWorkspaceError("Close failed", error);
-      });
-      return;
-    }
+      if (
+        !confirmBeforeCloseRef.current ||
+        shouldSkipApplicationCloseConfirmation(welcomeScreenVisible, source)
+      ) {
+        void confirmApplicationClose().catch((error) => {
+          console.error("Error while closing application:", error);
+          showWorkspaceError("Close failed", error);
+        });
+        return;
+      }
 
-    if (closeConfirmationRef.current?.kind === "application") {
-      return;
-    }
+      if (closeConfirmationRef.current?.kind === "application") {
+        return;
+      }
 
-    const pendingConfirmation = {
-      kind: "application" as const,
-      onConfirm: confirmApplicationClose,
-    };
-    closeConfirmationRef.current = pendingConfirmation;
-    setCloseConfirmation(pendingConfirmation);
-  }, [showWorkspaceError]);
+      const pendingConfirmation = {
+        kind: "application" as const,
+        onConfirm: confirmApplicationClose,
+      };
+      closeConfirmationRef.current = pendingConfirmation;
+      setCloseConfirmation(pendingConfirmation);
+    },
+    [showWorkspaceError, welcomeScreenVisible],
+  );
 
   const handleCloseConfirmationConfirm = useCallback(() => {
     const pending = closeConfirmationRef.current;
@@ -481,7 +495,7 @@ const App: React.FC = () => {
         return;
       }
 
-      requestApplicationClose();
+      requestApplicationClose(normalizeApplicationCloseSource(payload?.source));
     };
 
     return EventsOn<[ApplicationCloseRequestPayload | undefined]>(
@@ -504,12 +518,12 @@ const App: React.FC = () => {
         event.key.toLowerCase() === "q"
       ) {
         event.preventDefault();
-        requestApplicationClose();
+        requestApplicationClose("quit");
       }
     };
 
     const handleApplicationCloseEvent = () => {
-      requestApplicationClose();
+      requestApplicationClose("window");
     };
 
     window.addEventListener("keydown", handleApplicationCloseShortcut, true);
