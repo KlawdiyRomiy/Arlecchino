@@ -29,6 +29,8 @@ const (
 	maxEditorFilePreviewBytes     = int64(256 * 1024)
 	maxEditorVisualFileBytes      = int64(20 * 1024 * 1024)
 	fileSniffBytes                = int64(64 * 1024)
+	maxGitStdoutBytes             = 32 * 1024 * 1024
+	maxGitStderrBytes             = 1 * 1024 * 1024
 )
 
 var nonTextEditorExtensions = map[string]struct{}{
@@ -946,6 +948,9 @@ func (a *App) resolveRendererProjectPathForSession(session *ProjectRuntimeSessio
 		projectPath = strings.TrimSpace(session.currentProjectPath())
 	}
 	if projectPath == "" {
+		if !mustExist {
+			return "", fmt.Errorf("projectless paths are read-only")
+		}
 		path, err := normalizeRequiredPath(rawPath, fieldName)
 		if err != nil {
 			return "", err
@@ -1452,6 +1457,10 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 	if _, ok := gitAllowedSubcommands[args[0]]; !ok {
 		return "", fmt.Errorf("git command not allowed: %s", args[0])
 	}
+	if err := validateGitCommandArguments(args); err != nil {
+		return "", err
+	}
+	args = hardenGitReadArguments(args)
 	if args[0] == "init" {
 		if err := validateGitInitAllowed(projectPath, args); err != nil {
 			return "", err
@@ -1464,6 +1473,52 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 	}
 
 	return runGitCommandInProject(projectPath, args)
+}
+
+func validateGitCommandArguments(args []string) error {
+	for _, arg := range args[1:] {
+		trimmed := strings.TrimSpace(arg)
+		lower := strings.ToLower(trimmed)
+		if strings.ContainsAny(trimmed, "\x00\r\n") {
+			return fmt.Errorf("git argument contains control characters")
+		}
+		for _, prefix := range []string{
+			"--output",
+			"--no-index",
+			"--ext-diff",
+			"--textconv",
+			"--config",
+			"--config-env",
+			"--pathspec-from-file",
+			"--template",
+			"--file",
+			"--upload-pack",
+			"--receive-pack",
+			"--exec-path",
+			"--contents",
+		} {
+			if lower == prefix || strings.HasPrefix(lower, prefix+"=") {
+				return fmt.Errorf("git argument not allowed: %s", trimmed)
+			}
+		}
+		if trimmed == "-c" || trimmed == "-F" || strings.HasPrefix(trimmed, "-F") {
+			return fmt.Errorf("git argument not allowed: %s", trimmed)
+		}
+		if filepath.IsAbs(trimmed) {
+			return fmt.Errorf("absolute git path argument not allowed: %s", trimmed)
+		}
+	}
+	return nil
+}
+
+func hardenGitReadArguments(args []string) []string {
+	if len(args) == 0 || (args[0] != "diff" && args[0] != "log" && args[0] != "show") {
+		return args
+	}
+	hardened := make([]string, 0, len(args)+2)
+	hardened = append(hardened, args[0], "--no-ext-diff", "--no-textconv")
+	hardened = append(hardened, args[1:]...)
+	return hardened
 }
 
 func (a *App) runGitStatusCommand(projectPath string, args []string) (string, error) {
@@ -1501,12 +1556,15 @@ func runGitCommandInProject(projectPath string, args []string) (string, error) {
 	if isGitStatusCommand(args) {
 		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	}
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	stdout := cappedOutputBuffer{limit: maxGitStdoutBytes}
+	stderr := cappedOutputBuffer{limit: maxGitStderrBytes}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	if stdout.truncated {
+		return "", fmt.Errorf("git command output exceeded %d MiB", maxGitStdoutBytes/(1024*1024))
+	}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return "", fmt.Errorf("git command timed out")
@@ -1532,6 +1590,31 @@ func runGitCommandInProject(projectPath string, args []string) (string, error) {
 	}
 
 	return stdout.String(), nil
+}
+
+type cappedOutputBuffer struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *cappedOutputBuffer) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	remaining := b.limit - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || originalLen > 0
+		return originalLen, nil
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+		b.truncated = true
+	}
+	_, _ = b.buffer.Write(p)
+	return originalLen, nil
+}
+
+func (b *cappedOutputBuffer) String() string {
+	return b.buffer.String()
 }
 
 // GetGitBranch returns the current git branch name
@@ -1599,9 +1682,7 @@ type GitCommitInfo struct {
 
 // GetGitLog returns commit history
 func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = normalizeGitLogLimit(limit)
 
 	format := strings.Join([]string{
 		"%H",
@@ -1655,6 +1736,17 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 		commits = append(commits, commit)
 	}
 	return commits, nil
+}
+
+func normalizeGitLogLimit(limit int) int {
+	const maxGitLogEntries = 500
+	if limit <= 0 {
+		return 50
+	}
+	if limit > maxGitLogEntries {
+		return maxGitLogEntries
+	}
+	return limit
 }
 
 // GetGitShow returns details of a specific commit
