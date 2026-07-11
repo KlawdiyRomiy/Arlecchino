@@ -468,7 +468,7 @@ func (a *Arle) load(cycle *arleLoadCycle) error {
 	}
 
 	backend, err := NewArleBackend(modelPath)
-	if err != nil || backend == nil {
+	if err != nil {
 		log.Printf("[ARLE] backend load failed: %v, using PureGoBackend", err)
 		backend = NewPureGoBackend()
 	}
