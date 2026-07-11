@@ -366,6 +366,7 @@ export function ChatComposer({
   const composerRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mentionRequestIdRef = useRef(0);
+  const wasRunningRef = useRef(running);
   const [activeMention, setActiveMention] =
     useState<ComposerMentionTrigger | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<
@@ -466,6 +467,15 @@ export function ChatComposer({
     setMentionLoading(false);
     setMentionIndex(-1);
   }, []);
+
+  useEffect(() => {
+    if (wasRunningRef.current && !running) {
+      closeMentionPicker();
+      setModeMenuOpen(false);
+      setModelPickerOpen(false);
+    }
+    wasRunningRef.current = running;
+  }, [closeMentionPicker, running]);
 
   const openAttachmentPicker = useCallback(() => {
     if (activeMention?.source === "attachment") {
