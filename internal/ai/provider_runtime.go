@@ -3,6 +3,7 @@ package ai
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -24,6 +25,8 @@ const (
 	localRuntimeStatusStarting    = "starting"
 	localRuntimeStatusRunning     = "running"
 	providerRuntimeCacheTTL       = 10 * time.Second
+	defaultProviderContextSize    = 4096
+	maxProviderContextSize        = 1_048_576
 )
 
 type AIProviderRuntimeModel struct {
@@ -80,10 +83,121 @@ type providerRuntimeProcess struct {
 type providerRuntimeManager struct {
 	mu        sync.Mutex
 	processes map[string]*providerRuntimeProcess
+	starts    map[string]*providerRuntimeStart
+	closed    bool
 }
 
+type providerRuntimeStart struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	descriptor AIProviderRuntimeDescriptor
+	err        error
+	finished   bool
+}
+
+var (
+	errProviderRuntimeManagerClosed = errors.New("provider runtime manager is closed")
+	errProviderRuntimeStartCanceled = errors.New("provider runtime start was canceled")
+)
+
 func newProviderRuntimeManager() *providerRuntimeManager {
-	return &providerRuntimeManager{processes: map[string]*providerRuntimeProcess{}}
+	return &providerRuntimeManager{
+		processes: map[string]*providerRuntimeProcess{},
+		starts:    map[string]*providerRuntimeStart{},
+	}
+}
+
+func (m *providerRuntimeManager) beginStart(providerID string) (*providerRuntimeStart, bool, error) {
+	if m == nil {
+		return nil, false, errProviderRuntimeManagerClosed
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, false, errProviderRuntimeManagerClosed
+	}
+	if existing := m.starts[providerID]; existing != nil {
+		return existing, false, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	start := &providerRuntimeStart{
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	m.starts[providerID] = start
+	return start, true, nil
+}
+
+func (m *providerRuntimeManager) finishStart(providerID string, start *providerRuntimeStart, descriptor AIProviderRuntimeDescriptor, err error) {
+	if m == nil || start == nil {
+		return
+	}
+	m.mu.Lock()
+	if start.finished {
+		m.mu.Unlock()
+		return
+	}
+	start.descriptor = descriptor
+	start.err = err
+	start.finished = true
+	if m.starts[providerID] == start {
+		delete(m.starts, providerID)
+	}
+	close(start.done)
+	m.mu.Unlock()
+	if err != nil && start.cancel != nil {
+		start.cancel()
+	}
+}
+
+func (m *providerRuntimeManager) publishProcess(providerID string, start *providerRuntimeStart, process *providerRuntimeProcess) (*providerRuntimeProcess, error) {
+	if m == nil || start == nil {
+		stopRuntimeProcess(process)
+		return nil, errProviderRuntimeManagerClosed
+	}
+	m.mu.Lock()
+	var err error
+	switch {
+	case m.closed:
+		err = errProviderRuntimeManagerClosed
+	case m.starts[providerID] != start:
+		err = errProviderRuntimeStartCanceled
+	case start.ctx == nil || start.ctx.Err() != nil:
+		err = errProviderRuntimeStartCanceled
+	}
+	if err != nil {
+		m.mu.Unlock()
+		stopRuntimeProcess(process)
+		return nil, err
+	}
+	previous := m.processes[providerID]
+	m.processes[providerID] = process
+	m.mu.Unlock()
+	return previous, nil
+}
+
+func (m *providerRuntimeManager) stop(providerID string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	start := m.starts[providerID]
+	if start != nil && start.cancel != nil {
+		// Cancel while holding the manager lock so a concurrent publish cannot
+		// pass its cancellation check between lookup and cancellation.
+		start.cancel()
+	}
+	process := m.processes[providerID]
+	delete(m.processes, providerID)
+	m.mu.Unlock()
+
+	stopRuntimeProcess(process)
+	if start != nil {
+		<-start.done
+	}
+	return start != nil || process != nil
 }
 
 func (m *providerRuntimeManager) stopAll() {
@@ -91,14 +205,29 @@ func (m *providerRuntimeManager) stopAll() {
 		return
 	}
 	m.mu.Lock()
+	m.closed = true
+	starts := make([]*providerRuntimeStart, 0, len(m.starts))
+	for _, start := range m.starts {
+		starts = append(starts, start)
+	}
 	processes := make([]*providerRuntimeProcess, 0, len(m.processes))
 	for _, process := range m.processes {
 		processes = append(processes, process)
 	}
 	m.processes = map[string]*providerRuntimeProcess{}
 	m.mu.Unlock()
+	for _, start := range starts {
+		if start != nil && start.cancel != nil {
+			start.cancel()
+		}
+	}
 	for _, process := range processes {
 		stopRuntimeProcess(process)
+	}
+	for _, start := range starts {
+		if start != nil {
+			<-start.done
+		}
 	}
 }
 
@@ -146,7 +275,7 @@ func (s *Service) storeProviderRuntimeCache(runtimes []AIProviderRuntimeDescript
 	}
 }
 
-func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntimeStartRequest) (AIProviderRuntimeDescriptor, error) {
+func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntimeStartRequest) (result AIProviderRuntimeDescriptor, resultErr error) {
 	if s == nil {
 		return AIProviderRuntimeDescriptor{}, fmt.Errorf("AI service is unavailable")
 	}
@@ -189,10 +318,30 @@ func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntim
 	if portBusy(host, port) && descriptor.Status == providers.ProviderStatusReady {
 		return s.runtimeDescriptorForProvider(descriptor), nil
 	}
-	if req.ContextSize <= 0 {
-		req.ContextSize = 4096
+	req.ContextSize, err = validatedProviderRuntimeContextSize(req.ContextSize)
+	if err != nil {
+		return s.runtimeDescriptorForProvider(descriptor), err
 	}
-	processCtx, cancel := context.WithCancel(context.Background())
+	start, owner, err := s.runtimes.beginStart(descriptor.ID)
+	if err != nil {
+		return s.runtimeDescriptorForProvider(descriptor), err
+	}
+	if !owner {
+		var canceled <-chan struct{}
+		if ctx != nil {
+			canceled = ctx.Done()
+		}
+		select {
+		case <-start.done:
+			return start.descriptor, start.err
+		case <-canceled:
+			return s.runtimeDescriptorForProvider(descriptor), ctx.Err()
+		}
+	}
+	defer func() {
+		s.runtimes.finishStart(descriptor.ID, start, result, resultErr)
+	}()
+	processCtx, cancel := start.ctx, start.cancel
 	args := []string{
 		"-m", modelPath,
 		"--host", host,
@@ -226,17 +375,23 @@ func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntim
 		startedAt:  time.Now(),
 		logs:       []string{fmt.Sprintf("started %s %s", executable, strings.Join(args, " "))},
 	}
-	s.runtimes.mu.Lock()
-	if previous := s.runtimes.processes[descriptor.ID]; previous != nil {
-		stopRuntimeProcess(previous)
+	previous, err := s.runtimes.publishProcess(descriptor.ID, start, process)
+	if err != nil {
+		// publishProcess cancels and kills a rejected process. Reap it here
+		// because the managed-process wait goroutine is only installed after a
+		// successful publish.
+		_ = cmd.Wait()
+		return s.runtimeDescriptorForProvider(descriptor), err
 	}
-	s.runtimes.processes[descriptor.ID] = process
-	s.runtimes.mu.Unlock()
+	stopRuntimeProcess(previous)
 	s.invalidateProviderCaches()
 	go collectRuntimeLogs(process, stdout)
 	go collectRuntimeLogs(process, stderr)
 	go func() {
 		_ = cmd.Wait()
+		if process.cancel != nil {
+			process.cancel()
+		}
 		s.runtimes.mu.Lock()
 		if s.runtimes.processes[descriptor.ID] == process {
 			delete(s.runtimes.processes, descriptor.ID)
@@ -245,7 +400,7 @@ func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntim
 		s.runtimes.mu.Unlock()
 	}()
 	go func() {
-		probeCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		probeCtx, cancel := context.WithTimeout(processCtx, 45*time.Second)
 		defer cancel()
 		ticker := time.NewTicker(900 * time.Millisecond)
 		defer ticker.Stop()
@@ -280,15 +435,11 @@ func (s *Service) StopProviderRuntime(ctx context.Context, providerID string) (A
 	if descriptor.ID == "" {
 		return AIProviderRuntimeDescriptor{}, fmt.Errorf("provider %q is not configured", providerID)
 	}
-	s.runtimes.mu.Lock()
-	process := s.runtimes.processes[providerID]
-	delete(s.runtimes.processes, providerID)
-	s.runtimes.mu.Unlock()
+	stopped := s.runtimes.stop(providerID)
 	s.invalidateProviderCaches()
-	if process == nil {
+	if !stopped {
 		return s.runtimeDescriptorForProvider(descriptor), nil
 	}
-	stopRuntimeProcess(process)
 	refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, _ = s.refreshLocalProviders(refreshCtx, localDiscoveryProviderSettings())
@@ -561,6 +712,16 @@ func runtimeHostPort(endpoint string, fallbackHost string, fallbackPort string) 
 	return host, port, nil
 }
 
+func validatedProviderRuntimeContextSize(value int) (int, error) {
+	if value <= 0 {
+		return defaultProviderContextSize, nil
+	}
+	if value > maxProviderContextSize {
+		return 0, fmt.Errorf("provider context size exceeds maximum %d", maxProviderContextSize)
+	}
+	return value, nil
+}
+
 func portBusy(host string, port string) bool {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 180*time.Millisecond)
 	if err != nil {
@@ -571,10 +732,27 @@ func portBusy(host string, port string) bool {
 }
 
 func collectRuntimeLogs(process *providerRuntimeProcess, pipe interface{ Read([]byte) (int, error) }) {
-	scanner := bufio.NewScanner(pipe)
-	scanner.Buffer(make([]byte, 0, 4096), 64*1024)
-	for scanner.Scan() {
-		appendRuntimeLog(process, scanner.Text())
+	reader := bufio.NewReaderSize(pipe, 4096)
+	var line strings.Builder
+	for {
+		fragment, continued, err := reader.ReadLine()
+		if len(fragment) > 0 && line.Len() < 500 {
+			remaining := 500 - line.Len()
+			if len(fragment) > remaining {
+				fragment = fragment[:remaining]
+			}
+			_, _ = line.Write(fragment)
+		}
+		if !continued {
+			appendRuntimeLog(process, line.String())
+			line.Reset()
+		}
+		if err != nil {
+			if line.Len() > 0 {
+				appendRuntimeLog(process, line.String())
+			}
+			return
+		}
 	}
 }
 

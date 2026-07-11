@@ -192,10 +192,7 @@ func (s *Service) CancelChatRun(projectID string, runID string) (AIChatRun, erro
 	run.CanCancel = false
 	run.Revision++
 	run.UpdatedAt = utcNow()
-	runCopy := AIChatRun{}
-	if run != nil {
-		runCopy = *run
-	}
+	runCopy := *run
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
 	s.persistChatRun(project, runCopy)
