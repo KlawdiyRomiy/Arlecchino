@@ -160,12 +160,15 @@ func rewriteRelativeJSTSImportsAfterMove(projectPath string, oldPath string, new
 			}
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if !isJSTSImportFile(currentPath) {
 			return nil
 		}
 
 		info, err := d.Info()
-		if err != nil {
+		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
 		contentBytes, err := os.ReadFile(currentPath)

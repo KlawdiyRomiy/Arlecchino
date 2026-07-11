@@ -541,13 +541,36 @@ func safeProjectPath(projectRoot string, relPath string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unsafe patch path: %s", relPath)
 	}
-	absPath := filepath.Join(projectRoot, filepath.FromSlash(relPath))
-	rel, err := filepath.Rel(projectRoot, absPath)
+	root, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	absPath := filepath.Join(root, filepath.FromSlash(relPath))
+	rel, err := filepath.Rel(root, absPath)
 	if err != nil {
 		return "", err
 	}
 	if rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("patch path escapes project: %s", relPath)
+	}
+
+	current := resolvedRoot
+	for _, part := range strings.Split(filepath.Clean(filepath.FromSlash(relPath)), string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				break
+			}
+			return "", statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("project path contains symlink: %s", relPath)
+		}
 	}
 	return absPath, nil
 }

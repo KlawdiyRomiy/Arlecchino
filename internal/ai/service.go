@@ -1324,6 +1324,9 @@ func fastContextSnippets(projectRoot string, prompt string, currentPath string, 
 			}
 			return nil
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if currentPath != "." && filepath.Clean(path) == currentPath {
 			return nil
 		}
@@ -1331,7 +1334,7 @@ func fastContextSnippets(projectRoot string, prompt string, currentPath string, 
 			return nil
 		}
 		info, statErr := entry.Info()
-		if statErr != nil || info.Size() <= 0 || info.Size() > 64*1024 {
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64*1024 {
 			return nil
 		}
 		content, readErr := os.ReadFile(path)

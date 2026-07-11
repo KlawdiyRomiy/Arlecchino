@@ -49,9 +49,9 @@ func (s *Service) executeFileReadRangeTool(project *ProjectSession, req AIToolCa
 		result.Error = "file read target is a symlink"
 		return result
 	}
-	if info.IsDir() {
+	if !info.Mode().IsRegular() {
 		result.Status = "blocked"
-		result.Error = "file read target is a directory"
+		result.Error = "file read target is not a regular file"
 		return result
 	}
 	if info.Size() > maxPatchCheckpointBytes {
@@ -124,6 +124,9 @@ func (s *Service) executeWorkspaceGrepTool(project *ProjectSession, req AIToolCa
 			}
 			return nil
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		rel, relErr := filepath.Rel(project.ProjectRoot, path)
 		if relErr != nil {
 			return nil
@@ -133,7 +136,7 @@ func (s *Service) executeWorkspaceGrepTool(project *ProjectSession, req AIToolCa
 			return nil
 		}
 		info, infoErr := entry.Info()
-		if infoErr != nil || info.Size() > maxWorkspaceGrepFileBytes {
+		if infoErr != nil || !info.Mode().IsRegular() || info.Size() > maxWorkspaceGrepFileBytes {
 			return nil
 		}
 		content, readErr := os.ReadFile(path)

@@ -510,6 +510,10 @@ func (a *App) applyLSPWorkspaceEdit(edit *LSPWorkspaceEdit) (int, error) {
 	if projectPath == "" {
 		return 0, fmt.Errorf("project path is required for workspace edits")
 	}
+	projectRoot, err := resolveProjectEntryRootFromPath(projectPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve workspace edit project root: %w", err)
+	}
 
 	changes, err := collectWorkspaceTextEdits(edit)
 	if err != nil {
@@ -528,18 +532,13 @@ func (a *App) applyLSPWorkspaceEdit(edit *LSPWorkspaceEdit) (int, error) {
 	}
 
 	for path, edits := range changes {
-		withinRoot, err := isPathWithinRoot(projectPath, path)
+		resolved, err := resolveProjectEntryPathInRoot(projectRoot, path, true)
 		if err != nil {
 			return 0, fmt.Errorf("failed to validate workspace edit path %s: %w", path, err)
 		}
-		if !withinRoot {
-			return 0, fmt.Errorf("workspace edit target outside project root: %s", path)
-		}
+		path = resolved.Path
 
-		info, err := os.Stat(path)
-		if err != nil {
-			return 0, fmt.Errorf("failed to stat %s: %w", path, err)
-		}
+		info := resolved.Info
 		if !info.Mode().IsRegular() {
 			return 0, fmt.Errorf("workspace edit target is not regular file: %s", path)
 		}

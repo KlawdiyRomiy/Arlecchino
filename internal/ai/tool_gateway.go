@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -314,7 +316,8 @@ func toolApprovalGrantKey(projectID string, runID string, toolID string, argumen
 }
 
 func toolApprovalArgumentsHash(arguments map[string]string) string {
-	return shortHash(toolArgumentsJSON(arguments))
+	sum := sha256.Sum256([]byte(toolArgumentsJSON(arguments)))
+	return hex.EncodeToString(sum[:])
 }
 
 func newToolCallResult(req AIToolCallRequest, descriptor AIToolDescriptor, proposal AIToolProposal) AIToolCallResult {
