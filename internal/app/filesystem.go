@@ -1146,71 +1146,11 @@ func (a *App) FindFileByName(searchDir string, fileName string) ([]string, error
 	return results, err
 }
 
-// FormatCode formats a file using code formatter (Prettier for JS/TS/HTML/CSS)
+// FormatCode is kept for binding compatibility. Formatting runs in the
+// renderer's bundled Prettier runtime so opening a workspace never executes a
+// project-controlled formatter binary.
 func (a *App) FormatCode(filePath string, content string) (string, error) {
-	// Get project root to find prettier
-	projectPath := a.GetCurrentProjectPath()
-	if projectPath == "" {
-		return "", fmt.Errorf("no project opened")
-	}
-
-	// Check if file type is supported by Prettier
-	ext := strings.ToLower(filepath.Ext(filePath))
-	supportedExts := map[string]bool{
-		".js":    true,
-		".jsx":   true,
-		".ts":    true,
-		".tsx":   true,
-		".json":  true,
-		".html":  true,
-		".css":   true,
-		".scss":  true,
-		".md":    true,
-		".vue":   true,
-		".php":   true,
-		".blade": true, // Blade templates
-	}
-
-	if !supportedExts[ext] {
-		// Return original content for unsupported files
-		return content, nil
-	}
-
-	// Path to prettier in frontend directory
-	prettierPath := filepath.Join(projectPath, "frontend", "node_modules", ".bin", "prettier")
-
-	// Check if prettier exists
-	if _, err := os.Stat(prettierPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("prettier not found at %s", prettierPath)
-	}
-
-	// Create temp file for formatting
-	tmpFile, err := os.CreateTemp("", "prettier-*"+ext)
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmpFile.Name())
-
-	// Write content to temp file
-	if err := os.WriteFile(tmpFile.Name(), []byte(content), 0644); err != nil {
-		return "", err
-	}
-
-	// Run prettier
-	cmd := exec.Command(prettierPath, "--write", tmpFile.Name())
-	cmd.Dir = filepath.Join(projectPath, "frontend")
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("prettier error: %s, output: %s", err, string(output))
-	}
-
-	// Read formatted content
-	formatted, err := os.ReadFile(tmpFile.Name())
-	if err != nil {
-		return "", err
-	}
-
-	return string(formatted), nil
+	return content, nil
 }
 
 // SearchResult represents a single search match

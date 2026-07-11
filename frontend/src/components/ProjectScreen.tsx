@@ -49,6 +49,7 @@ import {
   editorCanvasBackground,
 } from "../utils/codeMirrorTheme";
 import { openEditorFileSearch } from "../utils/codeMirrorFileSearch";
+import { formatCodeWithPrettier } from "../utils/formatCode";
 import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
 import {
@@ -2680,9 +2681,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
         // Try to format code before saving
         try {
-          const formatted = await AppFunctions.FormatCode(
-            tab.path,
+          const formatted = await formatCodeWithPrettier(
             contentToSave,
+            tab.path,
+            getLanguageFromPath(tab.path),
           );
           if (formatted && formatted !== contentToSave) {
             console.log("File formatted successfully");

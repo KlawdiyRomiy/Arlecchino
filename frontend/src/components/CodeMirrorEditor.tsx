@@ -115,6 +115,7 @@ import { normalizePathForGit, type GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
 import type { EditorNavigationTarget } from "../utils/editorFileLoader";
+import { formatCodeWithPrettier } from "../utils/formatCode";
 
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
 const SIGNATURE_HIDE_MS = 2400;
@@ -1249,105 +1250,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }
 
       const contentText = view.state.doc.toString();
-      const lowerPath = filePath.toLowerCase();
 
       try {
-        const { default: prettier } = await import("prettier/standalone");
-        let formatted: string | null = null;
-        if (language === "php") {
-          const { default: prettierPluginPhp } =
-            await import("@prettier/plugin-php");
-          formatted = await prettier.format(contentText, {
-            parser: "php",
-            plugins: [prettierPluginPhp],
-            printWidth: 120,
-            tabWidth: 4,
-            semi: true,
-            trailingComma: "all",
-            singleQuote: false,
-          });
-        } else if (language === "html" || lowerPath.endsWith(".blade.php")) {
-          const { default: prettierPluginHtml } =
-            await import("prettier/plugins/html");
-          formatted = await prettier.format(contentText, {
-            parser: "html",
-            plugins: [prettierPluginHtml],
-            printWidth: 120,
-            tabWidth: 2,
-            semi: true,
-            trailingComma: "all",
-            singleQuote: false,
-            htmlWhitespaceSensitivity: "css",
-          });
-        } else if (
-          language === "javascript" ||
-          language === "javascriptreact"
-        ) {
-          const [
-            { default: prettierPluginBabel },
-            { default: prettierPluginEstree },
-          ] = await Promise.all([
-            import("prettier/plugins/babel"),
-            import("prettier/plugins/estree"),
-          ]);
-          formatted = await prettier.format(contentText, {
-            parser: "babel",
-            plugins: [prettierPluginBabel, prettierPluginEstree],
-            printWidth: 80,
-            tabWidth: 2,
-            semi: true,
-            trailingComma: "all",
-            singleQuote: false,
-            arrowParens: "always",
-          });
-        } else if (
-          language === "typescript" ||
-          language === "typescriptreact"
-        ) {
-          const [
-            { default: prettierPluginTypescript },
-            { default: prettierPluginEstree },
-          ] = await Promise.all([
-            import("prettier/plugins/typescript"),
-            import("prettier/plugins/estree"),
-          ]);
-          formatted = await prettier.format(contentText, {
-            parser: "typescript",
-            plugins: [prettierPluginTypescript, prettierPluginEstree],
-            printWidth: 80,
-            tabWidth: 2,
-            semi: true,
-            trailingComma: "all",
-            singleQuote: false,
-            arrowParens: "always",
-          });
-        } else if (language === "css" || language === "scss") {
-          const { default: prettierPluginPostcss } =
-            await import("prettier/plugins/postcss");
-          formatted = await prettier.format(contentText, {
-            parser: "css",
-            plugins: [prettierPluginPostcss],
-            printWidth: 80,
-            tabWidth: 2,
-            semi: true,
-            singleQuote: false,
-          });
-        } else if (language === "json") {
-          const [
-            { default: prettierPluginBabel },
-            { default: prettierPluginEstree },
-          ] = await Promise.all([
-            import("prettier/plugins/babel"),
-            import("prettier/plugins/estree"),
-          ]);
-          formatted = await prettier.format(contentText, {
-            parser: "json",
-            plugins: [prettierPluginBabel, prettierPluginEstree],
-            printWidth: 80,
-            tabWidth: 2,
-            trailingComma: "none",
-          });
-        } else {
+        const formatted = await formatCodeWithPrettier(
+          contentText,
+          filePath,
+          language,
+        );
+        if (formatted === null) {
           return false;
         }
 
