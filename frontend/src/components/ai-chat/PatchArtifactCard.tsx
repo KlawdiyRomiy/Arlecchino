@@ -4,7 +4,11 @@ import {
   AIChatRunArtifact,
   AIPatchArtifactPayload,
 } from "../../../bindings/arlecchino/internal/ai/models";
-import { compactText } from "./aiChatPresentation";
+import {
+  patchFileDisplay,
+  PatchFileStatus,
+  summarizeUnifiedDiff,
+} from "./patchSummary";
 
 interface PatchArtifactCardProps {
   artifact: AIChatRunArtifact;
@@ -24,6 +28,17 @@ function parsePatchPayload(
   }
 }
 
+const statusLabels: Record<PatchFileStatus, string> = {
+  added: "Added",
+  deleted: "Deleted",
+  edited: "Edited",
+  renamed: "Renamed",
+};
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export function PatchArtifactCard({
   artifact,
   busy,
@@ -37,53 +52,112 @@ export function PatchArtifactCard({
   const canApply = artifact.status === "ready" && payload.checkReady;
   const canRollback =
     artifact.status === "applied" && checkpoints.length > 0 && !busy;
-  const preview = compactText(payload.unifiedDiff || "", 900);
-  const statusLabel = artifact.status.replace(/_/g, " ");
-  const rollbackLabel =
-    checkpoints.length > 1 ? "Rollback artifact" : "Rollback file";
   const rollbackTitle =
     checkpoints.length > 1
-      ? "Rollback the whole patch artifact when supported"
+      ? "Undo the whole applied patch"
       : files[0]?.path
-        ? `Rollback ${files[0].path}`
-        : "Rollback this file checkpoint";
+        ? `Undo changes to ${files[0].path}`
+        : "Undo this applied change";
+  const summaryFiles = useMemo(
+    () => summarizeUnifiedDiff(payload.unifiedDiff || "", files),
+    [files, payload.unifiedDiff],
+  );
+  const additions = summaryFiles.reduce(
+    (total, file) => total + file.additions,
+    0,
+  );
+  const deletions = summaryFiles.reduce(
+    (total, file) => total + file.deletions,
+    0,
+  );
 
   const stop = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
   };
 
   return (
-    <div className="ai-chat-patch-artifact" data-status={artifact.status}>
+    <section
+      className="ai-chat-patch-artifact"
+      data-status={artifact.status}
+      aria-label={artifact.title || "Changed files summary"}
+    >
       <div className="ai-chat-patch-artifact__head">
         <span className="ai-chat-patch-artifact__title">
           <FileCode2 size={14} />
-          {artifact.title || "Patch preview"}
+          Summary
         </span>
-        <span className="ai-chat-patch-artifact__state">{statusLabel}</span>
+        <span
+          className="ai-chat-patch-artifact__state"
+          aria-label={`${countLabel(summaryFiles.length, "changed file", "changed files")}, ${countLabel(additions, "addition", "additions")}, ${countLabel(deletions, "deletion", "deletions")}`}
+        >
+          {summaryFiles.length} {summaryFiles.length === 1 ? "file" : "files"}
+          <span className="ai-chat-patch-artifact__total-additions">
+            +{additions}
+          </span>
+          <span className="ai-chat-patch-artifact__total-deletions">
+            -{deletions}
+          </span>
+        </span>
       </div>
 
       {artifact.summary ? (
         <p className="ai-chat-patch-artifact__summary">{artifact.summary}</p>
       ) : null}
 
-      {files.length > 0 ? (
-        <div className="ai-chat-patch-artifact__files">
-          {files.map((file) => (
-            <span key={file.path} title={file.path}>
-              {file.status}:{file.path}
-            </span>
-          ))}
-        </div>
+      {summaryFiles.length > 0 ? (
+        <ul
+          className="ai-chat-patch-artifact__files"
+          aria-label="Changed files"
+        >
+          {summaryFiles.map((file) => {
+            const display = patchFileDisplay(file.path);
+            const pathLabel = file.previousPath
+              ? `${file.previousPath} → ${file.path}`
+              : file.path;
+            return (
+              <li
+                className="ai-chat-patch-artifact__file"
+                key={file.path}
+                data-status={file.status}
+              >
+                <span className="ai-chat-patch-artifact__file-status">
+                  {statusLabels[file.status]}
+                </span>
+                <span className="ai-chat-patch-artifact__file-copy">
+                  <span
+                    className="ai-chat-patch-artifact__file-name"
+                    title={pathLabel}
+                  >
+                    {display.name}
+                  </span>
+                  <span
+                    className="ai-chat-patch-artifact__file-path"
+                    title={pathLabel}
+                  >
+                    {file.previousPath ? pathLabel : display.directory}
+                  </span>
+                </span>
+                <span
+                  className="ai-chat-patch-artifact__file-changes"
+                  aria-label={`${countLabel(file.additions, "addition", "additions")}, ${countLabel(file.deletions, "deletion", "deletions")}`}
+                >
+                  <span className="ai-chat-patch-artifact__additions">
+                    +{file.additions}
+                  </span>
+                  <span className="ai-chat-patch-artifact__deletions">
+                    -{file.deletions}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
 
       {payload.checkError ? (
         <div className="ai-chat-patch-artifact__error">
           {payload.checkError}
         </div>
-      ) : null}
-
-      {preview ? (
-        <pre className="ai-chat-patch-artifact__diff">{preview}</pre>
       ) : null}
 
       <div className="ai-chat-patch-artifact__actions">
@@ -111,7 +185,7 @@ export function PatchArtifactCard({
             }}
           >
             <RotateCcw size={13} />
-            {rollbackLabel}
+            Undo
           </button>
         ) : null}
         <button
@@ -125,6 +199,6 @@ export function PatchArtifactCard({
           Review
         </button>
       </div>
-    </div>
+    </section>
   );
 }
