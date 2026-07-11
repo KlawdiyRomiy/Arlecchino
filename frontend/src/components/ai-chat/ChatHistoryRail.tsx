@@ -218,7 +218,7 @@ export function ChatHistoryRail({
         </span>
         <div className="ai-chat-drawer-actions">
           <button
-            className="ai-chat-icon-button"
+            className="panel-control-button topbar-control-button"
             type="button"
             title="New chat"
             onMouseDown={(event) => event.stopPropagation()}
@@ -227,7 +227,7 @@ export function ChatHistoryRail({
             <MessageSquarePlus size={15} />
           </button>
           <button
-            className="ai-chat-icon-button"
+            className="panel-control-button panel-control-button-danger topbar-control-button"
             type="button"
             title="Close history"
             onMouseDown={(event) => event.stopPropagation()}

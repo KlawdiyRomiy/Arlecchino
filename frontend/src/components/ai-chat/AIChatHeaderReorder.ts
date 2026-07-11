@@ -3,13 +3,7 @@ import React from "react";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 
 export type AIChatHeaderItemId =
-  | "history"
-  | "activity"
-  | "review"
-  | "search"
-  | "newChat"
-  | "refresh"
-  | "settings";
+  "history" | "review" | "search" | "newChat" | "refresh";
 
 export type AIChatHeaderDropGroup = "left" | "right";
 
@@ -18,38 +12,36 @@ export interface AIChatHeaderLayout {
   right: AIChatHeaderItemId[];
 }
 
-const AI_CHAT_HEADER_STORAGE_KEY = "arlecchino.ai-chat.header-layout.v1";
+const AI_CHAT_HEADER_STORAGE_KEY = "arlecchino.ai-chat.header-layout.v2";
 
 const DEFAULT_AI_CHAT_HEADER_LAYOUT: AIChatHeaderLayout = {
-  left: ["history", "activity"],
-  right: ["review", "search", "newChat", "refresh", "settings"],
+  left: ["history", "newChat"],
+  right: ["review", "search", "refresh"],
 };
 
 const AI_CHAT_HEADER_ITEM_IDS: AIChatHeaderItemId[] = [
   "history",
-  "activity",
   "review",
   "search",
   "newChat",
   "refresh",
-  "settings",
 ];
 
 export const AI_CHAT_HEADER_ITEM_LABELS: Record<AIChatHeaderItemId, string> = {
   history: "History",
-  activity: "Runtime status",
-  review: "Git Review",
+  review: "Git Panel",
   search: "Search session",
   newChat: "New chat",
   refresh: "Refresh runtime",
-  settings: "Settings",
 };
 
 const isAIChatHeaderItemId = (value: unknown): value is AIChatHeaderItemId =>
   typeof value === "string" &&
   AI_CHAT_HEADER_ITEM_IDS.includes(value as AIChatHeaderItemId);
 
-const normalizeAIChatHeaderLayout = (value: unknown): AIChatHeaderLayout => {
+export const normalizeAIChatHeaderLayout = (
+  value: unknown,
+): AIChatHeaderLayout => {
   const next: AIChatHeaderLayout = { left: [], right: [] };
   const seen = new Set<AIChatHeaderItemId>();
   const candidate =

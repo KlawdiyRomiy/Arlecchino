@@ -211,15 +211,18 @@ const TerminalPanelBody = React.memo(function TerminalPanelBody({
 
 interface AIChatPanelBodyProps {
   activeProjectPath: string;
+  outerMotionActive: boolean;
   presentation: "fullscreen" | "panel";
 }
 
 const AIChatPanelBody = React.memo(function AIChatPanelBody({
   activeProjectPath,
+  outerMotionActive,
   presentation,
 }: AIChatPanelBodyProps) {
   return (
     <AIChatPanelContent
+      outerMotionActive={outerMotionActive}
       presentation={presentation}
       projectPath={activeProjectPath}
     />
@@ -636,8 +639,11 @@ export const MainLayoutPanelRenderer: React.FC<
           {...panelProps}
         >
           <AIChatPanelBody
-            presentation={isFullscreen ? "fullscreen" : "panel"}
+            presentation={
+              isFullscreen || fullscreenMotionActive ? "fullscreen" : "panel"
+            }
             activeProjectPath={activeProjectPath}
+            outerMotionActive={fullscreenMotionActive}
           />
         </FloatingPanel>
       );

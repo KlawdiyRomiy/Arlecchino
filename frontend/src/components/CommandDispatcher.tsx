@@ -295,15 +295,6 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
           paletteActionId: "ai.pendingApprovals",
         },
         {
-          id: "ai-runtime-status",
-          icon: <Sparkles size={16} />,
-          title: "AI: Runtime Status",
-          subtitle: "Open provider, egress, context, and activity status",
-          action: "palette",
-          source: "local",
-          paletteActionId: "ai.runtimeStatus",
-        },
-        {
           id: "ai-approval-settings",
           icon: <Settings size={16} />,
           title: "AI: Approval Settings",

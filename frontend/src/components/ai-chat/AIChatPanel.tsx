@@ -352,7 +352,17 @@ export function TranscriptFollowAnchor({
     followFrameRef.current = window.requestAnimationFrame(() => {
       followFrameRef.current = null;
       if (!enabledRef.current || !followOutputRef.current) return;
-      anchorRef.current?.scrollIntoView({ block: "end" });
+      const transcript = anchorRef.current?.closest<HTMLElement>(
+        ".ai-chat-transcript",
+      );
+      if (!transcript) return;
+      const nextScrollTop = Math.max(
+        0,
+        transcript.scrollHeight - transcript.clientHeight,
+      );
+      if (Math.abs(transcript.scrollTop - nextScrollTop) > 1) {
+        transcript.scrollTop = nextScrollTop;
+      }
     });
   }, []);
 
@@ -362,16 +372,29 @@ export function TranscriptFollowAnchor({
     );
     if (!transcript) return undefined;
     const updateFollowState = () => {
+      const panel = transcript.closest<HTMLElement>("[data-panel-id]");
+      const panelState = panel?.dataset.panelState ?? "";
+      const panelMotion = panel?.dataset.panelMotion ?? "";
+      const panelGeometryMotionActive =
+        panelState === "dragging" ||
+        panelState === "resizing" ||
+        panelMotion === "enter" ||
+        panelMotion === "relocating" ||
+        panel?.dataset.panelFullscreenMotion === "true";
+      if (panelGeometryMotionActive) {
+        scheduleFollowOutput();
+        return;
+      }
+
       const distanceFromBottom =
         transcript.scrollHeight -
         transcript.scrollTop -
         transcript.clientHeight;
       followOutputRef.current = distanceFromBottom <= 56;
     };
-    updateFollowState();
     transcript.addEventListener("scroll", updateFollowState, { passive: true });
     return () => transcript.removeEventListener("scroll", updateFollowState);
-  }, [sessionKey]);
+  }, [scheduleFollowOutput, sessionKey]);
 
   useEffect(() => {
     if (!enabled || !runId || typeof ResizeObserver === "undefined") {
@@ -464,7 +487,6 @@ interface AIChatPanelChromeState {
   historyOpen: boolean;
   reviewOpen: boolean;
   reviewExpanded: boolean;
-  controlsCollapsed: boolean;
   leftControlsCollapsed: boolean;
   rightControlsCollapsed: boolean;
   historyEdge: DrawerSnapEdge;
@@ -495,7 +517,6 @@ const initialChromeState: AIChatPanelChromeState = {
   historyOpen: false,
   reviewOpen: false,
   reviewExpanded: false,
-  controlsCollapsed: false,
   leftControlsCollapsed: false,
   rightControlsCollapsed: false,
   historyEdge: "left",
@@ -1442,6 +1463,7 @@ function toolIdForProposal(proposal: AIToolProposal): string | null {
 }
 
 export function AIChatPanelContent({
+  outerMotionActive = false,
   presentation = "panel",
   projectPath = "",
 }: AIChatPanelProps) {
@@ -1698,7 +1720,6 @@ export function AIChatPanelContent({
     historyOpen,
     reviewOpen,
     reviewExpanded,
-    controlsCollapsed,
     leftControlsCollapsed,
     rightControlsCollapsed,
     historyEdge,
@@ -4425,15 +4446,6 @@ export function AIChatPanelContent({
     });
   }, []);
 
-  const handleToggleControlsCollapsed = useCallback(() => {
-    beginChatMotionWindow();
-    closeTransientPopovers();
-    dispatchChrome({
-      type: "patch",
-      value: { controlsCollapsed: !controlsCollapsed },
-    });
-  }, [beginChatMotionWindow, closeTransientPopovers, controlsCollapsed]);
-
   const handleToggleLeftControlsCollapsed = useCallback(() => {
     beginChatMotionWindow();
     closeTransientPopovers();
@@ -4455,11 +4467,22 @@ export function AIChatPanelContent({
   const handlePanelToggleHistory = useCallback(() => {
     beginChatMotionWindow();
     closeTransientPopovers();
+    if (!historyOpen && !fullscreen) {
+      dispatchChrome({
+        type: "patch",
+        value: {
+          historyOpen: true,
+          reviewOpen: false,
+          reviewExpanded: false,
+        },
+      });
+      return;
+    }
     dispatchChrome({
       type: historyOpen ? "closeDrawer" : "openDrawer",
       drawer: "history",
     });
-  }, [beginChatMotionWindow, closeTransientPopovers, historyOpen]);
+  }, [beginChatMotionWindow, closeTransientPopovers, fullscreen, historyOpen]);
 
   const focusSessionSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -4503,7 +4526,18 @@ export function AIChatPanelContent({
     if (reviewExpanded) {
       dispatchChrome({
         type: "patch",
-        value: { reviewExpanded: false, reviewOpen: true },
+        value: {
+          reviewExpanded: false,
+          reviewOpen: true,
+          historyOpen: fullscreen ? historyOpen : false,
+        },
+      });
+      return;
+    }
+    if (!reviewOpen && !fullscreen) {
+      dispatchChrome({
+        type: "patch",
+        value: { reviewOpen: true, historyOpen: false },
       });
       return;
     }
@@ -4514,9 +4548,23 @@ export function AIChatPanelContent({
   }, [
     beginChatMotionWindow,
     closeTransientPopovers,
+    fullscreen,
+    historyOpen,
     reviewExpanded,
     reviewOpen,
   ]);
+
+  const handleCloseHistoryDrawer = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({ type: "closeDrawer", drawer: "history" });
+  }, [beginChatMotionWindow, closeTransientPopovers]);
+
+  const handleCloseReviewDrawer = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({ type: "closeDrawer", drawer: "review" });
+  }, [beginChatMotionWindow, closeTransientPopovers]);
 
   const handlePanelToggleReviewExpanded = useCallback(() => {
     beginChatMotionWindow();
@@ -4689,38 +4737,24 @@ export function AIChatPanelContent({
   ]
     .filter(Boolean)
     .join(" ");
+  const compactDrawerView = reviewOpen
+    ? "review"
+    : historyOpen
+      ? "history"
+      : "conversation";
 
   return (
     <section ref={panelRef} className={panelClass} data-testid="ai-chat-panel">
       <LazyMotion features={domAnimation}>
-        {!fullscreen ? (
+        <div
+          className="ai-chat-workspace"
+          data-presentation={fullscreen ? "expanded" : "panel"}
+        >
           <AIChatHeader
-            activeEnvelope={activeEnvelope}
-            activeRun={activeRun}
-            activeRunText={
-              activeRun?.response ??
-              scopedStreamingTextByRunId[activeRunKey] ??
-              ""
-            }
-            activityPopoverOpen={state.activityPopoverOpen}
-            agentProfiles={agentProfiles}
-            approvalPolicy={approvalPolicy}
-            artifactBusyId={artifactBusyId}
-            artifacts={activeArtifacts}
-            context={state.context}
-            contextPreview={contextPreview}
-            contextProviders={contextProviders}
-            consentPolicy={consentPolicy}
-            displayPrefs={state.displayPrefs}
-            egressRecords={scopedEgressRecords}
-            embeddingStatus={embeddingStatus}
             loading={loading}
-            mnemonicEntries={mnemonicEntries}
-            promptWorkflows={promptWorkflows}
             historyOpen={historyOpen}
             reviewExpanded={reviewExpanded}
             reviewOpen={reviewOpen}
-            controlsCollapsed={controlsCollapsed}
             sessionSearch={sessionSearch}
             sessionSearchOpen={sessionSearchOpen}
             sessionSearchMatchCount={
@@ -4731,53 +4765,12 @@ export function AIChatPanelContent({
             sessionSearchTotalCount={
               sessionSearchTerms.length > 0 ? sessionSearchMatches.length : 0
             }
-            selectedProvider={selectedProvider}
-            selectedProviderReady={selectedProviderReady}
-            settingsPopoverOpen={state.settingsPopoverOpen}
-            status={status}
-            tools={tools}
-            toolAudit={scopedToolAudit}
-            modelCapabilities={modelCapabilities}
-            mnemonicBusy={mnemonicBusy}
-            mnemonicError={mnemonicError}
-            onContextToggle={handleContextToggle}
-            onDisplayPrefChange={handleDisplayPrefChange}
-            onToggleActivityPopover={() => {
-              dispatch({ type: "toggleActivityPopover" });
-              dispatchChrome({
-                type: "patch",
-                value: { sessionSearchOpen: false },
-              });
-            }}
-            onToggleHistory={() => {
-              beginChatMotionWindow();
-              closeTransientPopovers();
-              dispatchChrome({
-                type: historyOpen ? "closeDrawer" : "openDrawer",
-                drawer: "history",
-              });
-            }}
-            onToggleReview={() => {
-              beginChatMotionWindow();
-              closeTransientPopovers();
-              if (reviewExpanded) {
-                dispatchChrome({
-                  type: "patch",
-                  value: { reviewExpanded: false, reviewOpen: false },
-                });
-                return;
-              }
-              dispatchChrome({
-                type: reviewOpen ? "closeDrawer" : "openDrawer",
-                drawer: "review",
-              });
-            }}
-            onToggleControlsCollapsed={handleToggleControlsCollapsed}
+            onToggleHistory={handlePanelToggleHistory}
+            onToggleReview={handlePanelToggleReview}
             onToggleSessionSearch={() => {
               const nextOpen = !sessionSearchOpen;
               dispatch({ type: "toggleProviderPopover", open: false });
               dispatch({ type: "toggleSettingsPopover", open: false });
-              dispatch({ type: "toggleActivityPopover", open: false });
               dispatchChrome({
                 type: "patch",
                 value: {
@@ -4795,796 +4788,789 @@ export function AIChatPanelContent({
             }
             onNewChat={handleNewChat}
             onRefreshRuntime={refreshRuntime}
-            onMnemonicSearch={handleMnemonicSearch}
-            onMnemonicSave={handleMnemonicSave}
-            onMnemonicPromote={handleMnemonicPromote}
-            onAcceptLocalProviderConsent={handleAcceptLocalProviderConsent}
-            onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
-            onAcceptRemoteBYOKProviderConsent={
-              handleAcceptRemoteBYOKProviderConsent
-            }
-            onAcceptFrontierProviderConsent={
-              handleAcceptFrontierProviderConsent
-            }
-            onToggleSettingsPopover={() => {
-              dispatchApplicationMenuAction("settings.toggle");
-              dispatchChrome({
-                type: "patch",
-                value: { sessionSearchOpen: false },
-              });
-            }}
           />
-        ) : null}
 
-        <div
-          ref={workbenchRef}
-          className="ai-chat-workbench"
-          data-presentation={
-            presentation === "fullscreen" ? "expanded" : "panel"
-          }
-        >
-          <LayoutGroup>
-            {drawerDrag ? (
-              <div className="ai-chat-drawer-snap-zones" aria-hidden="true">
-                <div
-                  className="ai-chat-drawer-snap-zone ai-chat-drawer-snap-zone--left"
-                  data-active={
-                    drawerDrag.targetEdge === "left" ? "true" : "false"
-                  }
-                />
-                <div
-                  className="ai-chat-drawer-snap-zone ai-chat-drawer-snap-zone--right"
-                  data-active={
-                    drawerDrag.targetEdge === "right" ? "true" : "false"
-                  }
-                />
-              </div>
-            ) : null}
-            <AnimatePresence initial={false}>
-              {fullscreen && leftControlsCollapsed ? (
-                <m.button
-                  className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--left"
-                  data-testid="ai-chat-fullscreen-left-controls-toggle"
-                  type="button"
-                  title="Show left chat controls"
-                  aria-pressed="true"
-                  initial={
-                    reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
-                  }
-                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
-                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                  onClick={handleToggleLeftControlsCollapsed}
-                >
-                  <ChevronRight size={16} />
-                </m.button>
+          <div
+            ref={workbenchRef}
+            className="ai-chat-workbench"
+            data-drawer-view={compactDrawerView}
+            data-history-edge={historyEdge}
+            data-history-open={historyOpen ? "true" : "false"}
+            data-presentation={fullscreen ? "expanded" : "panel"}
+            data-review-edge={reviewEdge}
+            data-review-open={reviewOpen && !reviewExpanded ? "true" : "false"}
+          >
+            <LayoutGroup>
+              {drawerDrag ? (
+                <div className="ai-chat-drawer-snap-zones" aria-hidden="true">
+                  <div
+                    className="ai-chat-drawer-snap-zone ai-chat-drawer-snap-zone--left"
+                    data-active={
+                      drawerDrag.targetEdge === "left" ? "true" : "false"
+                    }
+                  />
+                  <div
+                    className="ai-chat-drawer-snap-zone ai-chat-drawer-snap-zone--right"
+                    data-active={
+                      drawerDrag.targetEdge === "right" ? "true" : "false"
+                    }
+                  />
+                </div>
               ) : null}
-            </AnimatePresence>
-            <AnimatePresence initial={false}>
-              {fullscreen && rightControlsCollapsed ? (
-                <m.button
-                  className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--right"
-                  data-testid="ai-chat-fullscreen-right-controls-toggle"
-                  type="button"
-                  title="Show right chat controls"
-                  aria-pressed="true"
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
-                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
-                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                  onClick={handleToggleRightControlsCollapsed}
-                >
-                  <ChevronLeft size={16} />
-                </m.button>
-              ) : null}
-            </AnimatePresence>
-            <AnimatePresence initial={false}>
-              {fullscreen && !leftControlsCollapsed ? (
-                <m.nav
-                  className="ai-chat-focus-rail ai-chat-focus-rail--left"
-                  data-ai-chat-popover-scope
-                  aria-label="AI Chat navigation"
-                  initial={
-                    reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
-                  }
-                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
-                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                >
-                  <button
-                    className="ai-chat-icon-button ai-chat-chrome-toggle"
-                    data-testid="ai-chat-fullscreen-controls-collapse"
+              <AnimatePresence initial={false}>
+                {fullscreen && leftControlsCollapsed ? (
+                  <m.button
+                    className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--left"
+                    data-testid="ai-chat-fullscreen-left-controls-toggle"
                     type="button"
-                    title="Hide left chat controls"
-                    aria-pressed="false"
+                    title="Show left chat controls"
+                    aria-pressed="true"
+                    initial={
+                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
+                    }
+                    animate={
+                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
+                    }
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
+                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
                     onClick={handleToggleLeftControlsCollapsed}
                   >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <button
-                    className={`ai-chat-icon-button${historyOpen ? " is-active" : ""}`}
+                    <ChevronRight size={16} />
+                  </m.button>
+                ) : null}
+              </AnimatePresence>
+              <AnimatePresence initial={false}>
+                {fullscreen && rightControlsCollapsed ? (
+                  <m.button
+                    className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--right"
+                    data-testid="ai-chat-fullscreen-right-controls-toggle"
                     type="button"
-                    title="History"
-                    onClick={() => {
-                      beginChatMotionWindow();
-                      closeTransientPopovers();
-                      dispatchChrome({
-                        type: historyOpen ? "closeDrawer" : "openDrawer",
-                        drawer: "history",
-                      });
-                    }}
-                  >
-                    <History size={16} />
-                  </button>
-                  <button
-                    className="ai-chat-icon-button"
-                    type="button"
-                    title="New chat"
-                    onClick={handleNewChat}
-                  >
-                    <MessageSquarePlus size={16} />
-                  </button>
-                  <button
-                    className={`ai-chat-icon-button${sessionSearchOpen ? " is-active" : ""}`}
-                    type="button"
-                    title="Search current session"
-                    onClick={() => {
-                      dispatch({ type: "toggleProviderPopover", open: false });
-                      dispatch({ type: "toggleSettingsPopover", open: false });
-                      dispatch({ type: "toggleActivityPopover", open: false });
-                      dispatchChrome({
-                        type: "patch",
-                        value: {
-                          sessionSearchOpen: !sessionSearchOpen,
-                        },
-                      });
-                    }}
-                  >
-                    <Search size={16} />
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {sessionSearchOpen ? (
-                      <m.div
-                        className="ai-chat-popover ai-chat-header-search ai-chat-rail-popover"
-                        role="search"
-                        aria-label="Search current chat session"
-                        initial={
-                          reduceMotion
-                            ? { opacity: 0 }
-                            : { opacity: 0, x: -6, scale: 0.98 }
-                        }
-                        animate={
-                          reduceMotion
-                            ? { opacity: 1 }
-                            : { opacity: 1, x: 0, scale: 1 }
-                        }
-                        exit={
-                          reduceMotion
-                            ? { opacity: 0 }
-                            : { opacity: 0, x: -4, scale: 0.98 }
-                        }
-                        transition={{ duration: reduceMotion ? 0.1 : 0.16 }}
-                      >
-                        <div className="ai-chat-search-field ai-chat-search-field--header">
-                          {sessionSearch ? null : <Search size={14} />}
-                          <input
-                            autoFocus
-                            aria-label="Search current chat session"
-                            data-testid="ai-chat-session-search"
-                            placeholder="Search this session..."
-                            value={sessionSearch}
-                            onChange={(event) =>
-                              dispatchChrome({
-                                type: "patch",
-                                value: { sessionSearch: event.target.value },
-                              })
-                            }
-                          />
-                          {sessionSearch ? (
-                            <>
-                              <span className="ai-chat-header-search__count">
-                                {sessionSearchTerms.length > 0 &&
-                                sessionSearchMatches.length > 0
-                                  ? Math.max(activeSessionSearchIndex, 0) + 1
-                                  : 0}
-                                /
-                                {sessionSearchTerms.length > 0
-                                  ? sessionSearchMatches.length
-                                  : 0}
-                              </span>
-                              <div
-                                className="ai-chat-header-search__nav"
-                                aria-label="Search result navigation"
-                              >
-                                <button
-                                  className="ai-chat-icon-button ai-chat-icon-button--compact"
-                                  type="button"
-                                  title="Previous search result"
-                                  disabled={sessionSearchMatches.length === 0}
-                                  onClick={() =>
-                                    handleNavigateSessionSearch(-1)
-                                  }
-                                >
-                                  <ChevronUp size={14} />
-                                </button>
-                                <button
-                                  className="ai-chat-icon-button ai-chat-icon-button--compact"
-                                  type="button"
-                                  title="Next search result"
-                                  disabled={sessionSearchMatches.length === 0}
-                                  onClick={() => handleNavigateSessionSearch(1)}
-                                >
-                                  <ChevronDown size={14} />
-                                </button>
-                              </div>
-                            </>
-                          ) : null}
-                        </div>
-                      </m.div>
-                    ) : null}
-                  </AnimatePresence>
-                </m.nav>
-              ) : null}
-            </AnimatePresence>
-            <AnimatePresence initial={false}>
-              {fullscreen && !rightControlsCollapsed ? (
-                <m.nav
-                  className="ai-chat-focus-rail ai-chat-focus-rail--right"
-                  data-ai-chat-popover-scope
-                  aria-label="AI Chat tools"
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
-                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
-                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                >
-                  <button
-                    className="ai-chat-icon-button ai-chat-chrome-toggle"
-                    data-testid="ai-chat-fullscreen-right-controls-collapse"
-                    type="button"
-                    title="Hide right chat controls"
-                    aria-pressed="false"
+                    title="Show right chat controls"
+                    aria-pressed="true"
+                    initial={
+                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }
+                    }
+                    animate={
+                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
+                    }
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
+                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
                     onClick={handleToggleRightControlsCollapsed}
                   >
-                    <ChevronRight size={16} />
-                  </button>
-                  <button
-                    className={`ai-chat-icon-button${reviewOpen || reviewExpanded ? " is-active" : ""}`}
-                    type="button"
-                    title="Git review"
-                    onClick={() => {
-                      beginChatMotionWindow();
-                      closeTransientPopovers();
-                      if (reviewExpanded) {
+                    <ChevronLeft size={16} />
+                  </m.button>
+                ) : null}
+              </AnimatePresence>
+              <AnimatePresence initial={false}>
+                {fullscreen && !leftControlsCollapsed ? (
+                  <m.nav
+                    className="ai-chat-focus-rail ai-chat-focus-rail--left"
+                    data-ai-chat-popover-scope
+                    aria-label="AI Chat navigation"
+                    initial={
+                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
+                    }
+                    animate={
+                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
+                    }
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
+                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
+                  >
+                    <button
+                      className="ai-chat-icon-button ai-chat-chrome-toggle"
+                      data-testid="ai-chat-fullscreen-controls-collapse"
+                      type="button"
+                      title="Hide left chat controls"
+                      aria-pressed="false"
+                      onClick={handleToggleLeftControlsCollapsed}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      className={`ai-chat-icon-button${historyOpen ? " is-active" : ""}`}
+                      type="button"
+                      title="History"
+                      onClick={() => {
+                        beginChatMotionWindow();
+                        closeTransientPopovers();
+                        dispatchChrome({
+                          type: historyOpen ? "closeDrawer" : "openDrawer",
+                          drawer: "history",
+                        });
+                      }}
+                    >
+                      <History size={16} />
+                    </button>
+                    <button
+                      className="ai-chat-icon-button"
+                      type="button"
+                      title="New chat"
+                      onClick={handleNewChat}
+                    >
+                      <MessageSquarePlus size={16} />
+                    </button>
+                    <button
+                      className={`ai-chat-icon-button${sessionSearchOpen ? " is-active" : ""}`}
+                      type="button"
+                      title="Search current session"
+                      onClick={() => {
+                        dispatch({
+                          type: "toggleProviderPopover",
+                          open: false,
+                        });
+                        dispatch({
+                          type: "toggleSettingsPopover",
+                          open: false,
+                        });
+                        dispatchChrome({
+                          type: "patch",
+                          value: {
+                            sessionSearchOpen: !sessionSearchOpen,
+                          },
+                        });
+                      }}
+                    >
+                      <Search size={16} />
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {sessionSearchOpen ? (
+                        <m.div
+                          className="ai-chat-popover ai-chat-header-search ai-chat-rail-popover"
+                          role="search"
+                          aria-label="Search current chat session"
+                          initial={
+                            reduceMotion
+                              ? { opacity: 0 }
+                              : { opacity: 0, x: -6, scale: 0.98 }
+                          }
+                          animate={
+                            reduceMotion
+                              ? { opacity: 1 }
+                              : { opacity: 1, x: 0, scale: 1 }
+                          }
+                          exit={
+                            reduceMotion
+                              ? { opacity: 0 }
+                              : { opacity: 0, x: -4, scale: 0.98 }
+                          }
+                          transition={{ duration: reduceMotion ? 0.1 : 0.16 }}
+                        >
+                          <div className="ai-chat-search-field ai-chat-search-field--header">
+                            {sessionSearch ? null : <Search size={14} />}
+                            <input
+                              autoFocus
+                              aria-label="Search current chat session"
+                              data-testid="ai-chat-session-search"
+                              placeholder="Search this session..."
+                              value={sessionSearch}
+                              onChange={(event) =>
+                                dispatchChrome({
+                                  type: "patch",
+                                  value: { sessionSearch: event.target.value },
+                                })
+                              }
+                            />
+                            {sessionSearch ? (
+                              <>
+                                <span className="ai-chat-header-search__count">
+                                  {sessionSearchTerms.length > 0 &&
+                                  sessionSearchMatches.length > 0
+                                    ? Math.max(activeSessionSearchIndex, 0) + 1
+                                    : 0}
+                                  /
+                                  {sessionSearchTerms.length > 0
+                                    ? sessionSearchMatches.length
+                                    : 0}
+                                </span>
+                                <div
+                                  className="ai-chat-header-search__nav"
+                                  aria-label="Search result navigation"
+                                >
+                                  <button
+                                    className="ai-chat-icon-button ai-chat-icon-button--compact"
+                                    type="button"
+                                    title="Previous search result"
+                                    disabled={sessionSearchMatches.length === 0}
+                                    onClick={() =>
+                                      handleNavigateSessionSearch(-1)
+                                    }
+                                  >
+                                    <ChevronUp size={14} />
+                                  </button>
+                                  <button
+                                    className="ai-chat-icon-button ai-chat-icon-button--compact"
+                                    type="button"
+                                    title="Next search result"
+                                    disabled={sessionSearchMatches.length === 0}
+                                    onClick={() =>
+                                      handleNavigateSessionSearch(1)
+                                    }
+                                  >
+                                    <ChevronDown size={14} />
+                                  </button>
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        </m.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </m.nav>
+                ) : null}
+              </AnimatePresence>
+              <AnimatePresence initial={false}>
+                {fullscreen && !rightControlsCollapsed ? (
+                  <m.nav
+                    className="ai-chat-focus-rail ai-chat-focus-rail--right"
+                    data-ai-chat-popover-scope
+                    aria-label="AI Chat tools"
+                    initial={
+                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }
+                    }
+                    animate={
+                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
+                    }
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
+                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
+                  >
+                    <button
+                      className="ai-chat-icon-button ai-chat-chrome-toggle"
+                      data-testid="ai-chat-fullscreen-right-controls-collapse"
+                      type="button"
+                      title="Hide right chat controls"
+                      aria-pressed="false"
+                      onClick={handleToggleRightControlsCollapsed}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                    <button
+                      className={`ai-chat-icon-button${reviewOpen || reviewExpanded ? " is-active" : ""}`}
+                      type="button"
+                      title="Git review"
+                      onClick={() => {
+                        beginChatMotionWindow();
+                        closeTransientPopovers();
+                        if (reviewExpanded) {
+                          dispatchChrome({
+                            type: "patch",
+                            value: { reviewExpanded: false, reviewOpen: false },
+                          });
+                          return;
+                        }
+                        dispatchChrome({
+                          type: reviewOpen ? "closeDrawer" : "openDrawer",
+                          drawer: "review",
+                        });
+                      }}
+                    >
+                      <GitBranch size={16} />
+                    </button>
+                    <button
+                      className="ai-chat-icon-button"
+                      type="button"
+                      title="AI Chat settings"
+                      onClick={() =>
+                        dispatchApplicationMenuAction("settings.toggle")
+                      }
+                    >
+                      <Settings size={16} />
+                    </button>
+                  </m.nav>
+                ) : null}
+              </AnimatePresence>
+              <ContextActionMenu
+                ignoredTargetSelector=".ai-chat-run-card, .ai-chat-composer, .ai-chat-popover, .ai-chat-focus-rail, .ai-chat-drawer, button, input, textarea, a"
+                items={panelContextItems}
+                nativeScope="ai-chat-panel"
+                nativeTargetId={activeSessionId}
+              >
+                <m.div
+                  className="ai-chat-conversation"
+                  data-outer-motion={outerMotionActive ? "true" : "false"}
+                  data-dimmed={reviewExpanded ? "true" : "false"}
+                  layout={
+                    outerMotionActive
+                      ? false
+                      : historyOpen || (reviewOpen && !reviewExpanded)
+                        ? true
+                        : "position"
+                  }
+                  transition={{
+                    layout: {
+                      duration: reduceMotion ? 0.1 : 0.18,
+                      ease: [0.22, 1, 0.36, 1],
+                    },
+                  }}
+                >
+                  <main className="ai-chat-body">
+                    {runtimeError ? (
+                      <div className="ai-chat-runtime-error">
+                        {runtimeError}
+                      </div>
+                    ) : null}
+                    <PendingApprovalCenter
+                      approvals={scopedPendingApprovals}
+                      busyId={artifactBusyId}
+                      onApprove={handleApprovePendingApproval}
+                      onDeny={handleDenyPendingApproval}
+                      onOpenReview={() => {
+                        beginChatMotionWindow();
+                        dispatchChrome({
+                          type: "openDrawer",
+                          drawer: "review",
+                        });
+                      }}
+                      onSelectRun={(runId) => {
+                        const envelope = scopedRuns.find(
+                          (candidate) => candidate.id === runId,
+                        );
+                        setActiveRunId(runId);
+                        if (envelope) {
+                          dispatch({
+                            type: "setActiveSession",
+                            sessionId: sessionIdOf(envelope),
+                            runId,
+                          });
+                        }
+                        dispatch({ type: "setActiveRun", runId });
+                      }}
+                    />
+                    <AgentConsole
+                      activeEnvelope={activeEnvelope}
+                      visible={agentConsoleVisible}
+                    />
+                    {transcriptRuns.length === 0 ? (
+                      <EmptyState
+                        providerReady={selectedProviderReady}
+                        onRefresh={handleRefreshProviders}
+                        sessionId={activeSessionId}
+                      />
+                    ) : (
+                      <div className="ai-chat-transcript">
+                        <AnimatePresence initial={false} mode="popLayout">
+                          {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
+                            <LiveRunCard
+                              active={envelope.id === activeRunKey}
+                              compact={state.displayPrefs.compactCards}
+                              envelope={envelope}
+                              artifactBusyId={artifactBusyId}
+                              artifacts={
+                                artifactsByRunId[envelope.id] ??
+                                emptyRunArtifacts
+                              }
+                              key={envelope.id}
+                              run={scopedHydratedRuns[envelope.id] ?? null}
+                              hydrationStatus={hydrationStatusForRun(
+                                envelope.id,
+                              )}
+                              searchQuery={
+                                sessionSearchTerms.length > 0
+                                  ? sessionSearch
+                                  : ""
+                              }
+                              onApplyPatchArtifact={handleApplyPatchArtifact}
+                              onApproveMnemonicArtifact={
+                                handleApproveMnemonicArtifact
+                              }
+                              onOpenReview={handleOpenRunReview}
+                              onApproveToolProposal={handleApproveToolProposal}
+                              onAcceptPlan={handleAcceptPlan}
+                              onDenyToolProposal={handleDenyToolProposal}
+                              onPreviewToolProposal={handlePreviewToolProposal}
+                              onRequestPlanRevision={handleRequestPlanRevision}
+                              onRollbackPatchArtifact={
+                                handleRollbackPatchArtifact
+                              }
+                              onSelect={handleSelectTranscriptRun}
+                              onSubmitQuestionAnswer={
+                                handleSubmitQuestionAnswer
+                              }
+                            />
+                          ))}
+                        </AnimatePresence>
+                        <TranscriptFollowAnchor
+                          enabled={state.displayPrefs.autoScroll}
+                          runId={activeRunKey}
+                          runCount={transcriptRuns.length}
+                          sessionKey={activeSessionId}
+                          updatedAt={activeEnvelope?.updatedAt ?? ""}
+                        />
+                      </div>
+                    )}
+                  </main>
+
+                  <ChatComposer
+                    canSend={canSend}
+                    actions={composerActions}
+                    continuityBusy={continuityBusy}
+                    continuityCapsules={continuityCapsules}
+                    continuityError={continuityError}
+                    continuityInspectorOpen={continuityInspectorOpen}
+                    continuityPlan={continuityPlan}
+                    contextPreview={contextPreview}
+                    disabledReason={disabledReason}
+                    input={state.input}
+                    providerRuntimeBusy={providerRuntimeBusy}
+                    providerRuntimeError={providerRuntimeError}
+                    providerRuntimes={providerRuntimes}
+                    providers={sortedProviders}
+                    consentPolicy={consentPolicy}
+                    running={activeRunRunning}
+                    selectedAction={state.selectedAction}
+                    selectedMentions={selectedMentionsForActiveSession}
+                    selectedModel={selectedModel}
+                    selectedReasoningEffort={selectedReasoningEffort}
+                    agentAuthRun={selectedProviderAuthRun}
+                    selectedModelCapability={selectedModelCapability}
+                    selectedProvider={selectedProvider}
+                    sendShortcut={aiChatSendShortcut}
+                    onActionChange={(action, profileId) =>
+                      dispatch({ type: "setAction", action, profileId })
+                    }
+                    onCancel={handleCancel}
+                    onCompactContinuity={handleCompactContinuity}
+                    onInputChange={(input) =>
+                      dispatch({ type: "setInput", input })
+                    }
+                    onMentionQuery={handleMentionQuery}
+                    onMentionRemove={(id) =>
+                      dispatch({ type: "removeMention", id })
+                    }
+                    onMentionSelect={handleMentionSelect}
+                    onProbeModelCapability={handleProbeModelCapability}
+                    onRefreshContinuity={refreshContinuityInspector}
+                    onRevokeContinuityCapsule={handleRevokeContinuityCapsule}
+                    onRefreshProviders={handleRefreshProviders}
+                    onSend={handleSend}
+                    onSelectModel={handleModelSelect}
+                    onSelectReasoningEffort={(reasoningEffort) =>
+                      dispatch({
+                        type: "setReasoningEffort",
+                        reasoningEffort,
+                      })
+                    }
+                    onSelectProvider={handleProviderSelect}
+                    onStartAgentLogin={handleStartAgentLogin}
+                    onCancelAgentLogin={handleCancelAgentLogin}
+                    onStartProviderOAuth={handleStartProviderOAuth}
+                    onCancelProviderAuth={handleCancelProviderAuth}
+                    onAcceptExternalAgentConsent={
+                      handleAcceptExternalAgentConsent
+                    }
+                    onAcceptRemoteBYOKProviderConsent={
+                      handleAcceptRemoteBYOKProviderConsent
+                    }
+                    onAcceptFrontierProviderConsent={
+                      handleAcceptFrontierProviderConsent
+                    }
+                    onStartProviderRuntime={handleStartProviderRuntime}
+                    onStopProviderRuntime={handleStopProviderRuntime}
+                    onToggleContinuityInspector={
+                      handleToggleContinuityInspector
+                    }
+                  />
+                </m.div>
+              </ContextActionMenu>
+
+              <AnimatePresence
+                mode={historyEdge === "left" ? "sync" : "popLayout"}
+              >
+                {historyOpen ? (
+                  <m.div
+                    className={`ai-chat-drawer ai-chat-drawer--${historyEdge}`}
+                    data-drawer-kind="history"
+                    data-drawer-edge={historyEdge}
+                    data-drawer-dragging={
+                      drawerDrag?.drawer === "history" ? "true" : "false"
+                    }
+                    data-testid="ai-chat-history-drawer"
+                    initial={{
+                      x: reduceMotion
+                        ? 0
+                        : historyEdge === "left"
+                          ? "-104%"
+                          : "104%",
+                      opacity: reduceMotion ? 0 : 0.72,
+                    }}
+                    animate={{
+                      x:
+                        drawerDrag?.drawer === "history"
+                          ? drawerDrag.offsetX
+                          : 0,
+                      opacity: 1,
+                    }}
+                    exit={{
+                      x: reduceMotion
+                        ? 0
+                        : historyEdge === "left"
+                          ? "-104%"
+                          : "104%",
+                      opacity: 0,
+                      width:
+                        fullscreen && historyEdge === "left" && !reduceMotion
+                          ? 0
+                          : undefined,
+                    }}
+                    layout="position"
+                    style={{
+                      width: fullscreen
+                        ? `min(${historyWidth}px, 30vw)`
+                        : "100%",
+                    }}
+                    transition={
+                      drawerDrag?.drawer === "history"
+                        ? { duration: 0 }
+                        : {
+                            duration: reduceMotion ? 0.1 : 0.18,
+                            ease: [0.22, 1, 0.36, 1],
+                          }
+                    }
+                  >
+                    {fullscreen ? (
+                      <>
+                        <m.span
+                          className="ai-chat-drawer-resize ai-chat-drawer-resize--left"
+                          drag="x"
+                          dragConstraints={{ left: 0, right: 0 }}
+                          dragElastic={0}
+                          dragMomentum={false}
+                          title="Resize history left edge"
+                          onDrag={(_event, info) =>
+                            handleResizeHistory("start", info.delta.x)
+                          }
+                        />
+                        <m.span
+                          className="ai-chat-drawer-resize ai-chat-drawer-resize--right"
+                          drag="x"
+                          dragConstraints={{ left: 0, right: 0 }}
+                          dragElastic={0}
+                          dragMomentum={false}
+                          title="Resize history right edge"
+                          onDrag={(_event, info) =>
+                            handleResizeHistory("end", info.delta.x)
+                          }
+                        />
+                      </>
+                    ) : null}
+                    <ChatHistoryRail
+                      activeSessionId={activeSessionId}
+                      canMove={fullscreen}
+                      hydratedRuns={scopedHydratedRuns}
+                      runs={scopedRuns}
+                      searchQuery={historySearch}
+                      onClose={handleCloseHistoryDrawer}
+                      onDragStart={(event) =>
+                        handleDrawerDragStart("history", event)
+                      }
+                      onNewChat={handleNewChat}
+                      onDeleteSession={handleDeleteSession}
+                      onSearchChange={(historySearch) =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { historySearch },
+                        })
+                      }
+                      onSelectSession={handleSelectSession}
+                    />
+                  </m.div>
+                ) : null}
+              </AnimatePresence>
+
+              <AnimatePresence
+                mode={reviewEdge === "left" ? "sync" : "popLayout"}
+              >
+                {reviewOpen && !reviewExpanded ? (
+                  <m.div
+                    className={`ai-chat-drawer ai-chat-drawer--${reviewEdge}`}
+                    data-drawer-kind="review"
+                    data-drawer-edge={reviewEdge}
+                    data-drawer-dragging={
+                      drawerDrag?.drawer === "review" ? "true" : "false"
+                    }
+                    data-testid="ai-chat-review-drawer"
+                    initial={{
+                      x: reduceMotion
+                        ? 0
+                        : reviewEdge === "left"
+                          ? "-104%"
+                          : "104%",
+                      opacity: reduceMotion ? 0 : 0.72,
+                    }}
+                    animate={{
+                      x:
+                        drawerDrag?.drawer === "review"
+                          ? drawerDrag.offsetX
+                          : 0,
+                      opacity: 1,
+                    }}
+                    exit={{
+                      x: reduceMotion
+                        ? 0
+                        : reviewEdge === "left"
+                          ? "-104%"
+                          : "104%",
+                      opacity: 0,
+                      width:
+                        fullscreen && reviewEdge === "left" && !reduceMotion
+                          ? 0
+                          : undefined,
+                    }}
+                    layout="position"
+                    style={{
+                      width: fullscreen
+                        ? `min(${reviewWidth}px, 38vw)`
+                        : "100%",
+                    }}
+                    transition={
+                      drawerDrag?.drawer === "review"
+                        ? { duration: 0 }
+                        : {
+                            duration: reduceMotion ? 0.1 : 0.18,
+                            ease: [0.22, 1, 0.36, 1],
+                          }
+                    }
+                  >
+                    {fullscreen ? (
+                      <>
+                        <m.span
+                          className="ai-chat-drawer-resize ai-chat-drawer-resize--left"
+                          drag="x"
+                          dragConstraints={{ left: 0, right: 0 }}
+                          dragElastic={0}
+                          dragMomentum={false}
+                          title="Resize review left edge"
+                          onDrag={(_event, info) =>
+                            handleResizeReview("start", info.delta.x)
+                          }
+                        />
+                        <m.span
+                          className="ai-chat-drawer-resize ai-chat-drawer-resize--right"
+                          drag="x"
+                          dragConstraints={{ left: 0, right: 0 }}
+                          dragElastic={0}
+                          dragMomentum={false}
+                          title="Resize review right edge"
+                          onDrag={(_event, info) =>
+                            handleResizeReview("end", info.delta.x)
+                          }
+                        />
+                      </>
+                    ) : null}
+                    <ChatGitReview
+                      canMove={fullscreen}
+                      commitMessage={commitMessage}
+                      diffSearch={diffSearch}
+                      mode="drawer"
+                      projectPath={projectPath}
+                      searchQuery={reviewSearch}
+                      onClose={handleCloseReviewDrawer}
+                      onCollapse={() =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewExpanded: false },
+                        })
+                      }
+                      onCommitMessageChange={(commitMessage) =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { commitMessage },
+                        })
+                      }
+                      onDiffSearchChange={(diffSearch) =>
+                        dispatchChrome({ type: "patch", value: { diffSearch } })
+                      }
+                      onExpand={() => {
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewOpen: false, reviewExpanded: true },
+                        });
+                      }}
+                      onDragStart={(event) =>
+                        handleDrawerDragStart("review", event)
+                      }
+                      onSearchChange={(reviewSearch) =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewSearch },
+                        })
+                      }
+                    />
+                  </m.div>
+                ) : null}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {reviewExpanded ? (
+                  <m.div
+                    className="ai-chat-review-overlay"
+                    data-testid="ai-chat-review-expanded"
+                    initial={
+                      reduceMotion
+                        ? { opacity: 0 }
+                        : { opacity: 0, scale: 0.985 }
+                    }
+                    animate={
+                      reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }
+                    }
+                    exit={
+                      reduceMotion
+                        ? { opacity: 0 }
+                        : { opacity: 0, scale: 0.985 }
+                    }
+                    transition={{
+                      duration: reduceMotion ? 0.1 : 0.18,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                  >
+                    <ChatGitReview
+                      canMove={false}
+                      commitMessage={commitMessage}
+                      diffSearch={diffSearch}
+                      mode="overlay"
+                      projectPath={projectPath}
+                      searchQuery={reviewSearch}
+                      onClose={() => {
                         dispatchChrome({
                           type: "patch",
                           value: { reviewExpanded: false, reviewOpen: false },
                         });
-                        return;
-                      }
-                      dispatchChrome({
-                        type: reviewOpen ? "closeDrawer" : "openDrawer",
-                        drawer: "review",
-                      });
-                    }}
-                  >
-                    <GitBranch size={16} />
-                  </button>
-                  <button
-                    className={`ai-chat-icon-button${state.activityPopoverOpen ? " is-active" : ""}`}
-                    type="button"
-                    title="Runtime activity"
-                    onClick={() => {
-                      dispatch({ type: "toggleActivityPopover" });
-                      dispatchChrome({
-                        type: "patch",
-                        value: {
-                          sessionSearchOpen: false,
-                        },
-                      });
-                    }}
-                  >
-                    <CheckCircle2 size={16} />
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {state.activityPopoverOpen ? (
-                      <ActivityStatusPopover
-                        activeEnvelope={activeEnvelope}
-                        activeRun={activeRun}
-                        contextPreview={contextPreview}
-                        items={activityItems}
-                        selectedProvider={selectedProvider}
-                        summary={activitySummary}
-                      />
-                    ) : null}
-                  </AnimatePresence>
-                  <button
-                    className="ai-chat-icon-button"
-                    type="button"
-                    title="AI Chat settings"
-                    onClick={() =>
-                      dispatchApplicationMenuAction("settings.toggle")
-                    }
-                  >
-                    <Settings size={16} />
-                  </button>
-                </m.nav>
-              ) : null}
-            </AnimatePresence>
-            <ContextActionMenu
-              ignoredTargetSelector=".ai-chat-run-card, .ai-chat-composer, .ai-chat-popover, .ai-chat-focus-rail, .ai-chat-drawer, button, input, textarea, a"
-              items={panelContextItems}
-              nativeScope="ai-chat-panel"
-              nativeTargetId={activeSessionId}
-            >
-              <div
-                className="ai-chat-conversation"
-                data-dimmed={reviewExpanded ? "true" : "false"}
-              >
-                <main className="ai-chat-body">
-                  {runtimeError ? (
-                    <div className="ai-chat-runtime-error">{runtimeError}</div>
-                  ) : null}
-                  <PendingApprovalCenter
-                    approvals={scopedPendingApprovals}
-                    busyId={artifactBusyId}
-                    onApprove={handleApprovePendingApproval}
-                    onDeny={handleDenyPendingApproval}
-                    onOpenReview={() => {
-                      beginChatMotionWindow();
-                      dispatchChrome({ type: "openDrawer", drawer: "review" });
-                    }}
-                    onSelectRun={(runId) => {
-                      const envelope = scopedRuns.find(
-                        (candidate) => candidate.id === runId,
-                      );
-                      setActiveRunId(runId);
-                      if (envelope) {
-                        dispatch({
-                          type: "setActiveSession",
-                          sessionId: sessionIdOf(envelope),
-                          runId,
+                      }}
+                      onCollapse={() => {
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewExpanded: false, reviewOpen: true },
                         });
+                      }}
+                      onCommitMessageChange={(commitMessage) =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { commitMessage },
+                        })
                       }
-                      dispatch({ type: "setActiveRun", runId });
-                    }}
-                  />
-                  <AgentConsole
-                    activeEnvelope={activeEnvelope}
-                    visible={agentConsoleVisible}
-                  />
-                  {transcriptRuns.length === 0 ? (
-                    <EmptyState
-                      providerReady={selectedProviderReady}
-                      onRefresh={handleRefreshProviders}
-                      sessionId={activeSessionId}
+                      onDiffSearchChange={(diffSearch) =>
+                        dispatchChrome({ type: "patch", value: { diffSearch } })
+                      }
+                      onExpand={() =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewExpanded: true },
+                        })
+                      }
+                      onDragStart={(event) =>
+                        handleDrawerDragStart("review", event)
+                      }
+                      onSearchChange={(reviewSearch) =>
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewSearch },
+                        })
+                      }
                     />
-                  ) : (
-                    <div className="ai-chat-transcript">
-                      <AnimatePresence initial={false} mode="popLayout">
-                        {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
-                          <RunCard
-                            active={envelope.id === activeRunKey}
-                            compact={state.displayPrefs.compactCards}
-                            envelope={envelope}
-                            artifactBusyId={artifactBusyId}
-                            artifacts={artifactsByRunId[envelope.id] ?? []}
-                            key={envelope.id}
-                            run={scopedHydratedRuns[envelope.id] ?? null}
-                            hydrationStatus={hydrationStatusForRun(envelope.id)}
-                            streamingText={
-                              scopedStreamingTextByRunId[envelope.id] ?? ""
-                            }
-                            searchQuery={
-                              sessionSearchTerms.length > 0 ? sessionSearch : ""
-                            }
-                            onApplyPatchArtifact={handleApplyPatchArtifact}
-                            onApproveMnemonicArtifact={
-                              handleApproveMnemonicArtifact
-                            }
-                            onOpenReview={() => {
-                              beginChatMotionWindow();
-                              dispatchChrome({
-                                type: "openDrawer",
-                                drawer: "review",
-                              });
-                            }}
-                            onApproveToolProposal={handleApproveToolProposal}
-                            onAcceptPlan={handleAcceptPlan}
-                            onDenyToolProposal={handleDenyToolProposal}
-                            onPreviewToolProposal={handlePreviewToolProposal}
-                            onRequestPlanRevision={handleRequestPlanRevision}
-                            onRollbackPatchArtifact={
-                              handleRollbackPatchArtifact
-                            }
-                            onSelect={(runId) => {
-                              setActiveRunId(runId);
-                              dispatch({ type: "setActiveRun", runId });
-                            }}
-                            onSubmitQuestionAnswer={handleSubmitQuestionAnswer}
-                          />
-                        ))}
-                      </AnimatePresence>
-                      <div ref={transcriptEndRef} />
-                    </div>
-                  )}
-                </main>
-
-                <ChatComposer
-                  canSend={canSend}
-                  actions={composerActions}
-                  continuityBusy={continuityBusy}
-                  continuityCapsules={continuityCapsules}
-                  continuityError={continuityError}
-                  continuityInspectorOpen={continuityInspectorOpen}
-                  continuityPlan={continuityPlan}
-                  contextPreview={contextPreview}
-                  disabledReason={disabledReason}
-                  input={state.input}
-                  providerRuntimeBusy={providerRuntimeBusy}
-                  providerRuntimeError={providerRuntimeError}
-                  providerRuntimes={providerRuntimes}
-                  providers={sortedProviders}
-                  consentPolicy={consentPolicy}
-                  running={activeRunRunning}
-                  selectedAction={state.selectedAction}
-                  selectedMentions={selectedMentionsForActiveSession}
-                  selectedModel={selectedModel}
-                  selectedReasoningEffort={selectedReasoningEffort}
-                  agentAuthRun={selectedProviderAuthRun}
-                  selectedModelCapability={selectedModelCapability}
-                  selectedProvider={selectedProvider}
-                  sendShortcut={aiChatSendShortcut}
-                  onActionChange={(action, profileId) =>
-                    dispatch({ type: "setAction", action, profileId })
-                  }
-                  onCancel={handleCancel}
-                  onCompactContinuity={handleCompactContinuity}
-                  onInputChange={(input) =>
-                    dispatch({ type: "setInput", input })
-                  }
-                  onMentionQuery={handleMentionQuery}
-                  onMentionRemove={(id) =>
-                    dispatch({ type: "removeMention", id })
-                  }
-                  onMentionSelect={handleMentionSelect}
-                  onProbeModelCapability={handleProbeModelCapability}
-                  onRefreshContinuity={refreshContinuityInspector}
-                  onRevokeContinuityCapsule={handleRevokeContinuityCapsule}
-                  onRefreshProviders={handleRefreshProviders}
-                  onSend={handleSend}
-                  onSelectModel={handleModelSelect}
-                  onSelectReasoningEffort={(reasoningEffort) =>
-                    dispatch({
-                      type: "setReasoningEffort",
-                      reasoningEffort,
-                    })
-                  }
-                  onSelectProvider={handleProviderSelect}
-                  onStartAgentLogin={handleStartAgentLogin}
-                  onCancelAgentLogin={handleCancelAgentLogin}
-                  onStartProviderOAuth={handleStartProviderOAuth}
-                  onCancelProviderAuth={handleCancelProviderAuth}
-                  onAcceptExternalAgentConsent={
-                    handleAcceptExternalAgentConsent
-                  }
-                  onAcceptRemoteBYOKProviderConsent={
-                    handleAcceptRemoteBYOKProviderConsent
-                  }
-                  onAcceptFrontierProviderConsent={
-                    handleAcceptFrontierProviderConsent
-                  }
-                  onStartProviderRuntime={handleStartProviderRuntime}
-                  onStopProviderRuntime={handleStopProviderRuntime}
-                  onToggleContinuityInspector={handleToggleContinuityInspector}
-                />
-              </div>
-            </ContextActionMenu>
-
-            <AnimatePresence>
-              {historyOpen ? (
-                <m.div
-                  className={`ai-chat-drawer ai-chat-drawer--${historyEdge}`}
-                  data-drawer-edge={historyEdge}
-                  data-drawer-dragging={
-                    drawerDrag?.drawer === "history" ? "true" : "false"
-                  }
-                  data-testid="ai-chat-history-drawer"
-                  initial={{
-                    x: reduceMotion
-                      ? 0
-                      : historyEdge === "left"
-                        ? "-104%"
-                        : "104%",
-                    opacity: reduceMotion ? 0 : 0.72,
-                  }}
-                  animate={{
-                    x:
-                      drawerDrag?.drawer === "history" ? drawerDrag.offsetX : 0,
-                    opacity: 1,
-                  }}
-                  exit={{
-                    x: reduceMotion
-                      ? 0
-                      : historyEdge === "left"
-                        ? "-104%"
-                        : "104%",
-                    opacity: 0,
-                  }}
-                  layout
-                  style={{
-                    width: historyWidth,
-                    ...(fullscreen
-                      ? historyEdge === "left"
-                        ? {
-                            left: Math.max(
-                              historyInset,
-                              fullscreenDrawerRailInset,
-                            ),
-                          }
-                        : {
-                            right: Math.max(
-                              historyInset,
-                              fullscreenDrawerRailInset,
-                            ),
-                          }
-                      : {}),
-                  }}
-                  transition={
-                    drawerDrag?.drawer === "history"
-                      ? { duration: 0 }
-                      : {
-                          duration: reduceMotion ? 0.1 : 0.18,
-                          ease: [0.22, 1, 0.36, 1],
-                        }
-                  }
-                >
-                  {fullscreen ? (
-                    <>
-                      <m.span
-                        className="ai-chat-drawer-resize ai-chat-drawer-resize--left"
-                        drag="x"
-                        dragConstraints={{ left: 0, right: 0 }}
-                        dragElastic={0}
-                        dragMomentum={false}
-                        title="Resize history left edge"
-                        onDrag={(_event, info) =>
-                          handleResizeHistory("start", info.delta.x)
-                        }
-                      />
-                      <m.span
-                        className="ai-chat-drawer-resize ai-chat-drawer-resize--right"
-                        drag="x"
-                        dragConstraints={{ left: 0, right: 0 }}
-                        dragElastic={0}
-                        dragMomentum={false}
-                        title="Resize history right edge"
-                        onDrag={(_event, info) =>
-                          handleResizeHistory("end", info.delta.x)
-                        }
-                      />
-                    </>
-                  ) : null}
-                  <ChatHistoryRail
-                    activeSessionId={activeSessionId}
-                    canMove={fullscreen}
-                    hydratedRuns={scopedHydratedRuns}
-                    runs={scopedRuns}
-                    searchQuery={historySearch}
-                    onClose={() =>
-                      dispatchChrome({ type: "closeDrawer", drawer: "history" })
-                    }
-                    onDragStart={(event) =>
-                      handleDrawerDragStart("history", event)
-                    }
-                    onNewChat={handleNewChat}
-                    onDeleteSession={handleDeleteSession}
-                    onSearchChange={(historySearch) =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { historySearch },
-                      })
-                    }
-                    onSelectSession={handleSelectSession}
-                  />
-                </m.div>
-              ) : null}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {reviewOpen && !reviewExpanded ? (
-                <m.div
-                  className={`ai-chat-drawer ai-chat-drawer--${reviewEdge}`}
-                  data-drawer-edge={reviewEdge}
-                  data-drawer-dragging={
-                    drawerDrag?.drawer === "review" ? "true" : "false"
-                  }
-                  data-testid="ai-chat-review-drawer"
-                  initial={{
-                    x: reduceMotion
-                      ? 0
-                      : reviewEdge === "left"
-                        ? "-104%"
-                        : "104%",
-                    opacity: reduceMotion ? 0 : 0.72,
-                  }}
-                  animate={{
-                    x: drawerDrag?.drawer === "review" ? drawerDrag.offsetX : 0,
-                    opacity: 1,
-                  }}
-                  exit={{
-                    x: reduceMotion
-                      ? 0
-                      : reviewEdge === "left"
-                        ? "-104%"
-                        : "104%",
-                    opacity: 0,
-                  }}
-                  layout
-                  style={{
-                    width: reviewWidth,
-                    ...(fullscreen
-                      ? reviewEdge === "left"
-                        ? {
-                            left: Math.max(
-                              reviewInset,
-                              fullscreenDrawerRailInset,
-                            ),
-                          }
-                        : {
-                            right: Math.max(
-                              reviewInset,
-                              fullscreenDrawerRailInset,
-                            ),
-                          }
-                      : {}),
-                  }}
-                  transition={
-                    drawerDrag?.drawer === "review"
-                      ? { duration: 0 }
-                      : {
-                          duration: reduceMotion ? 0.1 : 0.18,
-                          ease: [0.22, 1, 0.36, 1],
-                        }
-                  }
-                >
-                  {fullscreen ? (
-                    <>
-                      <m.span
-                        className="ai-chat-drawer-resize ai-chat-drawer-resize--left"
-                        drag="x"
-                        dragConstraints={{ left: 0, right: 0 }}
-                        dragElastic={0}
-                        dragMomentum={false}
-                        title="Resize review left edge"
-                        onDrag={(_event, info) =>
-                          handleResizeReview("start", info.delta.x)
-                        }
-                      />
-                      <m.span
-                        className="ai-chat-drawer-resize ai-chat-drawer-resize--right"
-                        drag="x"
-                        dragConstraints={{ left: 0, right: 0 }}
-                        dragElastic={0}
-                        dragMomentum={false}
-                        title="Resize review right edge"
-                        onDrag={(_event, info) =>
-                          handleResizeReview("end", info.delta.x)
-                        }
-                      />
-                    </>
-                  ) : null}
-                  <ChatGitReview
-                    canMove={fullscreen}
-                    commitMessage={commitMessage}
-                    diffSearch={diffSearch}
-                    mode="drawer"
-                    projectPath={projectPath}
-                    searchQuery={reviewSearch}
-                    onClose={() =>
-                      dispatchChrome({ type: "closeDrawer", drawer: "review" })
-                    }
-                    onCollapse={() =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewExpanded: false },
-                      })
-                    }
-                    onCommitMessageChange={(commitMessage) =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { commitMessage },
-                      })
-                    }
-                    onDiffSearchChange={(diffSearch) =>
-                      dispatchChrome({ type: "patch", value: { diffSearch } })
-                    }
-                    onExpand={() => {
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewOpen: false, reviewExpanded: true },
-                      });
-                    }}
-                    onDragStart={(event) =>
-                      handleDrawerDragStart("review", event)
-                    }
-                    onSearchChange={(reviewSearch) =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewSearch },
-                      })
-                    }
-                  />
-                </m.div>
-              ) : null}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {reviewExpanded ? (
-                <m.div
-                  className="ai-chat-review-overlay"
-                  data-testid="ai-chat-review-expanded"
-                  initial={
-                    reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.985 }
-                  }
-                  animate={
-                    reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }
-                  }
-                  exit={
-                    reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.985 }
-                  }
-                  transition={{
-                    duration: reduceMotion ? 0.1 : 0.18,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                >
-                  <ChatGitReview
-                    canMove={false}
-                    commitMessage={commitMessage}
-                    diffSearch={diffSearch}
-                    mode="overlay"
-                    projectPath={projectPath}
-                    searchQuery={reviewSearch}
-                    onClose={() => {
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewExpanded: false, reviewOpen: false },
-                      });
-                    }}
-                    onCollapse={() => {
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewExpanded: false, reviewOpen: true },
-                      });
-                    }}
-                    onCommitMessageChange={(commitMessage) =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { commitMessage },
-                      })
-                    }
-                    onDiffSearchChange={(diffSearch) =>
-                      dispatchChrome({ type: "patch", value: { diffSearch } })
-                    }
-                    onExpand={() =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewExpanded: true },
-                      })
-                    }
-                    onDragStart={(event) =>
-                      handleDrawerDragStart("review", event)
-                    }
-                    onSearchChange={(reviewSearch) =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewSearch },
-                      })
-                    }
-                  />
-                </m.div>
-              ) : null}
-            </AnimatePresence>
-          </LayoutGroup>
+                  </m.div>
+                ) : null}
+              </AnimatePresence>
+            </LayoutGroup>
+          </div>
         </div>
       </LazyMotion>
     </section>

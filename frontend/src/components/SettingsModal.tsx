@@ -407,11 +407,6 @@ const aiChatDisplayPreferenceRows: Array<{
     title: "Compact cards",
     description: "Use tighter transcript cards in dense sidebar layouts.",
   },
-  {
-    key: "showActivity",
-    title: "Runtime activity",
-    description: "Show compact runtime state in the AI Chat header.",
-  },
 ];
 
 const aiChatWorkflowPreferenceRows: Array<{

@@ -39,7 +39,6 @@ export interface AIChatDefaultContextPrefs {
 export interface AIChatDisplayPreferences {
   autoScroll: boolean;
   compactCards: boolean;
-  showActivity: boolean;
 }
 
 export interface AIChatWorkflowPreferences {
@@ -217,7 +216,6 @@ const DEFAULT_AI_CHAT_SEND_SHORTCUT: AIChatSendShortcut = "enter";
 export const DEFAULT_AI_CHAT_DISPLAY_PREFS: AIChatDisplayPreferences = {
   autoScroll: true,
   compactCards: false,
-  showActivity: true,
 };
 export const DEFAULT_AI_CHAT_DEFAULT_CONTEXT: AIChatDefaultContextPrefs = {
   workspace: false,

@@ -11,6 +11,7 @@ export const askReadonlyProfileId = "ask-readonly";
 export type AIChatPresentation = "panel" | "fullscreen" | "preview";
 
 export interface AIChatPanelProps {
+  outerMotionActive?: boolean;
   presentation?: AIChatPresentation;
   projectPath?: string;
 }

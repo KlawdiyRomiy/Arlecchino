@@ -7312,6 +7312,12 @@
   color: var(--accent-brand-contrast, #111);
 }
 
+:root[data-theme="arlecchino-light"] .ai-chat-send-button:not(.is-stop) {
+  border-color: var(--shell-border-strong);
+  background: #fff;
+  color: #0a0a0a;
+}
+
 .ai-chat-send-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -7749,6 +7755,36 @@
   .ai-chat-header-button--new-chat .ai-chat-header-button__label {
     display: none;
   }
+}
+
+/* Keep the panel toolbar on one geometry while the host opens, moves between
+   snapped edges, or is resized. Container-query label swaps made the toolbar
+   repeatedly reflow as the panel crossed its responsive breakpoints. */
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-header {
+  --ai-chat-compact-control-size: 32px;
+  --ai-chat-compact-control-gap: 6px;
+  top: 8px;
+  width: calc(100% - 16px);
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-header__curtain,
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-header__left,
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-header__actions {
+  gap: var(--ai-chat-compact-control-gap);
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-header-button {
+  width: var(--ai-chat-compact-control-size);
+  min-width: var(--ai-chat-compact-control-size);
+  height: var(--ai-chat-compact-control-size);
+  flex-basis: var(--ai-chat-compact-control-size);
+  gap: 0;
+  border-radius: calc(var(--ai-chat-compact-control-size) / 2);
+  padding: 0;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-header-button__label {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
