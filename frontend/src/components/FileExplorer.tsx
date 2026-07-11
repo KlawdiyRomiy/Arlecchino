@@ -75,6 +75,16 @@ interface FileNode {
   isLoading?: boolean;
 }
 
+let explorerTreeSnapshot: { projectPath: string; files: FileNode[] } | null =
+  null;
+
+const getExplorerTreeSnapshot = (
+  projectPath: string,
+): FileNode[] | undefined =>
+  explorerTreeSnapshot?.projectPath === projectPath
+    ? explorerTreeSnapshot.files
+    : undefined;
+
 interface Breadcrumb {
   name: string;
   path: string;
@@ -247,9 +257,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const projectSwitchPending = useWorkspaceStore(
     (state) => state.pendingId !== null,
   );
-  const [projectPath, setProjectPath] = useState<string>("");
-  const [files, setFiles] = useState<FileNode[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedInitialFiles = initialProjectPath
+    ? getExplorerTreeSnapshot(initialProjectPath)
+    : undefined;
+  const [projectPath, setProjectPath] = useState<string>(initialProjectPath);
+  const [files, setFiles] = useState<FileNode[]>(cachedInitialFiles ?? []);
+  const [loading, setLoading] = useState(cachedInitialFiles === undefined);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
   const [perspectiveTarget, setPerspectiveTarget] = useState<string | null>(
     null,
@@ -682,7 +695,19 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     const requestId = latestProjectLoadRef.current + 1;
     latestProjectLoadRef.current = requestId;
     const isCurrentRequest = () => latestProjectLoadRef.current === requestId;
-    setLoading(true);
+
+    const cachedFiles = initialProjectPath
+      ? getExplorerTreeSnapshot(initialProjectPath)
+      : undefined;
+    if (cachedFiles) {
+      setProjectPath(initialProjectPath);
+      setStoreProjectPath(initialProjectPath);
+      filesRef.current = cachedFiles;
+      setFiles(cachedFiles);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     try {
       const resolvedProjectPath =
@@ -715,6 +740,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   useEffect(() => {
     void loadProject();
   }, [initialProjectPath]);
+
+  useEffect(() => {
+    if (projectPath && !loading) {
+      explorerTreeSnapshot = { projectPath, files };
+    }
+  }, [files, loading, projectPath]);
 
   useEffect(() => {
     if (projectSwitchPending) {

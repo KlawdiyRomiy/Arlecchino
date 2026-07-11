@@ -51,7 +51,10 @@ import {
   registerOpenIntentDispatcher,
   routeOpenIntent,
 } from "./shell/openIntentRouter";
-import { selectOpenTargetWithCapability } from "./shell/shellDialogs";
+import {
+  selectDirectoryWithCapability,
+  selectOpenTargetWithCapability,
+} from "./shell/shellDialogs";
 import {
   forgetProjectWindowRestorePath,
   rememberProjectWindowRestorePath,
@@ -694,6 +697,17 @@ const App: React.FC = () => {
 
       void (async () => {
         try {
+          if (!useWorkspaceStore.getState().activeId) {
+            const projectPath = await selectDirectoryWithCapability(
+              "Open Project",
+              AppFunctions.SelectDirectory,
+            );
+            if (projectPath) {
+              await handleProjectOpen(projectPath);
+            }
+            return;
+          }
+
           const selectedIntent = await selectOpenTargetWithCapability(
             "Open",
             AppFunctions.SelectOpenTarget,
@@ -717,7 +731,7 @@ const App: React.FC = () => {
     return () => {
       window.removeEventListener(OPEN_TARGET_EVENT, handleOpenTargetEvent);
     };
-  }, [isDetachedHost, showWorkspaceError]);
+  }, [handleProjectOpen, isDetachedHost, showWorkspaceError]);
 
   const performBackToWelcome = async (currentId: string) => {
     if (!currentId) {

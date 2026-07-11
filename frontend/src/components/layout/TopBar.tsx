@@ -286,7 +286,8 @@ const TopBarContextItem = React.memo(function TopBarContextItem({
           job.kind === "indexing" &&
           job.projectPath === projectPath &&
           (!job.sessionId || job.sessionId === projectSessionId) &&
-          (job.status === "running" || job.status === "queued"),
+          (job.status === "running" || job.status === "queued") &&
+          (job.progress?.percent ?? 0) < 100,
       ),
     [backgroundShell.jobs, projectPath, projectSessionId],
   );
