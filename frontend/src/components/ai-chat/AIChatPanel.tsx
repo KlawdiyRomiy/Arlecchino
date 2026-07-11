@@ -8,17 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  GitBranch,
-  History,
-  MessageSquarePlus,
-  Search,
-  Settings,
-} from "lucide-react";
+import { History, MessageSquarePlus, Search, Settings } from "lucide-react";
 import {
   AIAcceptPlan,
   AIApplyPatchArtifact,
@@ -487,14 +477,10 @@ interface AIChatPanelChromeState {
   historyOpen: boolean;
   reviewOpen: boolean;
   reviewExpanded: boolean;
-  leftControlsCollapsed: boolean;
-  rightControlsCollapsed: boolean;
   historyEdge: DrawerSnapEdge;
   reviewEdge: DrawerSnapEdge;
   historyWidth: number;
   reviewWidth: number;
-  historyInset: number;
-  reviewInset: number;
   sessionSearchOpen: boolean;
   historySearch: string;
   reviewSearch: string;
@@ -511,20 +497,14 @@ type AIChatPanelChromeAction =
   | { type: "resizeHistory"; edge: "start" | "end"; delta: number }
   | { type: "resizeReview"; edge: "start" | "end"; delta: number };
 
-const fullscreenDrawerRailInset = 66;
-
 const initialChromeState: AIChatPanelChromeState = {
   historyOpen: false,
   reviewOpen: false,
   reviewExpanded: false,
-  leftControlsCollapsed: false,
-  rightControlsCollapsed: false,
   historyEdge: "left",
   reviewEdge: "right",
   historyWidth: 270,
   reviewWidth: 520,
-  historyInset: fullscreenDrawerRailInset,
-  reviewInset: fullscreenDrawerRailInset,
   sessionSearchOpen: false,
   historySearch: "",
   reviewSearch: "",
@@ -756,22 +736,18 @@ function chromeReducer(
         const nextState = {
           ...state,
           historyEdge: action.edge,
-          historyInset: fullscreenDrawerRailInset,
         };
         if (state.reviewOpen && state.reviewEdge === action.edge) {
           nextState.reviewEdge = oppositeEdge(action.edge);
-          nextState.reviewInset = fullscreenDrawerRailInset;
         }
         return nextState;
       }
       const nextState = {
         ...state,
         reviewEdge: action.edge,
-        reviewInset: fullscreenDrawerRailInset,
       };
       if (state.historyOpen && state.historyEdge === action.edge) {
         nextState.historyEdge = oppositeEdge(action.edge);
-        nextState.historyInset = fullscreenDrawerRailInset;
       }
       return nextState;
     }
@@ -780,11 +756,6 @@ function chromeReducer(
         const nextWidth = clamp(state.historyWidth - action.delta, 220, 440);
         return {
           ...state,
-          historyInset: clamp(
-            state.historyInset + state.historyWidth - nextWidth,
-            fullscreenDrawerRailInset,
-            520,
-          ),
           historyWidth: nextWidth,
         };
       }
@@ -797,11 +768,6 @@ function chromeReducer(
         const nextWidth = clamp(state.reviewWidth + action.delta, 360, 760);
         return {
           ...state,
-          reviewInset: clamp(
-            state.reviewInset - (nextWidth - state.reviewWidth),
-            fullscreenDrawerRailInset,
-            520,
-          ),
           reviewWidth: nextWidth,
         };
       }
@@ -1720,8 +1686,6 @@ export function AIChatPanelContent({
     historyOpen,
     reviewOpen,
     reviewExpanded,
-    leftControlsCollapsed,
-    rightControlsCollapsed,
     historyEdge,
     reviewEdge,
     historyWidth,
@@ -4446,24 +4410,6 @@ export function AIChatPanelContent({
     });
   }, []);
 
-  const handleToggleLeftControlsCollapsed = useCallback(() => {
-    beginChatMotionWindow();
-    closeTransientPopovers();
-    dispatchChrome({
-      type: "patch",
-      value: { leftControlsCollapsed: !leftControlsCollapsed },
-    });
-  }, [beginChatMotionWindow, closeTransientPopovers, leftControlsCollapsed]);
-
-  const handleToggleRightControlsCollapsed = useCallback(() => {
-    beginChatMotionWindow();
-    closeTransientPopovers();
-    dispatchChrome({
-      type: "patch",
-      value: { rightControlsCollapsed: !rightControlsCollapsed },
-    });
-  }, [beginChatMotionWindow, closeTransientPopovers, rightControlsCollapsed]);
-
   const handlePanelToggleHistory = useCallback(() => {
     beginChatMotionWindow();
     closeTransientPopovers();
@@ -4817,269 +4763,8 @@ export function AIChatPanelContent({
                   />
                 </div>
               ) : null}
-              <AnimatePresence initial={false}>
-                {fullscreen && leftControlsCollapsed ? (
-                  <m.button
-                    className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--left"
-                    data-testid="ai-chat-fullscreen-left-controls-toggle"
-                    type="button"
-                    title="Show left chat controls"
-                    aria-pressed="true"
-                    initial={
-                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
-                    }
-                    animate={
-                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
-                    }
-                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
-                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                    onClick={handleToggleLeftControlsCollapsed}
-                  >
-                    <ChevronRight size={16} />
-                  </m.button>
-                ) : null}
-              </AnimatePresence>
-              <AnimatePresence initial={false}>
-                {fullscreen && rightControlsCollapsed ? (
-                  <m.button
-                    className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--right"
-                    data-testid="ai-chat-fullscreen-right-controls-toggle"
-                    type="button"
-                    title="Show right chat controls"
-                    aria-pressed="true"
-                    initial={
-                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }
-                    }
-                    animate={
-                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
-                    }
-                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
-                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                    onClick={handleToggleRightControlsCollapsed}
-                  >
-                    <ChevronLeft size={16} />
-                  </m.button>
-                ) : null}
-              </AnimatePresence>
-              <AnimatePresence initial={false}>
-                {fullscreen && !leftControlsCollapsed ? (
-                  <m.nav
-                    className="ai-chat-focus-rail ai-chat-focus-rail--left"
-                    data-ai-chat-popover-scope
-                    aria-label="AI Chat navigation"
-                    initial={
-                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
-                    }
-                    animate={
-                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
-                    }
-                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
-                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                  >
-                    <button
-                      className="ai-chat-icon-button ai-chat-chrome-toggle"
-                      data-testid="ai-chat-fullscreen-controls-collapse"
-                      type="button"
-                      title="Hide left chat controls"
-                      aria-pressed="false"
-                      onClick={handleToggleLeftControlsCollapsed}
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button
-                      className={`ai-chat-icon-button${historyOpen ? " is-active" : ""}`}
-                      type="button"
-                      title="History"
-                      onClick={() => {
-                        beginChatMotionWindow();
-                        closeTransientPopovers();
-                        dispatchChrome({
-                          type: historyOpen ? "closeDrawer" : "openDrawer",
-                          drawer: "history",
-                        });
-                      }}
-                    >
-                      <History size={16} />
-                    </button>
-                    <button
-                      className="ai-chat-icon-button"
-                      type="button"
-                      title="New chat"
-                      onClick={handleNewChat}
-                    >
-                      <MessageSquarePlus size={16} />
-                    </button>
-                    <button
-                      className={`ai-chat-icon-button${sessionSearchOpen ? " is-active" : ""}`}
-                      type="button"
-                      title="Search current session"
-                      onClick={() => {
-                        dispatch({
-                          type: "toggleProviderPopover",
-                          open: false,
-                        });
-                        dispatch({
-                          type: "toggleSettingsPopover",
-                          open: false,
-                        });
-                        dispatchChrome({
-                          type: "patch",
-                          value: {
-                            sessionSearchOpen: !sessionSearchOpen,
-                          },
-                        });
-                      }}
-                    >
-                      <Search size={16} />
-                    </button>
-                    <AnimatePresence initial={false}>
-                      {sessionSearchOpen ? (
-                        <m.div
-                          className="ai-chat-popover ai-chat-header-search ai-chat-rail-popover"
-                          role="search"
-                          aria-label="Search current chat session"
-                          initial={
-                            reduceMotion
-                              ? { opacity: 0 }
-                              : { opacity: 0, x: -6, scale: 0.98 }
-                          }
-                          animate={
-                            reduceMotion
-                              ? { opacity: 1 }
-                              : { opacity: 1, x: 0, scale: 1 }
-                          }
-                          exit={
-                            reduceMotion
-                              ? { opacity: 0 }
-                              : { opacity: 0, x: -4, scale: 0.98 }
-                          }
-                          transition={{ duration: reduceMotion ? 0.1 : 0.16 }}
-                        >
-                          <div className="ai-chat-search-field ai-chat-search-field--header">
-                            {sessionSearch ? null : <Search size={14} />}
-                            <input
-                              autoFocus
-                              aria-label="Search current chat session"
-                              data-testid="ai-chat-session-search"
-                              placeholder="Search this session..."
-                              value={sessionSearch}
-                              onChange={(event) =>
-                                dispatchChrome({
-                                  type: "patch",
-                                  value: { sessionSearch: event.target.value },
-                                })
-                              }
-                            />
-                            {sessionSearch ? (
-                              <>
-                                <span className="ai-chat-header-search__count">
-                                  {sessionSearchTerms.length > 0 &&
-                                  sessionSearchMatches.length > 0
-                                    ? Math.max(activeSessionSearchIndex, 0) + 1
-                                    : 0}
-                                  /
-                                  {sessionSearchTerms.length > 0
-                                    ? sessionSearchMatches.length
-                                    : 0}
-                                </span>
-                                <div
-                                  className="ai-chat-header-search__nav"
-                                  aria-label="Search result navigation"
-                                >
-                                  <button
-                                    className="ai-chat-icon-button ai-chat-icon-button--compact"
-                                    type="button"
-                                    title="Previous search result"
-                                    disabled={sessionSearchMatches.length === 0}
-                                    onClick={() =>
-                                      handleNavigateSessionSearch(-1)
-                                    }
-                                  >
-                                    <ChevronUp size={14} />
-                                  </button>
-                                  <button
-                                    className="ai-chat-icon-button ai-chat-icon-button--compact"
-                                    type="button"
-                                    title="Next search result"
-                                    disabled={sessionSearchMatches.length === 0}
-                                    onClick={() =>
-                                      handleNavigateSessionSearch(1)
-                                    }
-                                  >
-                                    <ChevronDown size={14} />
-                                  </button>
-                                </div>
-                              </>
-                            ) : null}
-                          </div>
-                        </m.div>
-                      ) : null}
-                    </AnimatePresence>
-                  </m.nav>
-                ) : null}
-              </AnimatePresence>
-              <AnimatePresence initial={false}>
-                {fullscreen && !rightControlsCollapsed ? (
-                  <m.nav
-                    className="ai-chat-focus-rail ai-chat-focus-rail--right"
-                    data-ai-chat-popover-scope
-                    aria-label="AI Chat tools"
-                    initial={
-                      reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }
-                    }
-                    animate={
-                      reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }
-                    }
-                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
-                    transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
-                  >
-                    <button
-                      className="ai-chat-icon-button ai-chat-chrome-toggle"
-                      data-testid="ai-chat-fullscreen-right-controls-collapse"
-                      type="button"
-                      title="Hide right chat controls"
-                      aria-pressed="false"
-                      onClick={handleToggleRightControlsCollapsed}
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                    <button
-                      className={`ai-chat-icon-button${reviewOpen || reviewExpanded ? " is-active" : ""}`}
-                      type="button"
-                      title="Git review"
-                      onClick={() => {
-                        beginChatMotionWindow();
-                        closeTransientPopovers();
-                        if (reviewExpanded) {
-                          dispatchChrome({
-                            type: "patch",
-                            value: { reviewExpanded: false, reviewOpen: false },
-                          });
-                          return;
-                        }
-                        dispatchChrome({
-                          type: reviewOpen ? "closeDrawer" : "openDrawer",
-                          drawer: "review",
-                        });
-                      }}
-                    >
-                      <GitBranch size={16} />
-                    </button>
-                    <button
-                      className="ai-chat-icon-button"
-                      type="button"
-                      title="AI Chat settings"
-                      onClick={() =>
-                        dispatchApplicationMenuAction("settings.toggle")
-                      }
-                    >
-                      <Settings size={16} />
-                    </button>
-                  </m.nav>
-                ) : null}
-              </AnimatePresence>
               <ContextActionMenu
-                ignoredTargetSelector=".ai-chat-run-card, .ai-chat-composer, .ai-chat-popover, .ai-chat-focus-rail, .ai-chat-drawer, button, input, textarea, a"
+                ignoredTargetSelector=".ai-chat-run-card, .ai-chat-composer, .ai-chat-popover, .ai-chat-drawer, button, input, textarea, a"
                 items={panelContextItems}
                 nativeScope="ai-chat-panel"
                 nativeTargetId={activeSessionId}
