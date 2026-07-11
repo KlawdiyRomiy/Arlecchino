@@ -3,52 +3,34 @@
 package app
 
 import (
+	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"arlecchino/internal/keychain"
 )
 
 func credentialVaultFind(service string, account string) (string, error) {
-	output, err := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-w",
-		"-s", strings.TrimSpace(service),
-		"-a", strings.TrimSpace(account),
-	).CombinedOutput()
+	value, err := keychain.Find(service, account)
 	if err != nil {
-		if strings.Contains(strings.ToLower(string(output)), "could not be found") {
+		if errors.Is(err, keychain.ErrNotFound) {
 			return "", errAutoUpdateTokenNotFound
 		}
-		return "", fmt.Errorf("Keychain token lookup failed: %s", strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("Keychain token lookup failed: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(value), nil
 }
 
 func credentialVaultSave(service string, account string, value string) error {
-	output, err := exec.Command(
-		"/usr/bin/security",
-		"add-generic-password",
-		"-U",
-		"-s", strings.TrimSpace(service),
-		"-a", strings.TrimSpace(account),
-		"-w", strings.TrimSpace(value),
-	).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("Keychain token save failed: %s", strings.TrimSpace(string(output)))
+	if err := keychain.Save(service, account, value); err != nil {
+		return fmt.Errorf("Keychain token save failed: %w", err)
 	}
 	return nil
 }
 
 func credentialVaultDelete(service string, account string) error {
-	output, err := exec.Command(
-		"/usr/bin/security",
-		"delete-generic-password",
-		"-s", strings.TrimSpace(service),
-		"-a", strings.TrimSpace(account),
-	).CombinedOutput()
-	if err != nil && !strings.Contains(strings.ToLower(string(output)), "could not be found") {
-		return fmt.Errorf("Keychain token delete failed: %s", strings.TrimSpace(string(output)))
+	if err := keychain.Delete(service, account); err != nil && !errors.Is(err, keychain.ErrNotFound) {
+		return fmt.Errorf("Keychain token delete failed: %w", err)
 	}
 	return nil
 }
