@@ -224,6 +224,110 @@ const recordEditorTabEvent = (
   });
 };
 
+const EDITOR_LEDGER_BATCH_MS = 250;
+type PendingEditorContentEvent = {
+  tab: EditorTab;
+  extra: Record<string, string | number | boolean | null | undefined>;
+};
+
+const pendingEditorContentEvents = new Map<string, PendingEditorContentEvent>();
+let editorContentLedgerTimer: ReturnType<typeof setTimeout> | null = null;
+
+const flushEditorContentLedgerEvents = () => {
+  const pending = Array.from(pendingEditorContentEvents.values());
+  pendingEditorContentEvents.clear();
+  editorContentLedgerTimer = null;
+  pending.forEach(({ tab, extra }) =>
+    recordEditorTabEvent(
+      "file.content_changed",
+      "Editor file content changed",
+      tab,
+      extra,
+    ),
+  );
+};
+
+const scheduleEditorContentLedgerEvent = (
+  tab: EditorTab,
+  extra: Record<string, string | number | boolean | null | undefined> = {},
+) => {
+  pendingEditorContentEvents.set(tab.id, { tab, extra });
+  if (editorContentLedgerTimer !== null) {
+    return;
+  }
+  editorContentLedgerTimer = setTimeout(
+    flushEditorContentLedgerEvents,
+    EDITOR_LEDGER_BATCH_MS,
+  );
+};
+
+const flushEditorContentLedgerEvent = (tabId: string) => {
+  const pending = pendingEditorContentEvents.get(tabId);
+  if (!pending) {
+    return;
+  }
+  pendingEditorContentEvents.delete(tabId);
+  recordEditorTabEvent(
+    "file.content_changed",
+    "Editor file content changed",
+    pending.tab,
+    pending.extra,
+  );
+  if (
+    pendingEditorContentEvents.size === 0 &&
+    editorContentLedgerTimer !== null
+  ) {
+    clearTimeout(editorContentLedgerTimer);
+    editorContentLedgerTimer = null;
+  }
+};
+
+type PendingCursorLedgerEvent = {
+  tab: EditorTab;
+  line: number;
+  col: number;
+};
+
+let pendingCursorLedgerEvent: PendingCursorLedgerEvent | null = null;
+let cursorLedgerTimer: ReturnType<typeof setTimeout> | null = null;
+
+const flushCursorLedgerEvent = () => {
+  const pending = pendingCursorLedgerEvent;
+  pendingCursorLedgerEvent = null;
+  cursorLedgerTimer = null;
+  if (!pending) {
+    return;
+  }
+  recordIDEContextEvent({
+    scope: "editor",
+    type: "cursor.moved",
+    title: "Editor cursor moved",
+    path: pending.tab.path,
+    metadata: {
+      name: pending.tab.name,
+      language: pending.tab.language,
+      dirty: pending.tab.isDirty,
+      line: pending.line,
+      column: pending.col,
+    },
+  });
+};
+
+const scheduleCursorLedgerEvent = (
+  tab: EditorTab,
+  line: number,
+  col: number,
+) => {
+  pendingCursorLedgerEvent = { tab, line, col };
+  if (cursorLedgerTimer !== null) {
+    return;
+  }
+  cursorLedgerTimer = setTimeout(
+    flushCursorLedgerEvent,
+    EDITOR_LEDGER_BATCH_MS,
+  );
+};
+
 const isTabUsedByPane = (panes: EditorPane[], tabId: string): boolean =>
   panes.some((pane) => pane.tabIds.includes(tabId));
 
@@ -482,12 +586,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
             source: "sync",
           });
         } else if (contentChanged) {
-          recordEditorTabEvent(
-            "file.content_changed",
-            "Editor file content changed",
-            nextTab,
-            { paneId },
-          );
+          scheduleEditorContentLedgerEvent(nextTab, { paneId });
         } else if (activeChanged) {
           recordEditorTabEvent(
             "file.activated",
@@ -539,6 +638,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
         };
       });
       if (tab) {
+        flushEditorContentLedgerEvent(tab.id);
         recordEditorTabEvent("file.closed", "Editor file closed", tab, {
           paneId,
         });
@@ -572,6 +672,10 @@ export const useEditorStore = create<EditorState & EditorActions>(
     },
 
     updateTabContent: (tabId, content) => {
+      const previous = get().tabs.get(tabId);
+      if (!previous || (previous.content === content && previous.isDirty)) {
+        return;
+      }
       set((s) => {
         const tab = s.tabs.get(tabId);
         if (!tab) return s;
@@ -581,11 +685,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
       });
       const tab = get().tabs.get(tabId);
       if (tab) {
-        recordEditorTabEvent(
-          "file.content_changed",
-          "Editor file content changed",
-          tab,
-        );
+        scheduleEditorContentLedgerEvent(tab);
       }
     },
 
@@ -618,9 +718,12 @@ export const useEditorStore = create<EditorState & EditorActions>(
 
     markTabDirty: (tabId, dirty) => {
       const previous = get().tabs.get(tabId);
+      if (!previous || previous.isDirty === dirty) {
+        return;
+      }
       set((s) => {
         const tab = s.tabs.get(tabId);
-        if (!tab) return s;
+        if (!tab || tab.isDirty === dirty) return s;
         const newTabs = new Map(s.tabs);
         newTabs.set(tabId, { ...tab, isDirty: dirty });
         return { tabs: newTabs };
@@ -710,13 +813,14 @@ export const useEditorStore = create<EditorState & EditorActions>(
     },
 
     setCursorPosition: (line, col) => {
+      const previous = get().cursorPosition;
+      if (previous.line === line && previous.col === col) {
+        return;
+      }
       set({ cursorPosition: { line, col } });
       const tab = get().getActiveTab(get().activePaneId);
       if (tab) {
-        recordEditorTabEvent("cursor.moved", "Editor cursor moved", tab, {
-          line,
-          column: col,
-        });
+        scheduleCursorLedgerEvent(tab, line, col);
       }
     },
 
@@ -843,11 +947,12 @@ export const useEditorStore = create<EditorState & EditorActions>(
               : state.statusFile,
         };
       });
-      removedTabs.forEach((tab) =>
+      removedTabs.forEach((tab) => {
+        flushEditorContentLedgerEvent(tab.id);
         recordEditorTabEvent("file.closed", "Editor file closed", tab, {
           reason: "path_pruned",
-        }),
-      );
+        });
+      });
     },
 
     getTab: (id) => get().tabs.get(id),

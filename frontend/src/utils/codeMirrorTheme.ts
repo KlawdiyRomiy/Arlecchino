@@ -395,14 +395,8 @@ export const codeEditorStyles = EditorView.theme(
       padding: "8px",
       overflow: "hidden",
       opacity: "1",
-      transform: "translate3d(0, 0, 0)",
-      willChange: "transform, opacity",
-      transition:
-        "opacity 110ms ease-out, transform 110ms cubic-bezier(0.25, 0.46, 0.45, 0.94)",
       zIndex: String(zIndex.tooltip),
       contain: "layout paint style",
-      backfaceVisibility: "hidden",
-      animation: "codeEditorPopupIn 150ms cubic-bezier(0.2, 0.9, 0.28, 1.03)",
     },
     ".cm-tooltip-autocomplete > ul": {
       fontFamily: editorFontFamily,
@@ -422,8 +416,6 @@ export const codeEditorStyles = EditorView.theme(
       gap: "4px",
       padding: "0",
       margin: "0",
-      transform: "translateZ(0)",
-      willChange: "transform, opacity",
       contain: "layout paint style",
       overscrollBehavior: "contain",
       backgroundColor: "transparent",
@@ -461,7 +453,6 @@ export const codeEditorStyles = EditorView.theme(
       overflow: "hidden",
       textOverflow: "clip",
       cursor: "pointer",
-      transform: "translate3d(0, 0, 0)",
       contain: "layout style paint",
       transition: `background-color ${transitions.fast}, border-color ${transitions.fast}, color ${transitions.fast}, box-shadow ${transitions.fast}`,
     },
@@ -714,20 +705,6 @@ export const codeEditorStyles = EditorView.theme(
       transform: "translateX(var(--cm-minimap-dock-offset, 0px))",
       willChange: "transform",
       zIndex: "1",
-    },
-    "@keyframes codeEditorPopupIn": {
-      "0%": {
-        opacity: "0",
-        transform: "translate3d(0, 4px, 0) scale(0.988)",
-      },
-      "65%": {
-        opacity: "1",
-        transform: "translate3d(0, -1px, 0) scale(1.004)",
-      },
-      "100%": {
-        opacity: "1",
-        transform: "translate3d(0, 0, 0) scale(1)",
-      },
     },
   },
   { dark: true },

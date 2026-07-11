@@ -91,7 +91,7 @@ const MAX_PRIMARY_COMPLETION_REPLACED_TEXT_LENGTH = 512;
 const ACCESS_COMPLETION_BOOST_BASE = 0.45;
 const ACCESS_TRANSIENT_RETRY_LIMIT = 1;
 const ACCESS_TRANSIENT_RETRY_DELAY_MS = 150;
-const COMPLETION_MAX_RENDERED_OPTIONS = 1000;
+const COMPLETION_MAX_RENDERED_OPTIONS = 100;
 const ACCESS_PENDING_COMPLETION_LABEL = "Loading members...";
 const ACCESS_EMPTY_COMPLETION_LABEL = "No LSP members";
 const ACCESS_ERROR_COMPLETION_LABEL = "Completion unavailable";
@@ -918,6 +918,18 @@ type EmbeddedCompletionRegion = {
   contentTo: number;
 };
 
+type EmbeddedCompletionDocumentSnapshot = {
+  fullText: string;
+  language: string;
+  pos: number;
+  region: EmbeddedCompletionRegion | null;
+};
+
+const embeddedCompletionDocumentSnapshots = new WeakMap<
+  object,
+  EmbeddedCompletionDocumentSnapshot
+>();
+
 function htmlAttributeValue(attributes: string, name: string): string {
   const match = attributes.match(
     new RegExp(
@@ -1013,12 +1025,32 @@ function embeddedCompletionLanguageAt(
   pos: number,
   language: string,
 ): string {
-  const region = embeddedCompletionRegionInDocument(
-    state.doc.toString(),
-    pos,
-    language,
-  );
+  if (!HTML_LIKE_CONTAINER_LANGUAGES.has(language)) {
+    return language;
+  }
+  const { region } = embeddedCompletionDocumentSnapshot(state, pos, language);
   return region?.language ?? language;
+}
+
+function embeddedCompletionDocumentSnapshot(
+  state: EditorState,
+  pos: number,
+  language: string,
+): EmbeddedCompletionDocumentSnapshot {
+  const cached = embeddedCompletionDocumentSnapshots.get(state.doc);
+  if (cached && cached.pos === pos && cached.language === language) {
+    return cached;
+  }
+
+  const fullText = cached?.fullText ?? state.doc.toString();
+  const snapshot = {
+    fullText,
+    language,
+    pos,
+    region: embeddedCompletionRegionInDocument(fullText, pos, language),
+  } satisfies EmbeddedCompletionDocumentSnapshot;
+  embeddedCompletionDocumentSnapshots.set(state.doc, snapshot);
+  return snapshot;
 }
 
 function embeddedCompletionRegionInDocument(
@@ -1051,16 +1083,13 @@ function paddedEmbeddedCompletionDocument(
   text: string,
   region: EmbeddedCompletionRegion,
 ): string {
-  let result = "";
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (index >= region.contentFrom && index < region.contentTo) {
-      result += char;
-    } else {
-      result += char === "\n" || char === "\r" ? char : " ";
-    }
-  }
-  return result;
+  const maskOutsideRegion = (segment: string) =>
+    segment.replace(/[^\r\n]+/g, (run) => " ".repeat(run.length));
+  return (
+    maskOutsideRegion(text.slice(0, region.contentFrom)) +
+    text.slice(region.contentFrom, region.contentTo) +
+    maskOutsideRegion(text.slice(region.contentTo))
+  );
 }
 
 function embeddedBackendCompletionDocument(
@@ -1068,8 +1097,11 @@ function embeddedBackendCompletionDocument(
   pos: number,
   language: string,
 ): { language: string; fullText: string } {
-  const fullText = state.doc.toString();
-  const region = embeddedCompletionRegionInDocument(fullText, pos, language);
+  const { fullText, region } = embeddedCompletionDocumentSnapshot(
+    state,
+    pos,
+    language,
+  );
   if (!region) {
     return { language, fullText };
   }
@@ -2492,20 +2524,21 @@ export const useCodeMirrorCompletionProvider = ({
     };
   }, [enabled]);
 
-  const recordLocalDocumentChange = useCallback(
+  const recordLocalDocumentChange = useCallback(() => {
+    if (!enabled) return;
+    documentVersionRef.current += 1;
+    resetCompletionState({
+      preserveSession: completionRuntimeSessionOpenRef.current,
+    });
+  }, [enabled, resetCompletionState]);
+
+  const recordDocumentChange = useCallback(
     (value: string) => {
       if (!enabled) return;
-      if (lastUserChangeContentRef.current === value) return;
       lastUserChangeContentRef.current = value;
-      documentVersionRef.current += 1;
-      resetCompletionState({
-        preserveSession: completionRuntimeSessionOpenRef.current,
-      });
     },
-    [enabled, resetCompletionState],
+    [enabled],
   );
-
-  const recordDocumentChange = recordLocalDocumentChange;
 
   const metrics = useMemo(() => {
     if (!enabled || !editorFeatureBudget.richEditorFeatures) {
@@ -3233,8 +3266,8 @@ export const useCodeMirrorCompletionProvider = ({
         });
         const fullText = backendDocument.fullText;
         const lineText = fullText.slice(line.from, line.to);
-        const textBefore = fullText.slice(0, pos);
-        const textAfter = fullText.slice(pos);
+        const textBefore = fullText.slice(line.from, pos);
+        const textAfter = fullText.slice(pos, line.to);
         const { currentClass, currentMethod, imports } = buildCompletionContext(
           fullText,
           lineNumber,
@@ -4317,20 +4350,21 @@ export const useCodeMirrorCompletionProvider = ({
           completionInFlightRequestsRef.current > 0;
         if (!update.docChanged) return;
         if (update.view.composing || update.view.compositionStarted) return;
-        recordLocalDocumentChange(update.state.doc.toString());
+        recordLocalDocumentChange();
 
         let insertedNonWhitespace = false;
         let insertedAutocompleteWhitespace = false;
+        let insertedByPaste = false;
         update.transactions.forEach((transaction) => {
           if (!transaction.isUserEvent("input")) return;
           if (transaction.isUserEvent("input.type.compose")) return;
           if (transaction.isUserEvent("input.complete")) return;
-          if (
-            !transaction.isUserEvent("input.type") &&
-            !transaction.isUserEvent("input.paste")
-          ) {
+          const isTyped = transaction.isUserEvent("input.type");
+          const isPaste = transaction.isUserEvent("input.paste");
+          if (!isTyped && !isPaste) {
             return;
           }
+          insertedByPaste ||= isPaste;
           transaction.changes.iterChanges(
             (_fromA, _toA, _fromB, _toB, inserted) => {
               const insertedText = inserted.toString();
@@ -4343,6 +4377,36 @@ export const useCodeMirrorCompletionProvider = ({
           );
         });
 
+        let isWhitespaceCompletionTrigger = false;
+        if (insertedAutocompleteWhitespace && language === "go") {
+          const pos = update.state.selection.main.head;
+          const line = update.state.doc.lineAt(pos);
+          isWhitespaceCompletionTrigger =
+            extractGoPackageNamePrefix(line.text.slice(0, pos - line.from)) !==
+            null;
+        }
+        if (!insertedNonWhitespace && !isWhitespaceCompletionTrigger) return;
+
+        const view = update.view;
+        const docSnapshot = update.state.doc;
+        const recordNativeTypingStart = () => {
+          if (view.state.doc !== docSnapshot) return false;
+          const version = currentDocumentVersion();
+          if (completionDismissedVersionRef.current === version) return false;
+          if (view.composing || view.compositionStarted) return false;
+          metricsRef.current.recordAutocompleteRequested();
+          autoStartedCompletionVersionRef.current = version;
+          return true;
+        };
+
+        // Native activateOnTyping enters the completion pipeline without the
+        // fixed 50 ms delay that startCompletion adds. Paste is not considered
+        // typing by CodeMirror, so it keeps the explicit start path below.
+        if (!insertedByPaste) {
+          queueMicrotask(recordNativeTypingStart);
+          return;
+        }
+
         const currentPos = update.state.selection.main.head;
         const currentLine = update.state.doc.lineAt(currentPos);
         const textBeforeLine = currentLine.text.slice(
@@ -4354,12 +4418,6 @@ export const useCodeMirrorCompletionProvider = ({
           currentPos,
           language,
         );
-        const isWhitespaceCompletionTrigger =
-          insertedAutocompleteWhitespace &&
-          completionLanguage === "go" &&
-          extractGoPackageNamePrefix(textBeforeLine) !== null;
-        if (!insertedNonWhitespace && !isWhitespaceCompletionTrigger) return;
-
         const recentText = update.state.doc.sliceString(
           Math.max(0, currentPos - 2),
           currentPos,
@@ -4389,13 +4447,8 @@ export const useCodeMirrorCompletionProvider = ({
           return;
         }
 
-        const view = update.view;
-        const docSnapshot = update.state.doc;
-
         queueMicrotask(() => {
-          if (view.state.doc !== docSnapshot) return;
-          const version = currentDocumentVersion();
-          if (completionDismissedVersionRef.current === version) return;
+          if (!recordNativeTypingStart()) return;
           const nextStatus = completionStatus(view.state);
           const nextActiveCompletionSession =
             completionSessionControllerRef.current.current();
@@ -4416,9 +4469,6 @@ export const useCodeMirrorCompletionProvider = ({
           ) {
             return;
           }
-          if (view.composing || view.compositionStarted) return;
-          metricsRef.current.recordAutocompleteRequested();
-          autoStartedCompletionVersionRef.current = version;
           startCompletion(view);
         });
       }),
@@ -4429,7 +4479,7 @@ export const useCodeMirrorCompletionProvider = ({
       }),
       autocompletion({
         override: [backendCompletionSource],
-        activateOnTyping: false,
+        activateOnTyping: true,
         activateOnTypingDelay: 0,
         updateSyncTime: COMPLETION_FAST_BACKEND_GRACE_MS,
         maxRenderedOptions: COMPLETION_MAX_RENDERED_OPTIONS,

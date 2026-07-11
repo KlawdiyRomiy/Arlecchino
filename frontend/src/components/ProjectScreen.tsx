@@ -121,6 +121,7 @@ interface ProjectScreenProps extends PanelSnapDragCallbacks {
 }
 
 const AUTO_SAVE_DELAY = 1500;
+const EDITOR_STORE_CONTENT_FLUSH_MS = 50;
 const EMPTY_EDITOR_HISTORY_AVAILABILITY: EditorHistoryAvailability = {
   canUndo: false,
   canRedo: false,
@@ -748,6 +749,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     typeof setTimeout
   > | null>(null);
   const pendingContentStateRef = useRef<Record<string, string>>({});
+  const pendingEditorStoreContentRef = useRef<Record<string, string>>({});
+  const editorStoreContentFlushTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const lastEditorStoreContentFlushAtRef = useRef(0);
   const typingActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -787,6 +793,65 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     useState<EditorHistoryAvailability>(EMPTY_EDITOR_HISTORY_AVAILABILITY);
   const [activeEditorViewAvailable, setActiveEditorViewAvailable] =
     useState(false);
+
+  const flushPendingEditorStoreContent = useCallback(() => {
+    const pending = pendingEditorStoreContentRef.current;
+    pendingEditorStoreContentRef.current = {};
+    editorStoreContentFlushTimerRef.current = null;
+    lastEditorStoreContentFlushAtRef.current = Date.now();
+    Object.entries(pending).forEach(([tabId, content]) => {
+      updateEditorStoreTabContent(tabId, content);
+    });
+  }, [updateEditorStoreTabContent]);
+
+  const flushEditorStoreContentForTab = useCallback(
+    (tabId: string) => {
+      const pending = pendingEditorStoreContentRef.current[tabId];
+      if (pending === undefined) {
+        return;
+      }
+      delete pendingEditorStoreContentRef.current[tabId];
+      updateEditorStoreTabContent(tabId, pending);
+      lastEditorStoreContentFlushAtRef.current = Date.now();
+      if (
+        Object.keys(pendingEditorStoreContentRef.current).length === 0 &&
+        editorStoreContentFlushTimerRef.current !== null
+      ) {
+        clearTimeout(editorStoreContentFlushTimerRef.current);
+        editorStoreContentFlushTimerRef.current = null;
+      }
+    },
+    [updateEditorStoreTabContent],
+  );
+
+  const scheduleEditorStoreContentUpdate = useCallback(
+    (tabId: string, content: string) => {
+      const now = Date.now();
+      const sharedTab = useEditorStore.getState().tabs.get(tabId);
+      const elapsed = now - lastEditorStoreContentFlushAtRef.current;
+      if (
+        sharedTab &&
+        (!sharedTab.isDirty ||
+          (editorStoreContentFlushTimerRef.current === null &&
+            elapsed >= EDITOR_STORE_CONTENT_FLUSH_MS))
+      ) {
+        delete pendingEditorStoreContentRef.current[tabId];
+        updateEditorStoreTabContent(tabId, content);
+        lastEditorStoreContentFlushAtRef.current = now;
+        return;
+      }
+
+      pendingEditorStoreContentRef.current[tabId] = content;
+      if (editorStoreContentFlushTimerRef.current !== null) {
+        return;
+      }
+      editorStoreContentFlushTimerRef.current = setTimeout(
+        flushPendingEditorStoreContent,
+        Math.max(0, EDITOR_STORE_CONTENT_FLUSH_MS - elapsed),
+      );
+    },
+    [flushPendingEditorStoreContent, updateEditorStoreTabContent],
+  );
 
   const setTabSwitcherSelection = useCallback((tabId: string | null) => {
     tabSwitcherSelectionRef.current = tabId;
@@ -1566,6 +1631,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       const file = await loadEditorFile(tab.path);
       storeFileLoadState(tab.id, file);
       delete pendingContentStateRef.current[tab.id];
+      delete pendingEditorStoreContentRef.current[tab.id];
       tabsRef.current = tabsRef.current.map((item) =>
         item.id === tab.id ? { ...item, isDirty: false } : item,
       );
@@ -1830,13 +1896,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     const language = getLanguageFromPath(statusTab.path);
-    const loadState = fileLoadStates[statusTab.id];
+    const loadState =
+      fileLoadStatesRef.current[statusTab.id] ?? fileLoadStates[statusTab.id];
     if (!loadState || loadState.kind !== "editable") {
       setStatusFile(statusTab.path, statusTab.label, language);
       return;
     }
 
-    const content = fileContents[statusTab.id] ?? loadState.content;
+    const content =
+      fileContentsRef.current[statusTab.id] ??
+      fileContents[statusTab.id] ??
+      loadState.content;
     syncEditorStoreActiveTab(
       activeEditorPaneId,
       statusTab.path,
@@ -2079,6 +2149,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     if (closedTab) {
       // Save to closed tabs history (keep last 10)
       setClosedTabs((prev) => [closedTab, ...prev].slice(0, 10));
+      flushEditorStoreContentForTab(tabId);
       closeEditorStoreTabPath(closedTab.path);
     }
 
@@ -2220,7 +2291,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const handleCloseAllTabs = useCallback(() => {
     openFileRequestRef.current += 1;
     clearFileOpenLoadingTimer();
-    tabsRef.current.forEach((tab) => closeEditorStoreTabPath(tab.path));
+    tabsRef.current.forEach((tab) => {
+      flushEditorStoreContentForTab(tab.id);
+      closeEditorStoreTabPath(tab.path);
+    });
     setTabs([]);
     setFileContents({});
     setFileLoadStates({});
@@ -2241,6 +2315,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     clearAllTabLoadingRevealTimers,
     clearFileOpenLoadingTimer,
     closeEditorStoreTabPath,
+    flushEditorStoreContentForTab,
     focusEditorSplitSide,
     resetActiveEditorBudget,
   ]);
@@ -2330,6 +2405,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   useEffect(() => {
     const unsubscribe = useEditorStore.subscribe((state, previousState) => {
+      if (state.tabs === previousState.tabs) {
+        return;
+      }
       const localTabs = tabsRef.current;
       if (localTabs.length === 0) {
         return;
@@ -2356,14 +2434,37 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           return tab;
         }
 
-        if (fileContentsRef.current[tab.id] !== sharedTab.content) {
+        const pendingLocalContent =
+          pendingEditorStoreContentRef.current[tab.id];
+        const keepsPendingLocalContent =
+          pendingLocalContent !== undefined &&
+          pendingLocalContent !== sharedTab.content;
+        const loadState = fileLoadStatesRef.current[tab.id];
+        if (
+          (keepsPendingLocalContent ||
+            fileContentsRef.current[tab.id] === sharedTab.content) &&
+          (loadState?.kind !== "editable" ||
+            keepsPendingLocalContent ||
+            loadState.content === sharedTab.content) &&
+          tab.isDirty === sharedTab.isDirty
+        ) {
+          return tab;
+        }
+
+        if (
+          !keepsPendingLocalContent &&
+          fileContentsRef.current[tab.id] !== sharedTab.content
+        ) {
           fileContentsRef.current[tab.id] = sharedTab.content;
           contentUpdates[tab.id] = sharedTab.content;
           hasContentUpdates = true;
         }
 
-        const loadState = fileLoadStatesRef.current[tab.id];
-        if (loadState?.kind === "editable") {
+        if (
+          !keepsPendingLocalContent &&
+          loadState?.kind === "editable" &&
+          loadState.content !== sharedTab.content
+        ) {
           const nextLoadState: EditorFileLoadState = {
             ...loadState,
             content: sharedTab.content,
@@ -2455,6 +2556,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return;
       }
 
+      flushEditorStoreContentForTab(tabId);
+
       const content = fileContentsRef.current[tabId];
       if (content === undefined) {
         console.log("Auto-save skipped: no content for", tabId);
@@ -2482,7 +2585,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         });
       }
     },
-    [isTabReadOnlyByPolicy],
+    [flushEditorStoreContentForTab, isTabReadOnlyByPolicy],
   );
 
   const scheduleAutoSave = useCallback(
@@ -2530,6 +2633,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const flushDirtyTabsForProjectMove = useCallback(async () => {
     flushPendingContentState();
+    flushPendingEditorStoreContent();
     Object.values(autoSaveTimerRefs.current).forEach((timer) =>
       clearTimeout(timer),
     );
@@ -2559,7 +2663,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         dirtyIds.has(tab.id) ? { ...tab, isDirty: false } : tab,
       ),
     );
-  }, [flushPendingContentState, isTabReadOnlyByPolicy]);
+  }, [
+    flushPendingContentState,
+    flushPendingEditorStoreContent,
+    isTabReadOnlyByPolicy,
+  ]);
 
   useEffect(() => {
     onDirtyEditorFlushReady?.(flushDirtyTabsForProjectMove);
@@ -2626,7 +2734,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       });
     }
     scheduleContentStateFlush(tabId, value);
-    updateEditorStoreTabContent(tabId, value);
+    scheduleEditorStoreContentUpdate(tabId, value);
     markTabDirty(tabId);
     scheduleAutoSave(tabId);
   };
@@ -2670,6 +2778,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if (!confirmTabWriteAccess(tab)) {
         return;
       }
+
+      flushEditorStoreContentForTab(tabId);
 
       setIsSaving(true);
 
@@ -2740,6 +2850,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     },
     [
       confirmTabWriteAccess,
+      flushEditorStoreContentForTab,
       getLanguageFromPath,
       isSaving,
       replaceEditorStoreTabContent,
@@ -3740,6 +3851,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if (contentStateFlushTimerRef.current) {
         clearTimeout(contentStateFlushTimerRef.current);
       }
+      if (editorStoreContentFlushTimerRef.current) {
+        clearTimeout(editorStoreContentFlushTimerRef.current);
+        flushPendingEditorStoreContent();
+      }
       if (typingActivityTimerRef.current) {
         clearTimeout(typingActivityTimerRef.current);
         const pending = pendingTypingActivityRef.current;
@@ -3749,7 +3864,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         }
       }
     };
-  }, []);
+  }, [flushPendingEditorStoreContent]);
 
   const focusedEditorTabId = editorSplitSlots
     ? getEditorSplitActiveTabId(editorSplitSlots, focusedEditorSplitSide)

@@ -41,7 +41,6 @@ import {
   Scissors,
 } from "lucide-react";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
-import rainbowBrackets from "rainbowbrackets";
 import { showMinimap } from "@replit/codemirror-minimap";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
@@ -116,6 +115,7 @@ import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
 import type { EditorNavigationTarget } from "../utils/editorFileLoader";
 import { formatCodeWithPrettier } from "../utils/formatCode";
+import { incrementalRainbowBrackets } from "../extensions/incrementalRainbowBrackets";
 
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
 const SIGNATURE_HIDE_MS = 2400;
@@ -913,12 +913,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       return;
     }
     lastContentPropRef.current = content;
-    documentVersionRef.current += 1;
-    signatureRequestGuardRef.current.next();
     if (lastUserChangeContentRef.current === content) {
       lastUserChangeContentRef.current = null;
       return;
     }
+    documentVersionRef.current += 1;
+    signatureRequestGuardRef.current.next();
     if (editorRuntimeActive && !largeDocumentMode) {
       replaceEditorDocumentFromDisk(filePath, language, content);
     }
@@ -1921,7 +1921,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const rainbowBracketsExtension = useMemo<Extension>(
     () =>
       showRainbowBrackets && !featureBudgetLargeDocument
-        ? rainbowBrackets()
+        ? incrementalRainbowBrackets()
         : [],
     [featureBudgetLargeDocument, showRainbowBrackets],
   );
@@ -2066,11 +2066,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
     if (shouldShowMinimap) {
       nextExtensions.push(
-        showMinimap.compute(["doc"], () => ({
+        showMinimap.of({
           create: () => ({ dom: document.createElement("div") }),
           displayText: "blocks",
           showOverlay: "always",
-        })),
+        }),
         minimapDockingExtension,
       );
     }
