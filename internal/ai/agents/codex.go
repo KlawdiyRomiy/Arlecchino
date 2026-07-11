@@ -1292,8 +1292,10 @@ func sanitizeCLIStatusLine(value string) string {
 }
 
 type transcriptBuffer struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
+	mu    sync.Mutex
+	data  []byte
+	start int
+	size  int
 }
 
 func (b *transcriptBuffer) Write(chunk []byte) {
@@ -1302,22 +1304,54 @@ func (b *transcriptBuffer) Write(chunk []byte) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.buffer.Len()+len(chunk) > codexTranscriptLimit {
-		excess := b.buffer.Len() + len(chunk) - codexTranscriptLimit
-		current := b.buffer.Bytes()
-		if excess < len(current) {
-			next := append([]byte(nil), current[excess:]...)
-			b.buffer.Reset()
-			_, _ = b.buffer.Write(next)
-		} else {
-			b.buffer.Reset()
+
+	if len(chunk) >= codexTranscriptLimit {
+		if len(b.data) != codexTranscriptLimit {
+			b.data = make([]byte, codexTranscriptLimit)
 		}
+		copy(b.data, chunk[len(chunk)-codexTranscriptLimit:])
+		b.start = 0
+		b.size = codexTranscriptLimit
+		return
 	}
-	_, _ = b.buffer.Write(chunk)
+
+	if len(b.data) < codexTranscriptLimit &&
+		b.size+len(chunk) <= codexTranscriptLimit {
+		b.data = append(b.data, chunk...)
+		b.size += len(chunk)
+		return
+	}
+
+	if len(b.data) < codexTranscriptLimit {
+		retained := codexTranscriptLimit - len(chunk)
+		ring := make([]byte, codexTranscriptLimit)
+		copy(ring, b.data[b.size-retained:b.size])
+		copy(ring[retained:], chunk)
+		b.data = ring
+		b.start = 0
+		b.size = codexTranscriptLimit
+		return
+	}
+
+	first := min(len(chunk), codexTranscriptLimit-b.start)
+	copy(b.data[b.start:], chunk[:first])
+	copy(b.data, chunk[first:])
+	b.start = (b.start + len(chunk)) % codexTranscriptLimit
+	b.size = codexTranscriptLimit
 }
 
 func (b *transcriptBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return strings.TrimSpace(b.buffer.String())
+	if b.size == 0 {
+		return ""
+	}
+	if len(b.data) < codexTranscriptLimit || b.start == 0 {
+		return strings.TrimSpace(string(b.data[:b.size]))
+	}
+
+	ordered := make([]byte, b.size)
+	written := copy(ordered, b.data[b.start:])
+	copy(ordered[written:], b.data[:b.start])
+	return strings.TrimSpace(string(ordered))
 }
