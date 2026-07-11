@@ -21,6 +21,8 @@ interface AIChatCodeBlockProps {
   meta: string;
 }
 
+const markdownRemarkPlugins = [remarkGfm];
+
 type CodeNodeMetadata = {
   data?: {
     meta?: unknown;
@@ -160,6 +162,106 @@ function closeUnfinishedFence(content: string, streaming: boolean): string {
   }
   if (!openFence) return content;
   return `${content}\n${openFence.char.repeat(openFence.length)}`;
+}
+
+export function stabilizeStreamingMarkdown(
+  content: string,
+  streaming: boolean,
+): string {
+  if (!streaming || !content) return content;
+  const openInlineMarkers: Array<{ marker: string; contentStart: number }> = [];
+  let inlineCodeOpen = false;
+  let openFence: { char: string; length: number } | null = null;
+  let lineOffset = 0;
+
+  for (const line of content.split(/\r?\n/)) {
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (!openFence) {
+        openFence = { char: marker[0], length: marker.length };
+      } else if (
+        openFence.char === marker[0] &&
+        marker.length >= openFence.length
+      ) {
+        openFence = null;
+      }
+      lineOffset += line.length + 1;
+      continue;
+    }
+    if (openFence) {
+      lineOffset += line.length + 1;
+      continue;
+    }
+
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (char === "\\") {
+        index += 1;
+        continue;
+      }
+      if (char === "`") {
+        if (line[index + 1] === "`" || line[index - 1] === "`") continue;
+        inlineCodeOpen = !inlineCodeOpen;
+        continue;
+      }
+      if (inlineCodeOpen) continue;
+      const strongMarker = line.slice(index, index + 2);
+      if (strongMarker === "**" || strongMarker === "__") {
+        if (openInlineMarkers.at(-1)?.marker === strongMarker) {
+          openInlineMarkers.pop();
+        } else {
+          openInlineMarkers.push({
+            marker: strongMarker,
+            contentStart: lineOffset + index + strongMarker.length,
+          });
+        }
+        index += 1;
+        continue;
+      }
+      if (char !== "*" && char !== "_") continue;
+      const previous = line[index - 1] ?? "";
+      const next = line[index + 1] ?? "";
+      if (
+        char === "_" &&
+        /[\p{L}\p{N}]/u.test(previous) &&
+        /[\p{L}\p{N}]/u.test(next)
+      ) {
+        continue;
+      }
+      const canOpen = Boolean(next && !/\s/.test(next));
+      const canClose = Boolean(previous && !/\s/.test(previous));
+      if (openInlineMarkers.at(-1)?.marker === char && canClose) {
+        openInlineMarkers.pop();
+      } else if (canOpen) {
+        openInlineMarkers.push({
+          marker: char,
+          contentStart: lineOffset + index + 1,
+        });
+      }
+    }
+    lineOffset += line.length + 1;
+  }
+
+  let stabilized = content;
+  if (!openFence && !inlineCodeOpen) {
+    const openDestination = /(^|[^!\\])\[[^\]\n]+\]\(([^)\n]*)$/.exec(content);
+    if (openDestination) {
+      stabilized += openDestination[2] ? ")" : "#)";
+    } else if (/(^|[^!\\])\[[^\]\n]+\]$/.test(content)) {
+      stabilized += "(#)";
+    } else if (/(^|[^!\\])\[[^\]\n]+$/.test(content)) {
+      stabilized += "](#)";
+    }
+  }
+  if (inlineCodeOpen) stabilized += "`";
+  for (let index = openInlineMarkers.length - 1; index >= 0; index -= 1) {
+    const openMarker = openInlineMarkers[index];
+    if (content.slice(openMarker.contentStart).trim()) {
+      stabilized += openMarker.marker;
+    }
+  }
+  return closeUnfinishedFence(stabilized, true);
 }
 
 function textFromChildren(children: React.ReactNode): string {
@@ -345,7 +447,7 @@ function AIChatCodeBlock({ code, language, meta }: AIChatCodeBlockProps) {
   );
 }
 
-export function AIChatMarkdownMessage({
+export const AIChatMarkdownMessage = React.memo(function AIChatMarkdownMessage({
   className = "",
   content,
   searchQuery = "",
@@ -354,7 +456,7 @@ export function AIChatMarkdownMessage({
 }: AIChatMarkdownMessageProps) {
   const terms = React.useMemo(() => searchTerms(searchQuery), [searchQuery]);
   const preparedContent = React.useMemo(
-    () => closeUnfinishedFence(content, streaming),
+    () => stabilizeStreamingMarkdown(content, streaming),
     [content, streaming],
   );
   const renderChildren = React.useCallback(
@@ -485,9 +587,12 @@ export function AIChatMarkdownMessage({
       data-testid="ai-chat-markdown"
       data-typewriter-active={typewriterActive ? "true" : "false"}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={markdownRemarkPlugins}
+        components={components}
+      >
         {preparedContent}
       </ReactMarkdown>
     </div>
   );
-}
+});

@@ -28,7 +28,6 @@ export interface ContextToggles {
 export interface AIChatDisplayPrefs {
   autoScroll: boolean;
   compactCards: boolean;
-  showActivity: boolean;
 }
 
 export type AIChatProviderSelectionSource = "auto" | "user";
@@ -48,7 +47,6 @@ export interface AIChatUIState {
   displayPrefs: AIChatDisplayPrefs;
   providerPopoverOpen: boolean;
   settingsPopoverOpen: boolean;
-  activityPopoverOpen: boolean;
   activeRunId: string;
   hydratedRuns: Record<string, AIChatRun>;
 }
@@ -75,10 +73,10 @@ export type AIChatUIAction =
   | { type: "setDisplayPrefs"; displayPrefs: AIChatDisplayPrefs }
   | { type: "toggleProviderPopover"; open?: boolean }
   | { type: "toggleSettingsPopover"; open?: boolean }
-  | { type: "toggleActivityPopover"; open?: boolean }
   | { type: "setActiveRun"; runId: string }
   | { type: "hydrateRun"; run: AIChatRun }
   | { type: "resetComposer" }
+  | { type: "resetProjectComposer" }
   | {
       type: "ensureProvider";
       providerId: string;

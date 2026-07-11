@@ -9,6 +9,8 @@ import (
 )
 
 const (
+	providerToolAgentStatusUpdate   = "agent_status_update"
+	providerToolAgentCommentary     = "agent_commentary"
 	providerToolDiagnosticsRead     = "diagnostics_read"
 	providerToolFileReadRange       = "file_read_range"
 	providerToolWorkspaceGrep       = "workspace_grep"
@@ -63,7 +65,13 @@ func generationToolsetForChatRequest(req AIChatRunRequest, descriptor AIProvider
 	tools := generationToolsForChatRequest(req)
 	profile := chatToolProfileForRequest(req)
 	if buildUsesFastCurrentFileEditToolset(req) {
-		tools = filterGenerationTools(tools, providerToolFileEditPreview, providerToolFileCreatePreview)
+		tools = filterGenerationTools(
+			tools,
+			providerToolAgentStatusUpdate,
+			providerToolAgentCommentary,
+			providerToolFileEditPreview,
+			providerToolFileCreatePreview,
+		)
 		profile = chatToolProfileFastCurrentFile
 	}
 	return chatToolset{
@@ -78,7 +86,7 @@ func chatRequestUsesProviderTools(req AIChatRunRequest) bool {
 	switch req.Action {
 	case AIChatActionAsk:
 		return !isMinimalChatRequest(req)
-	case AIChatActionBuild, AIChatActionDebug, AIChatActionPlan:
+	case AIChatActionBuild, AIChatActionDebug, AIChatActionPlan, AIChatActionReview:
 		return true
 	default:
 		return false
@@ -98,6 +106,8 @@ func chatToolProfileForRequest(req AIChatRunRequest) string {
 		return chatToolProfileDebugDiagnostic
 	case AIChatActionBuild:
 		return chatToolProfileFullAgentLoop
+	case AIChatActionReview:
+		return chatToolProfilePlanReadOnly
 	default:
 		return chatToolProfileNone
 	}
@@ -157,6 +167,58 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 		return nil
 	}
 	tools := []providers.GenerationTool{
+		{
+			Name:        providerToolAgentStatusUpdate,
+			Description: "Broadcast private structured Agent Runtime state to Arlecchino. This never creates chat text. Use at meaningful phase changes, not for every small tool call.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"phase", "state", "title"},
+				"properties": map[string]any{
+					"phase": map[string]any{
+						"type":        "string",
+						"enum":        []string{"starting", "planning", "context", "researching", "reading", "editing", "writing", "running", "testing", "verifying", "reviewing", "waiting", "blocked", "finalizing", "completed"},
+						"description": "Current semantic work phase.",
+					},
+					"state": map[string]any{
+						"type":        "string",
+						"enum":        []string{"active", "done", "waiting", "blocked", "error", "canceled"},
+						"description": "State of this phase.",
+					},
+					"title": map[string]any{
+						"type":        "string",
+						"maxLength":   180,
+						"description": "Short user-safe status label shown in the private inspector.",
+					},
+					"detail": map[string]any{
+						"type":        "string",
+						"maxLength":   420,
+						"description": "Optional compact detail. Never include secrets or raw hidden reasoning.",
+					},
+				},
+			},
+		},
+		{
+			Name:        providerToolAgentCommentary,
+			Description: "Publish one concise visible assistant progress message, separate from the final answer. Use at task start, after meaningful milestones, and before verification; do not narrate every tool call.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"message"},
+				"properties": map[string]any{
+					"message": map[string]any{
+						"type":        "string",
+						"maxLength":   700,
+						"description": "Concise progress update in the user's language.",
+					},
+					"kind": map[string]any{
+						"type":        "string",
+						"enum":        []string{"progress", "milestone", "verification", "warning"},
+						"description": "Presentation intent. Defaults to progress.",
+					},
+				},
+			},
+		},
 		{
 			Name:        providerToolInteractionQuestion,
 			Description: "Ask the user one structured clarifying question only when the answer materially changes the outcome. Do not ask by default or as a routine confirmation step. Provide one to four mutually exclusive options; each option must include a concise hover description. Arlecchino renders a separate custom-answer path.",
@@ -538,19 +600,19 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 	return tools
 }
 
-func chatToolCallRequestsFromGenerationResponse(response providers.GenerationResponse) []chatToolCallRequest {
+func chatToolCallRequestsFromGenerationResponse(response providers.GenerationResponse) ([]chatToolCallRequest, error) {
 	if len(response.ToolCalls) == 0 {
-		return nil
+		return nil, nil
 	}
 	requests := make([]chatToolCallRequest, 0, len(response.ToolCalls))
 	for _, call := range response.ToolCalls {
 		toolID := toolIDForProviderToolName(call.Name)
 		if toolID == "" {
-			continue
+			return nil, fmt.Errorf("AI provider returned unsupported tool call %q", strings.TrimSpace(call.Name))
 		}
 		arguments, err := toolArgumentsFromJSON(call.ArgumentsJSON)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("AI provider returned invalid arguments for tool %s: %w", toolID, err)
 		}
 		arguments = normalizeProviderToolArguments(toolID, arguments)
 		requests = append(requests, chatToolCallRequest{
@@ -562,7 +624,7 @@ func chatToolCallRequestsFromGenerationResponse(response providers.GenerationRes
 			ProviderCall: call,
 		})
 	}
-	return requests
+	return requests, nil
 }
 
 func chatToolCallRequestFromToolRequest(req AIToolCallRequest, index int) chatToolCallRequest {
@@ -579,6 +641,10 @@ func chatToolCallRequestFromToolRequest(req AIToolCallRequest, index int) chatTo
 
 func toolIDForProviderToolName(name string) string {
 	switch strings.TrimSpace(name) {
+	case providerToolAgentStatusUpdate:
+		return "agent.status.update"
+	case providerToolAgentCommentary:
+		return "agent.commentary"
 	case providerToolDiagnosticsRead:
 		return "diagnostics.read"
 	case providerToolFileReadRange:
@@ -614,6 +680,10 @@ func toolIDForProviderToolName(name string) string {
 
 func providerToolNameForToolID(toolID string) string {
 	switch strings.TrimSpace(toolID) {
+	case "agent.status.update":
+		return providerToolAgentStatusUpdate
+	case "agent.commentary":
+		return providerToolAgentCommentary
 	case "diagnostics.read":
 		return providerToolDiagnosticsRead
 	case "file.read_range":
@@ -694,6 +764,14 @@ func normalizeProviderToolArguments(toolID string, arguments map[string]string) 
 		normalized[key] = value
 	}
 	switch toolID {
+	case "agent.status.update":
+		applyToolArgumentAlias(normalized, "phase", "stage", "step")
+		applyToolArgumentAlias(normalized, "state", "status")
+		applyToolArgumentAlias(normalized, "title", "summary", "label")
+		applyToolArgumentAlias(normalized, "detail", "details", "message")
+	case "agent.commentary":
+		applyToolArgumentAlias(normalized, "message", "text", "summary")
+		applyToolArgumentAlias(normalized, "kind", "type")
 	case "diagnostics.read":
 		normalizeDiagnosticsReadToolArguments(normalized)
 	case "file.read_range":

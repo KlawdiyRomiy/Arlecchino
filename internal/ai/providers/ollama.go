@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -144,7 +145,7 @@ type ollamaToolCall struct {
 }
 
 type ollamaToolCallFunction struct {
-	Index     int             `json:"index,omitempty"`
+	Index     *int            `json:"index,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
@@ -186,9 +187,12 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerationRequest, si
 		request := ollamaChatRequest{
 			Model:    model,
 			Messages: ollamaMessagesFromGenerationRequest(req),
-			Stream:   false,
+			Stream:   req.Stream && sink != nil,
 			Tools:    tools,
 			Options:  options,
+		}
+		if request.Stream {
+			return p.generateChatStreaming(ctx, request, sink)
 		}
 		return p.generateChat(ctx, request, sink)
 	}
@@ -239,7 +243,140 @@ func (p *OllamaProvider) generateChat(ctx context.Context, request ollamaChatReq
 			text = ""
 		}
 	}
+	if err := validateGenerationToolCalls(toolCalls); err != nil {
+		return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString()}, err
+	}
 	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOllama(response.PromptEvalCount, response.EvalCount)}, nil
+}
+
+func (p *OllamaProvider) generateChatStreaming(ctx context.Context, request ollamaChatRequest, sink TokenSink) (GenerationResponse, error) {
+	resp, err := postJSONRaw(ctx, p.client, p.endpoint+"/api/chat", nil, request)
+	if err != nil {
+		return GenerationResponse{}, err
+	}
+	defer resp.Body.Close()
+	status := resp.StatusCode
+	if status < 200 || status >= 300 {
+		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		return GenerationResponse{RawStatus: status}, fmt.Errorf("provider returned HTTP %d: %s", status, strings.TrimSpace(string(limited)))
+	}
+
+	model := request.Model
+	var text strings.Builder
+	var reasoning strings.Builder
+	toolCalls := []GenerationToolCall{}
+	var usage GenerationTokenUsage
+	completed := false
+	contentReleased := len(request.Tools) == 0
+	result := func() GenerationResponse {
+		calls := toolCalls
+		responseText := text.String()
+		if len(calls) == 0 && len(request.Tools) > 0 {
+			if parsed := ollamaToolCallsFromContent(responseText, request.Tools); len(parsed) > 0 {
+				calls = parsed
+				responseText = ""
+			}
+		}
+		return GenerationResponse{
+			Text:          responseText,
+			ReasoningText: reasoning.String(),
+			Model:         model,
+			RawStatus:     status,
+			FinishedAt:    NowString(),
+			ToolCalls:     calls,
+			Usage:         usage,
+		}
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 4096), maxProviderResponseBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var chunk ollamaChatResponse
+		if decodeErr := json.Unmarshal([]byte(line), &chunk); decodeErr != nil {
+			return result(), decodeErr
+		}
+		if strings.TrimSpace(chunk.Error) != "" {
+			return result(), errors.New(chunk.Error)
+		}
+		if strings.TrimSpace(chunk.Model) != "" {
+			model = chunk.Model
+		}
+		if parsedUsage := generationUsageFromOllama(chunk.PromptEvalCount, chunk.EvalCount); parsedUsage.TotalTokens > 0 {
+			usage = parsedUsage
+		}
+		if chunk.Message.Thinking != "" {
+			reasoning.WriteString(chunk.Message.Thinking)
+		}
+		if chunk.Message.Content != "" {
+			text.WriteString(chunk.Message.Content)
+			if contentReleased {
+				if sinkErr := sink(chunk.Message.Content); sinkErr != nil {
+					return result(), sinkErr
+				}
+			} else if !ollamaContentCouldBeToolCallFallback(text.String()) {
+				contentReleased = true
+				if sinkErr := sink(text.String()); sinkErr != nil {
+					return result(), sinkErr
+				}
+			}
+		}
+		toolCalls = mergeOllamaStreamToolCalls(toolCalls, generationToolCallsFromOllamaMessage(chunk.Message))
+		if chunk.Done {
+			completed = true
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return result(), err
+	}
+	if !completed {
+		return result(), errors.New("ollama chat stream ended before done=true")
+	}
+	response := result()
+	if err := validateGenerationToolCalls(response.ToolCalls); err != nil {
+		response.ToolCalls = nil
+		return response, err
+	}
+	if !contentReleased && response.Text != "" {
+		if err := sink(response.Text); err != nil {
+			return response, err
+		}
+	}
+	return response, nil
+}
+
+func mergeOllamaStreamToolCalls(existing []GenerationToolCall, incoming []GenerationToolCall) []GenerationToolCall {
+	for _, call := range incoming {
+		if call.ProviderIndex == nil {
+			existing = appendUniqueGenerationToolCalls(existing, call)
+			continue
+		}
+		replaced := false
+		for index := range existing {
+			if existing[index].ProviderIndex == nil || *existing[index].ProviderIndex != *call.ProviderIndex {
+				continue
+			}
+			existing[index] = call
+			replaced = true
+			break
+		}
+		if !replaced {
+			existing = append(existing, call)
+		}
+	}
+	sort.SliceStable(existing, func(left int, right int) bool {
+		if existing[left].ProviderIndex == nil {
+			return false
+		}
+		if existing[right].ProviderIndex == nil {
+			return true
+		}
+		return *existing[left].ProviderIndex < *existing[right].ProviderIndex
+	})
+	return existing
 }
 
 func (p *OllamaProvider) generateStreaming(ctx context.Context, request ollamaGenerateRequest, sink TokenSink) (GenerationResponse, error) {
@@ -256,6 +393,7 @@ func (p *OllamaProvider) generateStreaming(ctx context.Context, request ollamaGe
 	var builder strings.Builder
 	var usage GenerationTokenUsage
 	model := request.Model
+	completed := false
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 4096), maxProviderResponseBytes)
 	for scanner.Scan() {
@@ -265,7 +403,7 @@ func (p *OllamaProvider) generateStreaming(ctx context.Context, request ollamaGe
 		}
 		var chunk ollamaGenerateResponse
 		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-			continue
+			return GenerationResponse{Text: builder.String(), Model: model, RawStatus: status, FinishedAt: NowString(), Usage: usage}, err
 		}
 		if strings.TrimSpace(chunk.Model) != "" {
 			model = chunk.Model
@@ -280,11 +418,15 @@ func (p *OllamaProvider) generateStreaming(ctx context.Context, request ollamaGe
 			}
 		}
 		if chunk.Done {
+			completed = true
 			break
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return GenerationResponse{Text: builder.String(), Model: model, RawStatus: status, FinishedAt: NowString(), Usage: usage}, err
+	}
+	if !completed {
+		return GenerationResponse{Text: builder.String(), Model: model, RawStatus: status, FinishedAt: NowString(), Usage: usage}, errors.New("ollama generate stream ended before done=true")
 	}
 	return GenerationResponse{Text: builder.String(), Model: model, RawStatus: status, FinishedAt: NowString(), Usage: usage}, nil
 }
@@ -357,11 +499,12 @@ func ollamaToolCallsFromGenerationToolCalls(calls []GenerationToolCall) []ollama
 		if name == "" {
 			continue
 		}
+		callIndex := index
 		output = append(output, ollamaToolCall{
 			ID:   strings.TrimSpace(call.ID),
 			Type: "function",
 			Function: ollamaToolCallFunction{
-				Index:     index,
+				Index:     &callIndex,
 				Name:      name,
 				Arguments: ollamaToolArgumentsRaw(call.ArgumentsJSON),
 			},
@@ -384,6 +527,7 @@ func generationToolCallsFromOllamaMessage(message ollamaChatMessage) []Generatio
 			ID:            strings.TrimSpace(call.ID),
 			Name:          name,
 			ArgumentsJSON: ollamaToolArgumentsJSON(call.Function.Arguments),
+			ProviderIndex: call.Function.Index,
 		})
 	}
 	return output
@@ -471,6 +615,33 @@ func ollamaTrimJSONFence(content string) string {
 	content = strings.TrimSpace(content)
 	content = strings.TrimSuffix(content, "```")
 	return strings.TrimSpace(content)
+}
+
+func ollamaContentCouldBeToolCallFallback(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return true
+	}
+	switch trimmed[0] {
+	case '{', '[':
+		return true
+	case '`':
+		if len(trimmed) < 3 {
+			return strings.HasPrefix("```", trimmed)
+		}
+		if !strings.HasPrefix(trimmed, "```") {
+			return false
+		}
+		fenceBody := trimmed[3:]
+		newline := strings.IndexByte(fenceBody, '\n')
+		if newline < 0 {
+			return true
+		}
+		language := strings.TrimSpace(fenceBody[:newline])
+		return language == "" || strings.EqualFold(language, "json")
+	default:
+		return false
+	}
 }
 
 func ollamaToolArgumentsRaw(value string) json.RawMessage {

@@ -1,13 +1,13 @@
 package providers
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -214,6 +214,7 @@ type openAIFunction struct {
 }
 
 type openAIToolCall struct {
+	Index    *int                   `json:"index,omitempty"`
 	ID       string                 `json:"id,omitempty"`
 	Type     string                 `json:"type,omitempty"`
 	Function openAIToolCallFunction `json:"function"`
@@ -273,7 +274,7 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		MaxTokens:   maxTokens,
 		Temperature: temperature,
 		Stop:        req.Stop,
-		Stream:      req.Stream && sink != nil && len(req.Tools) == 0,
+		Stream:      req.Stream && sink != nil,
 		Tools:       openAIToolsFromGenerationRequest(req.Tools),
 		ToolChoice:  openAIToolChoice(req.ToolChoice, req.Tools),
 	}
@@ -296,14 +297,19 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		reasoningText = openAIReasoningText(response.Choices[0].Message)
 	}
 	toolCalls := generationToolCallsFromOpenAIMessage(firstOpenAIChoiceMessage(response))
+	if err := validateGenerationToolCalls(toolCalls); err != nil {
+		return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString()}, err
+	}
 	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOpenAI(response.Usage)}, nil
 }
 
 type openAIStreamChunk struct {
 	Choices []struct {
-		Delta   openAIChoiceMessage `json:"delta"`
-		Message openAIChoiceMessage `json:"message"`
+		Delta        openAIChoiceMessage `json:"delta"`
+		Message      openAIChoiceMessage `json:"message"`
+		FinishReason string              `json:"finish_reason,omitempty"`
 	} `json:"choices"`
+	Usage openAIUsage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -450,6 +456,99 @@ func generationToolCallsFromOpenAIMessage(message openAIChoiceMessage) []Generat
 	return output
 }
 
+type openAIStreamToolCall struct {
+	id        string
+	typeName  string
+	name      string
+	arguments string
+}
+
+func accumulateOpenAIStreamToolCalls(accumulators map[int]*openAIStreamToolCall, calls []openAIToolCall, complete bool) error {
+	for ordinal, call := range calls {
+		index := ordinal
+		if !complete {
+			if call.Index == nil || *call.Index < 0 {
+				return errors.New("openai-compatible tool-call delta is missing a valid index")
+			}
+			index = *call.Index
+		} else if call.Index != nil {
+			if *call.Index < 0 {
+				return errors.New("openai-compatible tool call has a negative index")
+			}
+			index = *call.Index
+		}
+		accumulator := accumulators[index]
+		if accumulator == nil {
+			accumulator = &openAIStreamToolCall{}
+			accumulators[index] = accumulator
+		}
+		if complete {
+			if call.ID != "" {
+				accumulator.id = call.ID
+			}
+			if call.Type != "" {
+				accumulator.typeName = call.Type
+			}
+			if call.Function.Name != "" {
+				accumulator.name = call.Function.Name
+			}
+			if call.Function.Arguments != "" {
+				accumulator.arguments = call.Function.Arguments
+			}
+			continue
+		}
+		accumulator.id += call.ID
+		accumulator.typeName += call.Type
+		accumulator.name += call.Function.Name
+		accumulator.arguments += call.Function.Arguments
+	}
+	return nil
+}
+
+func generationToolCallsFromOpenAIStream(accumulators map[int]*openAIStreamToolCall) ([]GenerationToolCall, error) {
+	indices := make([]int, 0, len(accumulators))
+	for index := range accumulators {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	output := make([]GenerationToolCall, 0, len(indices))
+	seenIDs := map[string]struct{}{}
+	for expectedIndex, index := range indices {
+		if index != expectedIndex {
+			return nil, fmt.Errorf("openai-compatible tool-call indices are not contiguous at %d", expectedIndex)
+		}
+		accumulator := accumulators[index]
+		if accumulator == nil || strings.TrimSpace(accumulator.name) == "" {
+			return nil, fmt.Errorf("openai-compatible tool call %d is missing a function name", index)
+		}
+		if kind := strings.TrimSpace(accumulator.typeName); kind != "" && kind != "function" {
+			return nil, fmt.Errorf("openai-compatible tool call %d has unsupported type %q", index, kind)
+		}
+		arguments := strings.TrimSpace(accumulator.arguments)
+		if arguments == "" {
+			arguments = "{}"
+		}
+		if err := validateToolArgumentsJSONObject(accumulator.name, arguments); err != nil {
+			return nil, err
+		}
+		id := strings.TrimSpace(accumulator.id)
+		if id != "" {
+			if _, duplicate := seenIDs[id]; duplicate {
+				return nil, fmt.Errorf("openai-compatible stream repeated tool-call id %q", id)
+			}
+			seenIDs[id] = struct{}{}
+		}
+		providerIndex := index
+		output = append(output, GenerationToolCall{
+			ID:            id,
+			Name:          strings.TrimSpace(accumulator.name),
+			ArgumentsJSON: arguments,
+			ProviderIndex: &providerIndex,
+		})
+	}
+	return output, nil
+}
+
 func generationUsageFromOpenAI(usage openAIUsage) GenerationTokenUsage {
 	input := usage.PromptTokens
 	output := usage.CompletionTokens
@@ -494,50 +593,98 @@ func (p *OpenAICompatibleProvider) generateStreaming(ctx context.Context, reques
 	}
 	var builder strings.Builder
 	var reasoningBuilder strings.Builder
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 4096), maxProviderResponseBytes)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	var usage GenerationTokenUsage
+	streamToolCalls := map[int]*openAIStreamToolCall{}
+	completed := false
+	finishReason := ""
+	var finalizedToolCalls []GenerationToolCall
+	result := func() GenerationResponse {
+		return GenerationResponse{
+			Text:          builder.String(),
+			ReasoningText: reasoningBuilder.String(),
+			Model:         request.Model,
+			RawStatus:     status,
+			FinishedAt:    NowString(),
+			ToolCalls:     finalizedToolCalls,
+			Usage:         usage,
 		}
-		if strings.HasPrefix(line, "data:") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	}
+	err = scanServerSentEvents(resp.Body, func(_ string, data []byte) error {
+		if len(data) == 0 {
+			return nil
 		}
-		if line == "[DONE]" {
-			break
+		if string(data) == "[DONE]" {
+			completed = true
+			return nil
 		}
 		var chunk openAIStreamChunk
-		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-			continue
+		if decodeErr := json.Unmarshal(data, &chunk); decodeErr != nil {
+			return decodeErr
 		}
 		if chunk.Error != nil && strings.TrimSpace(chunk.Error.Message) != "" {
-			return GenerationResponse{Text: builder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, errors.New(chunk.Error.Message)
+			return errors.New(chunk.Error.Message)
+		}
+		if parsedUsage := generationUsageFromOpenAI(chunk.Usage); parsedUsage.TotalTokens > 0 {
+			usage = parsedUsage
 		}
 		if len(chunk.Choices) == 0 {
-			continue
+			return nil
 		}
-		token := chunk.Choices[0].Delta.Content
+		choice := chunk.Choices[0]
+		if reason := strings.TrimSpace(choice.FinishReason); reason != "" {
+			if finishReason != "" && finishReason != reason {
+				return fmt.Errorf("openai-compatible stream changed finish_reason from %q to %q", finishReason, reason)
+			}
+			finishReason = reason
+			completed = true
+		}
+		if err := accumulateOpenAIStreamToolCalls(streamToolCalls, choice.Delta.ToolCalls, false); err != nil {
+			return err
+		}
+		if err := accumulateOpenAIStreamToolCalls(streamToolCalls, choice.Message.ToolCalls, true); err != nil {
+			return err
+		}
+		token := choice.Delta.Content
 		if token == "" {
-			token = chunk.Choices[0].Message.Content
+			token = choice.Message.Content
 		}
-		reasoningToken := openAIReasoningText(chunk.Choices[0].Delta)
+		reasoningToken := openAIReasoningText(choice.Delta)
 		if reasoningToken == "" {
-			reasoningToken = openAIReasoningText(chunk.Choices[0].Message)
+			reasoningToken = openAIReasoningText(choice.Message)
 		}
 		if reasoningToken != "" {
 			reasoningBuilder.WriteString(reasoningToken)
 		}
 		if token == "" {
-			continue
+			return nil
 		}
 		builder.WriteString(token)
-		if err := sink(token); err != nil {
-			return GenerationResponse{Text: builder.String(), ReasoningText: reasoningBuilder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, err
+		return sink(token)
+	})
+	if err != nil {
+		return result(), err
+	}
+	if !completed {
+		return result(), errors.New("openai-compatible stream ended before a terminal marker")
+	}
+	toolCalls, toolErr := generationToolCallsFromOpenAIStream(streamToolCalls)
+	if toolErr != nil {
+		return result(), toolErr
+	}
+	switch finishReason {
+	case "length", "content_filter", "function_call":
+		return result(), fmt.Errorf("openai-compatible stream ended incompletely with finish_reason %q", finishReason)
+	case "tool_calls":
+		if len(toolCalls) == 0 {
+			return result(), errors.New("openai-compatible stream declared tool_calls without a complete call")
 		}
+	case "", "stop":
+		if len(toolCalls) > 0 {
+			return result(), fmt.Errorf("openai-compatible tool stream ended with finish_reason %q", finishReason)
+		}
+	default:
+		return result(), fmt.Errorf("openai-compatible stream ended with unsupported finish_reason %q", finishReason)
 	}
-	if err := scanner.Err(); err != nil {
-		return GenerationResponse{Text: builder.String(), ReasoningText: reasoningBuilder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, err
-	}
-	return GenerationResponse{Text: builder.String(), ReasoningText: reasoningBuilder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, nil
+	finalizedToolCalls = toolCalls
+	return result(), nil
 }

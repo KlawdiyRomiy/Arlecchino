@@ -9,7 +9,6 @@ import React, {
   useState,
 } from "react";
 import {
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -29,28 +28,20 @@ import {
   AICompactChatSession,
   AIDeleteChatSession,
   AIExecuteToolCall,
-  AIGetApprovalPolicy,
   AIGetChatRun,
   AIGetChatRunEnvelope,
   AIGetConsentPolicy,
   AIGetContextContinuationPlan,
   AIGetContextPreview,
-  AIGetEmbeddingStatus,
   AIGetStatus,
   AIListProviderRuntimes,
-  AIListAgentProfiles,
   AIListChatActions,
   AIListChatRunArtifacts,
   AIListChatRuns,
   AIListContextCapsules,
-  AIListContextProviders,
-  AIListEgressRecords,
   AIListMnemonicEntries,
   AIListModelCapabilities,
   AIListPendingApprovals,
-  AIListPromptWorkflows,
-  AIListTools,
-  AIListToolAudit,
   AIProbeModelCapability,
   AIProposeMnemonicEntry,
   AIRefreshLocalProviders,
@@ -137,11 +128,6 @@ import { dispatchApplicationMenuAction } from "../../utils/applicationMenu";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { normalizeProjectPathIdentity } from "../../utils/projectPaths";
 import { AIChatHeader } from "./AIChatHeader";
-import { ActivityStatusPopover } from "./ActivityStatusPopover";
-import {
-  buildActivityStatusItems,
-  summarizeActivityStatus,
-} from "./activityStatus";
 import { AgentConsole } from "./AgentConsole";
 import { ChatGitReview } from "./ChatGitReview";
 import { ChatHistoryRail } from "./ChatHistoryRail";
@@ -159,30 +145,26 @@ import {
   sortProviders,
 } from "./providerPresentation";
 import {
-  defaultAIApprovalPolicy,
   defaultAIConsentPolicy,
-  defaultAIEmbeddingStatus,
   defaultAIStatus,
-  normalizeAIAgentProfiles,
-  normalizeAIApprovalPolicy,
   normalizeAIChatActions,
   normalizeAIChatArtifacts,
   normalizeAIChatRuns,
   normalizeAIConsentPolicy,
-  normalizeAIContextProviders,
   normalizeAIContextSnapshot,
-  normalizeAIEgressRecords,
-  normalizeAIEmbeddingStatus,
   normalizeAIMnemonicEntries,
   normalizeAIModelCapabilities,
   normalizeAIPendingApprovals,
-  normalizeAIPromptWorkflows,
   normalizeAIProviderRuntimes,
   normalizeAIStatus,
-  normalizeAIToolAudit,
-  normalizeAITools,
 } from "./aiRuntimeGuards";
 import { mergeModelOptions } from "./providerModelOptions";
+import { isFreshProjectRecord } from "./projectScopeFreshness";
+import { resetAIChatUIStateForProject } from "./projectScopeState";
+import {
+  runStreamFollowCursor,
+  RunTokenFrameBuffer,
+} from "./runTokenFrameBuffer";
 import { askReadonlyProfileId, minimalGeneralProfileId } from "./types";
 import type {
   AIChatPanelProps,
@@ -197,6 +179,13 @@ const chatHydrationBatchSize = 4;
 const allProjectChatRunsLimit = 100;
 const chatHydrationMaxAttempts = 3;
 const chatHydrationRetryDelayMs = 750;
+const chatTokenBatchIntervalMs = 40;
+
+const isTerminalChatRunStatus = (status?: string | null): boolean =>
+  status === "completed" ||
+  status === "error" ||
+  status === "canceled" ||
+  status === "blocked";
 
 const mergeProviderDescriptorList = (
   current: readonly AIProviderDescriptor[],
@@ -314,6 +303,122 @@ function activeTerminalContextFromStore(
   };
 }
 
+type LiveRunCardProps = Omit<
+  React.ComponentProps<typeof RunCard>,
+  "streamingText"
+>;
+const emptyRunArtifacts: AIChatRunArtifact[] = [];
+
+const LiveRunCard = React.memo(function LiveRunCard(props: LiveRunCardProps) {
+  const streamingText = useAIChatStore(
+    (store) => store.streamingTextByRunId[props.envelope.id] ?? "",
+  );
+  return <RunCard {...props} streamingText={streamingText} />;
+});
+
+export function TranscriptFollowAnchor({
+  enabled,
+  runId,
+  runCount,
+  sessionKey,
+  updatedAt,
+}: {
+  enabled: boolean;
+  runId: string;
+  runCount: number;
+  sessionKey: string;
+  updatedAt: string;
+}) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const enabledRef = useRef(enabled);
+  const followFrameRef = useRef<number | null>(null);
+  const followOutputRef = useRef(true);
+  const previousSessionKeyRef = useRef(sessionKey);
+  enabledRef.current = enabled;
+  const streamingCursor = useAIChatStore((store) =>
+    runStreamFollowCursor(
+      runId ? (store.streamingTextByRunId[runId] ?? "") : "",
+    ),
+  );
+
+  const scheduleFollowOutput = useCallback(() => {
+    if (
+      !enabledRef.current ||
+      !followOutputRef.current ||
+      followFrameRef.current !== null
+    ) {
+      return;
+    }
+    followFrameRef.current = window.requestAnimationFrame(() => {
+      followFrameRef.current = null;
+      if (!enabledRef.current || !followOutputRef.current) return;
+      anchorRef.current?.scrollIntoView({ block: "end" });
+    });
+  }, []);
+
+  useEffect(() => {
+    const transcript = anchorRef.current?.closest<HTMLElement>(
+      ".ai-chat-transcript",
+    );
+    if (!transcript) return undefined;
+    const updateFollowState = () => {
+      const distanceFromBottom =
+        transcript.scrollHeight -
+        transcript.scrollTop -
+        transcript.clientHeight;
+      followOutputRef.current = distanceFromBottom <= 56;
+    };
+    updateFollowState();
+    transcript.addEventListener("scroll", updateFollowState, { passive: true });
+    return () => transcript.removeEventListener("scroll", updateFollowState);
+  }, [sessionKey]);
+
+  useEffect(() => {
+    if (!enabled || !runId || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const transcript = anchorRef.current?.closest<HTMLElement>(
+      ".ai-chat-transcript",
+    );
+    if (!transcript) return undefined;
+    const target = [
+      ...transcript.querySelectorAll<HTMLElement>("[data-ai-chat-run-id]"),
+    ].find((candidate) => candidate.dataset.aiChatRunId === runId);
+    if (!target) return undefined;
+
+    const observer = new ResizeObserver(() => scheduleFollowOutput());
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [enabled, runId, scheduleFollowOutput, sessionKey]);
+
+  useEffect(
+    () => () => {
+      if (followFrameRef.current !== null) {
+        window.cancelAnimationFrame(followFrameRef.current);
+        followFrameRef.current = null;
+      }
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    if (previousSessionKeyRef.current !== sessionKey) {
+      previousSessionKeyRef.current = sessionKey;
+      followOutputRef.current = true;
+    }
+    scheduleFollowOutput();
+  }, [
+    enabled,
+    runCount,
+    scheduleFollowOutput,
+    sessionKey,
+    streamingCursor,
+    updatedAt,
+  ]);
+
+  return <div ref={anchorRef} aria-hidden="true" />;
+}
+
 type DrawerId = "history" | "review";
 type DrawerSnapEdge = Extract<PanelPosition, "left" | "right">;
 
@@ -332,11 +437,9 @@ const initialState: AIChatUIState = {
   displayPrefs: {
     autoScroll: true,
     compactCards: false,
-    showActivity: true,
   },
   providerPopoverOpen: false,
   settingsPopoverOpen: false,
-  activityPopoverOpen: false,
   activeRunId: "",
   hydratedRuns: {},
 };
@@ -522,7 +625,6 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         selectedModel: action.model ?? state.selectedModel,
         selectedReasoningEffort: "",
         providerPopoverOpen: false,
-        activityPopoverOpen: false,
       };
     case "setModel":
       return {
@@ -560,9 +662,6 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         settingsPopoverOpen: providerPopoverOpen
           ? false
           : state.settingsPopoverOpen,
-        activityPopoverOpen: providerPopoverOpen
-          ? false
-          : state.activityPopoverOpen,
       };
     }
     case "toggleSettingsPopover": {
@@ -573,22 +672,6 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         providerPopoverOpen: settingsPopoverOpen
           ? false
           : state.providerPopoverOpen,
-        activityPopoverOpen: settingsPopoverOpen
-          ? false
-          : state.activityPopoverOpen,
-      };
-    }
-    case "toggleActivityPopover": {
-      const activityPopoverOpen = action.open ?? !state.activityPopoverOpen;
-      return {
-        ...state,
-        activityPopoverOpen,
-        providerPopoverOpen: activityPopoverOpen
-          ? false
-          : state.providerPopoverOpen,
-        settingsPopoverOpen: activityPopoverOpen
-          ? false
-          : state.settingsPopoverOpen,
       };
     }
     case "setActiveRun":
@@ -607,6 +690,8 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         selectedWorkflowId: "",
         selectedMentionsBySession: setMentionsForSession(state, []),
       };
+    case "resetProjectComposer":
+      return resetAIChatUIStateForProject(state);
     case "ensureProvider":
       if (state.selectedProviderId) return state;
       return {
@@ -759,17 +844,11 @@ function projectScopedRunId(
   return record?.runId?.trim() || record?.id?.trim() || "";
 }
 
-function projectScopedRecordTime(record: ProjectScopedRecord): number {
-  const timestamp = Date.parse(record.createdAt || record.updatedAt || "");
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
 function isFreshForProjectScope(
   record: ProjectScopedRecord,
   scopeActivatedAt: number,
 ): boolean {
-  const timestamp = projectScopedRecordTime(record);
-  return timestamp > 0 && timestamp >= scopeActivatedAt - 1000;
+  return isFreshProjectRecord(record, scopeActivatedAt);
 }
 
 function isBackgroundLinkedReviewRun(
@@ -1385,30 +1464,17 @@ export function AIChatPanelContent({
     status,
     providers,
     actions,
-    agentProfiles,
-    promptWorkflows,
-    tools,
-    toolAudit,
     runs,
     hydratedRuns,
-    streamingTextByRunId,
-    egressRecords,
     mnemonicEntries,
     commandIntents,
-    approvalPolicy,
     consentPolicy,
-    embeddingStatus,
     activeRunId,
     contextPreview,
-    contextProviders,
     setProjectScopeKey,
     setStatus,
     setProviders,
     setActions,
-    setAgentProfiles,
-    setPromptWorkflows,
-    setTools,
-    setToolAudit,
     upsertToolAudit,
     upsertProvider,
     setRuns,
@@ -1419,18 +1485,51 @@ export function AIChatPanelContent({
     setHydratedRun,
     upsertHydratedRuns,
     appendRunToken,
+    resetRunStream,
     setActiveRunId,
     setContextPreview,
-    setContextProviders,
-    setEgressRecords,
     upsertEgressRecord,
     setMnemonicEntries,
     setPendingApprovals: setStorePendingApprovals,
     consumeCommandIntent,
-    setApprovalPolicy,
     setConsentPolicy,
-    setEmbeddingStatus,
-  } = useAIChatStore();
+  } = useAIChatStore(
+    useShallow((store) => ({
+      projectScopeKey: store.projectScopeKey,
+      status: store.status,
+      providers: store.providers,
+      actions: store.actions,
+      runs: store.runs,
+      hydratedRuns: store.hydratedRuns,
+      mnemonicEntries: store.mnemonicEntries,
+      commandIntents: store.commandIntents,
+      consentPolicy: store.consentPolicy,
+      activeRunId: store.activeRunId,
+      contextPreview: store.contextPreview,
+      setProjectScopeKey: store.setProjectScopeKey,
+      setStatus: store.setStatus,
+      setProviders: store.setProviders,
+      setActions: store.setActions,
+      upsertToolAudit: store.upsertToolAudit,
+      upsertProvider: store.upsertProvider,
+      setRuns: store.setRuns,
+      upsertRunEnvelope: store.upsertRunEnvelope,
+      appendRunTimelineEvent: store.appendRunTimelineEvent,
+      deleteSessionRuns: store.deleteSessionRuns,
+      clearProjectChatState: store.clearProjectChatState,
+      setHydratedRun: store.setHydratedRun,
+      upsertHydratedRuns: store.upsertHydratedRuns,
+      appendRunToken: store.appendRunToken,
+      resetRunStream: store.resetRunStream,
+      setActiveRunId: store.setActiveRunId,
+      setContextPreview: store.setContextPreview,
+      upsertEgressRecord: store.upsertEgressRecord,
+      setMnemonicEntries: store.setMnemonicEntries,
+      setPendingApprovals: store.setPendingApprovals,
+      consumeCommandIntent: store.consumeCommandIntent,
+      setConsentPolicy: store.setConsentPolicy,
+    })),
+  );
 
   const [state, dispatch] = useReducer(
     reducer,
@@ -1486,7 +1585,6 @@ export function AIChatPanelContent({
   } | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const workbenchRef = useRef<HTMLDivElement | null>(null);
-  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const initialSelectionHydratedRef = useRef(false);
   const runNoticeSignaturesRef = useRef<Record<string, string>>({});
   const autoReviewBuildRunIdsRef = useRef<Record<string, true>>({});
@@ -1499,7 +1597,84 @@ export function AIChatPanelContent({
   const chatProjectScopeKeyRef = useRef(currentChatProjectScopeKey);
   const chatProjectScopeActivatedAtRef = useRef(Date.now());
   const currentProjectRunIdsRef = useRef<Set<string>>(new Set());
+  const appendRunTokenRef = useRef(appendRunToken);
+  appendRunTokenRef.current = appendRunToken;
+  const runTokenFrameBufferRef = useRef<RunTokenFrameBuffer | null>(null);
+  if (runTokenFrameBufferRef.current === null) {
+    runTokenFrameBufferRef.current = new RunTokenFrameBuffer(
+      (runId, token) => appendRunTokenRef.current(runId, token),
+      {
+        request: (callback) =>
+          window.setTimeout(
+            () => callback(window.performance.now()),
+            chatTokenBatchIntervalMs,
+          ),
+        cancel: (timerId) => window.clearTimeout(timerId),
+      },
+    );
+  }
+  const registerCurrentProjectRunIds = useCallback(
+    (runIds: Iterable<string>) => {
+      const next = new Set(currentProjectRunIdsRef.current);
+      let changed = false;
+      for (const runId of runIds) {
+        const normalizedRunId = runId.trim();
+        if (!normalizedRunId || next.has(normalizedRunId)) continue;
+        next.add(normalizedRunId);
+        changed = true;
+      }
+      if (changed) currentProjectRunIdsRef.current = next;
+    },
+    [],
+  );
+  const commitHydratedRun = useCallback(
+    (run: AIChatRun) => {
+      if (!run?.id) return;
+      registerCurrentProjectRunIds([run.id]);
+      if (isTerminalChatRunStatus(run.status)) {
+        runTokenFrameBufferRef.current?.flush(run.id);
+      }
+      setHydratedRun(run);
+    },
+    [registerCurrentProjectRunIds, setHydratedRun],
+  );
+  const commitHydratedRuns = useCallback(
+    (nextRuns: AIChatRun[]) => {
+      registerCurrentProjectRunIds(nextRuns.map((run) => run.id));
+      nextRuns.forEach((run) => {
+        if (isTerminalChatRunStatus(run.status)) {
+          runTokenFrameBufferRef.current?.flush(run.id);
+        }
+      });
+      upsertHydratedRuns(nextRuns);
+    },
+    [registerCurrentProjectRunIds, upsertHydratedRuns],
+  );
+  const commitRunEnvelope = useCallback(
+    (envelope: AIChatRunEnvelope) => {
+      if (!envelope?.id) return;
+      registerCurrentProjectRunIds([envelope.id]);
+      if (isTerminalChatRunStatus(envelope.status)) {
+        runTokenFrameBufferRef.current?.flush(envelope.id);
+      }
+      upsertRunEnvelope(envelope);
+    },
+    [registerCurrentProjectRunIds, upsertRunEnvelope],
+  );
+  const commitRunList = useCallback(
+    (nextRuns: AIChatRunEnvelope[]) => {
+      registerCurrentProjectRunIds(nextRuns.map((run) => run.id));
+      nextRuns.forEach((run) => {
+        if (isTerminalChatRunStatus(run.status)) {
+          runTokenFrameBufferRef.current?.flush(run.id);
+        }
+      });
+      setRuns(nextRuns);
+    },
+    [registerCurrentProjectRunIds, setRuns],
+  );
   const continuityRequestSeqRef = useRef(0);
+  const contextPreviewRequestSeqRef = useRef(0);
   const lastFullscreenCommandRef = useRef<{
     command: AIChatFullscreenCommandDetail["command"];
     at: number;
@@ -1530,8 +1705,6 @@ export function AIChatPanelContent({
     reviewEdge,
     historyWidth,
     reviewWidth,
-    historyInset,
-    reviewInset,
     sessionSearchOpen,
     historySearch,
     reviewSearch,
@@ -1663,29 +1836,36 @@ export function AIChatPanelContent({
     [setAIChatDisplayPref],
   );
 
-  const publishRunNotice = useCallback((envelope: AIChatRunEnvelope) => {
-    const notice = envelope.runNotice;
-    if (!notice?.title) {
-      return;
-    }
-    const notificationId = runNoticeNotificationId(envelope, notice);
-    const signature = runNoticeSignature(envelope, notice);
-    if (runNoticeSignaturesRef.current[notificationId] === signature) {
-      return;
-    }
-    runNoticeSignaturesRef.current[notificationId] = signature;
-    useAppNotificationStore.getState().addNotification({
-      id: notificationId,
-      kind: notificationKindForRunNotice(notice),
-      title: notice.title,
-      message: notice.message,
-      details: notice.details,
-      detailsLabel: notice.details ? "Run details" : undefined,
-      source: notice.source || "AI Runtime",
-      tag: notice.tag || "agent",
-      sticky: notice.severity === "error",
-    });
-  }, []);
+  const publishRunNotice = useCallback(
+    (envelope: AIChatRunEnvelope) => {
+      const notice = envelope.runNotice;
+      if (!notice?.title) {
+        return;
+      }
+      const notificationId = runNoticeNotificationId(envelope, notice);
+      const signature = runNoticeSignature(envelope, notice);
+      if (runNoticeSignaturesRef.current[notificationId] === signature) {
+        return;
+      }
+      runNoticeSignaturesRef.current[notificationId] = signature;
+      const visibleActiveRunId = state.activeRunId || activeRunId || "";
+      if (!document.hidden && envelope.id === visibleActiveRunId) {
+        return;
+      }
+      useAppNotificationStore.getState().addNotification({
+        id: notificationId,
+        kind: notificationKindForRunNotice(notice),
+        title: notice.title,
+        message: notice.message,
+        details: notice.details,
+        detailsLabel: notice.details ? "Run details" : undefined,
+        source: notice.source || "AI Runtime",
+        tag: notice.tag || "agent",
+        sticky: notice.severity === "error",
+      });
+    },
+    [activeRunId, state.activeRunId],
+  );
 
   const fullscreen = presentation === "fullscreen";
   const reduceMotion = useReducedMotion();
@@ -1817,31 +1997,6 @@ export function AIChatPanelContent({
     }
     return next;
   }, [currentProjectSessionId, hydratedRuns, scopedRunIds]);
-  const scopedStreamingTextByRunId = useMemo(() => {
-    const next: Record<string, string> = {};
-    for (const [runId, text] of Object.entries(streamingTextByRunId)) {
-      if (scopedRunIds.has(runId) || scopedHydratedRuns[runId]) {
-        next[runId] = text;
-      }
-    }
-    return next;
-  }, [scopedHydratedRuns, scopedRunIds, streamingTextByRunId]);
-  const scopedEgressRecords = useMemo(
-    () =>
-      egressRecords.filter((record) => {
-        if (!chatProjectScopeReady) return false;
-        if (!projectSessionMatches(record, currentProjectSessionId))
-          return false;
-        const runId = projectScopedRunId(record);
-        return !runId || scopedRunIds.has(runId);
-      }),
-    [
-      chatProjectScopeReady,
-      currentProjectSessionId,
-      egressRecords,
-      scopedRunIds,
-    ],
-  );
   const scopedPendingApprovals = useMemo(
     () =>
       pendingApprovals.filter((approval) => {
@@ -1858,15 +2013,6 @@ export function AIChatPanelContent({
       pendingApprovals,
       scopedRunIds,
     ],
-  );
-  const scopedToolAudit = useMemo(
-    () =>
-      toolAudit.filter((record) => {
-        if (!chatProjectScopeReady) return false;
-        const runId = projectScopedRunId(record);
-        return !runId || scopedRunIds.has(runId);
-      }),
-    [chatProjectScopeReady, scopedRunIds, toolAudit],
   );
   const recordMatchesCurrentProjectScope = useCallback(
     (
@@ -1937,9 +2083,6 @@ export function AIChatPanelContent({
         })[0] ?? null
     );
   }, [scopedHydratedRuns, selectedProvider?.id]);
-  const activeArtifacts = activeRunKey
-    ? (artifactsByRunId[activeRunKey] ?? [])
-    : [];
   const allKnownArtifacts = useMemo(
     () =>
       activeSessionEnvelopes.flatMap(
@@ -1964,26 +2107,6 @@ export function AIChatPanelContent({
     status,
   });
   const selectedProviderReady = providerDisabledReason === "";
-  const activityItems = buildActivityStatusItems({
-    selectedProvider,
-    selectedProviderReady,
-    contextPreview,
-    activeEnvelope,
-    artifacts: activeArtifacts,
-    activeRun,
-    activeRunText:
-      activeRun?.response ?? scopedStreamingTextByRunId[activeRunKey] ?? "",
-    approvalPolicy,
-    consentPolicy,
-    embeddingStatus,
-    workflowCount: promptWorkflows.length,
-    artifactBusyId,
-    mnemonicBusy,
-  });
-  const activitySummary = summarizeActivityStatus(
-    activityItems,
-    selectedProviderReady,
-  );
   const agentConsoleVisible =
     isInteractiveFallbackRuntime(activeEnvelope?.runtimeFamily) ||
     isInteractiveFallbackRuntime(
@@ -1992,7 +2115,7 @@ export function AIChatPanelContent({
     isInteractiveFallbackRuntime(activeEnvelope?.agentRuntime?.runtimeFamily) ||
     activeEnvelope?.agentRuntime?.transport === "pty_fallback";
   const disabledReason = activeRunRunning
-    ? "Generation is running"
+    ? ""
     : selectedActionDescriptor?.executionUnavailable
       ? selectedActionDescriptor.description || "Action unavailable"
       : !inputReady
@@ -2234,122 +2357,64 @@ export function AIChatPanelContent({
     setRuntimeHydrated(false);
     setRuntimeError(null);
     try {
-      const contextRequest = buildContextRequest(
-        state.context,
-        activeEditorContextFromStore(useEditorStore.getState()),
-        state.input,
-        selectedMentionsForActiveSession,
-        state.selectedProfileId,
-        activeTerminalContextFromStore(useTerminalStore.getState()),
-        state.selectedAction,
-        activeSessionId,
-        {
-          providerId: selectedProvider?.id || state.selectedProviderId,
-          model: selectedModel,
-          runtimeFamily: selectedRuntimeFamily,
-          reasoningEffort: selectedReasoningEffort,
-          contextWindowHint: selectedContextWindowHint,
-        },
-      );
-      const [
-        nextStatus,
-        envelopes,
-        preview,
-        nextActions,
-        nextContextProviders,
-        nextEgressRecords,
-        nextAgentProfiles,
-        nextPromptWorkflows,
-        nextTools,
-        nextToolAudit,
-        nextModelCapabilities,
-        nextConsentPolicy,
-        nextEmbeddingStatus,
-        nextApprovalPolicy,
-        nextProviderRuntimes,
-        nextPendingApprovals,
-      ] = await Promise.all([
-        AIGetStatus(),
-        AIListChatRuns(allProjectChatRunsLimit),
-        AIGetContextPreview(contextRequest),
-        AIListChatActions(),
-        AIListContextProviders(),
-        AIListEgressRecords(50),
-        AIListAgentProfiles(),
-        AIListPromptWorkflows(),
-        AIListTools(),
-        AIListToolAudit(50),
-        AIListModelCapabilities(),
-        AIGetConsentPolicy(),
-        AIGetEmbeddingStatus(),
-        AIGetApprovalPolicy(),
-        AIListProviderRuntimes(),
-        AIListPendingApprovals(50),
-      ]);
+      const [statusResult, runsResult, actionsResult, consentResult] =
+        await Promise.allSettled([
+          AIGetStatus(),
+          AIListChatRuns(allProjectChatRunsLimit),
+          AIListChatActions(),
+          AIGetConsentPolicy(),
+        ]);
       if (chatProjectScopeKeyRef.current !== requestScopeKey) {
         return;
       }
-      const safeStatus = normalizeAIStatus(nextStatus);
-      const nextProviders = safeStatus.providers;
-      const safeConsentPolicy =
-        normalizeAIConsentPolicy(nextConsentPolicy) ?? defaultAIConsentPolicy();
-      const safeApprovalPolicy =
-        normalizeAIApprovalPolicy(nextApprovalPolicy) ??
-        defaultAIApprovalPolicy();
-      const safeEmbeddingStatus =
-        normalizeAIEmbeddingStatus(nextEmbeddingStatus) ??
-        defaultAIEmbeddingStatus();
-      const safeEnvelopes = normalizeAIChatRuns(envelopes).filter((envelope) =>
-        projectSessionMatches(envelope, currentProjectSessionId),
-      );
+
+      const currentStore = useAIChatStore.getState();
+      const safeStatus =
+        statusResult.status === "fulfilled"
+          ? normalizeAIStatus(statusResult.value)
+          : (currentStore.status ?? defaultAIStatus());
+      const nextProviders =
+        statusResult.status === "fulfilled"
+          ? safeStatus.providers
+          : currentStore.providers;
+      const safeEnvelopes =
+        runsResult.status === "fulfilled"
+          ? normalizeAIChatRuns(runsResult.value).filter((envelope) =>
+              projectSessionMatches(envelope, currentProjectSessionId),
+            )
+          : [];
       const refreshedRunIds = new Set(
         safeEnvelopes.map((envelope) => envelope.id).filter(Boolean),
       );
-      const safeEgressRecords = normalizeAIEgressRecords(
-        nextEgressRecords,
-      ).filter((record) => {
-        if (!projectSessionMatches(record, currentProjectSessionId)) {
-          return false;
-        }
-        const runId = projectScopedRunId(record);
-        return !runId || refreshedRunIds.has(runId);
-      });
-      const safeToolAudit = normalizeAIToolAudit(nextToolAudit).filter(
-        (record) => {
-          const runId = projectScopedRunId(record);
-          return !runId || refreshedRunIds.has(runId);
-        },
-      );
-      const normalizedPendingApprovals = normalizeAIPendingApprovals(
-        nextPendingApprovals,
-      ).filter((approval) => {
-        if (!projectSessionMatches(approval, currentProjectSessionId)) {
-          return false;
-        }
-        const runId = projectScopedRunId(approval);
-        return !runId || refreshedRunIds.has(runId);
-      });
-      clearHydrationFailuresForRunIds(
-        safeEnvelopes.map((envelope) => envelope.id),
-      );
+      const safeConsentPolicy =
+        consentResult.status === "fulfilled"
+          ? (normalizeAIConsentPolicy(consentResult.value) ??
+            defaultAIConsentPolicy())
+          : (currentStore.consentPolicy ?? defaultAIConsentPolicy());
+
       setStatus(safeStatus);
       setProviders(nextProviders);
-      setActions(normalizeAIChatActions(nextActions));
-      setContextProviders(normalizeAIContextProviders(nextContextProviders));
-      setEgressRecords(safeEgressRecords);
-      setAgentProfiles(normalizeAIAgentProfiles(nextAgentProfiles));
-      setPromptWorkflows(normalizeAIPromptWorkflows(nextPromptWorkflows));
-      setTools(normalizeAITools(nextTools));
-      setToolAudit(safeToolAudit);
-      setModelCapabilities(normalizeAIModelCapabilities(nextModelCapabilities));
+      if (actionsResult.status === "fulfilled") {
+        setActions(normalizeAIChatActions(actionsResult.value));
+      }
       setConsentPolicy(safeConsentPolicy);
-      setEmbeddingStatus(safeEmbeddingStatus);
-      setApprovalPolicy(safeApprovalPolicy);
-      setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
-      setPendingApprovals(normalizedPendingApprovals);
-      setStorePendingApprovals(normalizedPendingApprovals);
-      setRuns(safeEnvelopes);
-      setContextPreview(normalizeAIContextSnapshot(preview));
+      if (runsResult.status === "fulfilled") {
+        clearHydrationFailuresForRunIds(
+          safeEnvelopes.map((envelope) => envelope.id),
+        );
+        commitRunList(safeEnvelopes);
+      }
+
+      const criticalFailure = [statusResult, runsResult].find(
+        (result) => result.status === "rejected",
+      );
+      if (criticalFailure?.status === "rejected") {
+        setRuntimeError(
+          criticalFailure.reason instanceof Error
+            ? criticalFailure.reason.message
+            : String(criticalFailure.reason),
+        );
+      }
 
       const defaultProvider = selectDefaultProvider(
         nextProviders,
@@ -2376,49 +2441,80 @@ export function AIChatPanelContent({
           runId: initialEnvelope.id,
         });
       }
+
+      window.setTimeout(() => {
+        void Promise.allSettled([
+          AIListModelCapabilities(),
+          AIListProviderRuntimes(),
+          AIListPendingApprovals(50),
+        ]).then(
+          ([
+            modelCapabilitiesResult,
+            providerRuntimesResult,
+            pendingApprovalsResult,
+          ]) => {
+            if (
+              !hydrationMountedRef.current ||
+              chatProjectScopeKeyRef.current !== requestScopeKey
+            ) {
+              return;
+            }
+            if (modelCapabilitiesResult.status === "fulfilled") {
+              setModelCapabilities(
+                normalizeAIModelCapabilities(modelCapabilitiesResult.value),
+              );
+            }
+            if (providerRuntimesResult.status === "fulfilled") {
+              setProviderRuntimes(
+                normalizeAIProviderRuntimes(providerRuntimesResult.value),
+              );
+            }
+            if (
+              pendingApprovalsResult.status === "fulfilled" &&
+              runsResult.status === "fulfilled"
+            ) {
+              const normalizedPendingApprovals = normalizeAIPendingApprovals(
+                pendingApprovalsResult.value,
+              ).filter((approval) => {
+                if (!projectSessionMatches(approval, currentProjectSessionId)) {
+                  return false;
+                }
+                const runId = projectScopedRunId(approval);
+                return !runId || refreshedRunIds.has(runId);
+              });
+              setPendingApprovals(normalizedPendingApprovals);
+              setStorePendingApprovals(normalizedPendingApprovals);
+            }
+          },
+        );
+      }, 0);
     } catch (error) {
-      if (chatProjectScopeKeyRef.current === requestScopeKey) {
+      if (
+        hydrationMountedRef.current &&
+        chatProjectScopeKeyRef.current === requestScopeKey
+      ) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       }
     } finally {
-      if (chatProjectScopeKeyRef.current === requestScopeKey) {
+      if (
+        hydrationMountedRef.current &&
+        chatProjectScopeKeyRef.current === requestScopeKey
+      ) {
         setRuntimeHydrated(true);
         setLoading(false);
       }
     }
   }, [
-    activeSessionId,
     clearHydrationFailuresForRunIds,
+    commitRunList,
     currentChatProjectScopeKey,
     currentProjectSessionId,
-    setContextPreview,
-    setContextProviders,
-    setEgressRecords,
     setActions,
-    setAgentProfiles,
-    setApprovalPolicy,
     setConsentPolicy,
-    setEmbeddingStatus,
-    setMnemonicEntries,
     setProviders,
-    setPromptWorkflows,
-    setRuns,
     setStorePendingApprovals,
     setStatus,
     setActiveRunId,
-    setTools,
-    setToolAudit,
-    selectedContextWindowHint,
-    selectedModel,
-    selectedProvider?.id,
-    selectedReasoningEffort,
-    selectedRuntimeFamily,
-    state.context,
-    state.input,
-    state.selectedAction,
-    state.selectedProfileId,
-    state.selectedProviderId,
-    selectedMentionsForActiveSession,
   ]);
 
   const refreshRuntimeEvent = useEffectEvent(refreshRuntime);
@@ -2436,6 +2532,8 @@ export function AIChatPanelContent({
     const scopeChanged =
       chatProjectScopeKeyRef.current !== currentChatProjectScopeKey;
     if (scopeChanged) {
+      runTokenFrameBufferRef.current?.discard();
+      currentProjectRunIdsRef.current = new Set();
       chatProjectScopeKeyRef.current = currentChatProjectScopeKey;
       chatProjectScopeActivatedAtRef.current = Date.now();
       initialSelectionHydratedRef.current = false;
@@ -2459,8 +2557,7 @@ export function AIChatPanelContent({
       setContinuityPlan(null);
       setContinuityCapsules([]);
       setContinuityError("");
-      dispatch({ type: "setActiveSession", sessionId: defaultChatSessionId });
-      dispatch({ type: "setActiveRun", runId: "" });
+      dispatch({ type: "resetProjectComposer" });
       dispatchChrome({
         type: "patch",
         value: {
@@ -2525,7 +2622,7 @@ export function AIChatPanelContent({
         });
         if (loadedRuns.length > 0) {
           clearHydrationFailuresForRunIds([...loadedRunIds]);
-          upsertHydratedRuns(loadedRuns);
+          commitHydratedRuns(loadedRuns);
         }
         setHydratingRunIds((current) => {
           const next = new Set(current);
@@ -2540,6 +2637,7 @@ export function AIChatPanelContent({
     return undefined;
   }, [
     clearHydrationFailuresForRunIds,
+    commitHydratedRuns,
     currentChatProjectScopeKey,
     currentProjectSessionId,
     failedHydrationRunIds,
@@ -2547,7 +2645,6 @@ export function AIChatPanelContent({
     markHydrationFailure,
     retryingHydrationRunIds,
     scopedHydratedRuns,
-    upsertHydratedRuns,
   ]);
 
   const refreshRunArtifacts = useCallback(
@@ -2624,22 +2721,6 @@ export function AIChatPanelContent({
     void refreshRunArtifacts(activeRunKey);
   }, [activeRunKey, refreshRunArtifacts]);
 
-  useLayoutEffect(() => {
-    if (!state.displayPrefs.autoScroll) return;
-    const frameId = window.requestAnimationFrame(() => {
-      transcriptEndRef.current?.scrollIntoView({ block: "end" });
-    });
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [
-    activeSessionId,
-    scopedRuns,
-    activeRun?.response,
-    scopedStreamingTextByRunId,
-    state.displayPrefs.autoScroll,
-  ]);
-
   const startLinkedReviewForBuild = useEffectEvent((run: AIChatRun) => {
     if (
       !shouldRequestAutoLinkedReview(
@@ -2660,8 +2741,8 @@ export function AIChatPanelContent({
         ) {
           return;
         }
-        setHydratedRun(result.run);
-        upsertRunEnvelope(envelopeFromRun(result.run));
+        commitHydratedRun(result.run);
+        commitRunEnvelope(envelopeFromRun(result.run));
         if (!isBackgroundLinkedReviewRun(result.run)) {
           setActiveRunId(result.run.id);
           dispatch({
@@ -2685,8 +2766,8 @@ export function AIChatPanelContent({
       return;
     }
     clearHydrationFailuresForRunIds([run.id]);
-    setHydratedRun(run);
-    upsertRunEnvelope(envelopeFromRun(run));
+    commitHydratedRun(run);
+    commitRunEnvelope(envelopeFromRun(run));
     void refreshRunArtifactsEvent(run.id);
     void refreshPendingApprovalsEvent();
     if (
@@ -2710,7 +2791,7 @@ export function AIChatPanelContent({
           envelope?.id &&
           recordMatchesCurrentProjectScope(envelope, { allowFresh: true })
         ) {
-          upsertRunEnvelope(envelope);
+          commitRunEnvelope(envelope);
           publishRunNotice(envelope);
         }
       })
@@ -2741,7 +2822,7 @@ export function AIChatPanelContent({
         return;
       }
       clearHydrationFailuresForRunIds([envelope.id]);
-      upsertRunEnvelope(envelope);
+      commitRunEnvelope(envelope);
       publishRunNotice(envelope);
       void refreshRunArtifactsEvent(envelope.id);
       void refreshPendingApprovalsEvent();
@@ -2762,7 +2843,28 @@ export function AIChatPanelContent({
     (payload: { runId?: string; token?: string }) => {
       if (!payload?.runId || !payload.token) return;
       if (!currentProjectRunIdsRef.current.has(payload.runId.trim())) return;
-      appendRunToken(payload.runId, payload.token);
+      runTokenFrameBufferRef.current?.enqueue(payload.runId, payload.token);
+    },
+  );
+
+  const handleRunStreamReset = useEffectEvent(
+    (payload: ProjectScopedRecord & { revision?: number | null }) => {
+      const runId = payload?.runId?.trim();
+      if (
+        !runId ||
+        !projectSessionMatches(payload, currentProjectSessionId) ||
+        !currentProjectRunIdsRef.current.has(runId)
+      ) {
+        return;
+      }
+      runTokenFrameBufferRef.current?.discard(runId);
+      resetRunStream(
+        runId,
+        typeof payload.revision === "number" &&
+          Number.isFinite(payload.revision)
+          ? payload.revision
+          : undefined,
+      );
     },
   );
 
@@ -2910,6 +3012,11 @@ export function AIChatPanelContent({
     const offToken = EventsOn("ai:chat:token", (payload) =>
       handleRunToken(payload as { runId?: string; token?: string }),
     );
+    const offStreamReset = EventsOn("ai:chat:stream-reset", (payload) =>
+      handleRunStreamReset(
+        payload as ProjectScopedRecord & { revision?: number | null },
+      ),
+    );
     const offEnvelope = EventsOn("ai:chat:run-envelope-updated", (envelope) =>
       handleRunEnvelopeUpdate(envelope as AIChatRunEnvelope),
     );
@@ -2968,11 +3075,13 @@ export function AIChatPanelContent({
       (payload) => handlePatchArtifactAppliedEvent(payload),
     );
     return () => {
+      runTokenFrameBufferRef.current?.discard();
       offStarted?.();
       offCompleted?.();
       offError?.();
       offCanceled?.();
       offToken?.();
+      offStreamReset?.();
       offEnvelope?.();
       offTimeline?.();
       offStatus?.();
@@ -3043,6 +3152,7 @@ export function AIChatPanelContent({
         setRuntimeError(null);
       }
       const requestScopeKey = currentChatProjectScopeKey;
+      const requestSeq = ++contextPreviewRequestSeqRef.current;
       try {
         const preview = await AIGetContextPreview(
           buildContextRequest(
@@ -3063,12 +3173,19 @@ export function AIChatPanelContent({
             },
           ),
         );
-        if (chatProjectScopeKeyRef.current !== requestScopeKey) {
+        if (
+          chatProjectScopeKeyRef.current !== requestScopeKey ||
+          contextPreviewRequestSeqRef.current !== requestSeq
+        ) {
           return;
         }
         setContextPreview(normalizeAIContextSnapshot(preview));
       } catch (error) {
-        if (!silent && chatProjectScopeKeyRef.current === requestScopeKey) {
+        if (
+          !silent &&
+          chatProjectScopeKeyRef.current === requestScopeKey &&
+          contextPreviewRequestSeqRef.current === requestSeq
+        ) {
           setRuntimeError(
             error instanceof Error ? error.message : String(error),
           );
@@ -3219,19 +3336,12 @@ export function AIChatPanelContent({
   );
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      void refreshContextPreview(true);
-    }, 450);
-    return () => window.clearTimeout(timeout);
-  }, [refreshContextPreview]);
-
-  useEffect(() => {
     if (activeRunRunning) return;
     const timeout = window.setTimeout(() => {
       void refreshContextPreview(true);
-    }, 120);
+    }, 220);
     return () => window.clearTimeout(timeout);
-  }, [activeRunRunning, activeSessionEnvelopes, refreshContextPreview]);
+  }, [activeRunRunning, refreshContextPreview]);
 
   const handleMentionQuery = useCallback(
     async (request: AIChatMentionQuery): Promise<AIChatMentionCandidate[]> =>
@@ -3309,19 +3419,9 @@ export function AIChatPanelContent({
         },
       );
       const requestScopeKey = currentChatProjectScopeKey;
+      contextPreviewRequestSeqRef.current += 1;
+      setContextPreview(null);
       try {
-        const preview = normalizeAIContextSnapshot(
-          await AIGetContextPreview(request),
-        );
-        if (chatProjectScopeKeyRef.current !== requestScopeKey) {
-          return false;
-        }
-        if (!preview) {
-          throw new Error(
-            "Context preview is unavailable; request was not sent.",
-          );
-        }
-        setContextPreview(preview);
         const startRequest: AIChatRunRequest & { reasoningEffort?: string } = {
           action,
           sessionId,
@@ -3348,8 +3448,8 @@ export function AIChatPanelContent({
         ) {
           return false;
         }
-        setHydratedRun(run);
-        upsertRunEnvelope(envelopeFromRun(run));
+        commitHydratedRun(run);
+        commitRunEnvelope(envelopeFromRun(run));
         setActiveRunId(run.id);
         dispatch({ type: "setActiveRun", runId: run.id });
         if (override?.resetComposer !== false) {
@@ -3376,14 +3476,14 @@ export function AIChatPanelContent({
       selectedRuntimeFamily,
       setActiveRunId,
       setContextPreview,
-      setHydratedRun,
+      commitHydratedRun,
+      commitRunEnvelope,
       state.context,
       state.input,
       state.selectedAction,
       selectedMentionsForActiveSession,
       state.selectedProfileId,
       state.selectedWorkflowId,
-      upsertRunEnvelope,
     ],
   );
 
@@ -3405,8 +3505,8 @@ export function AIChatPanelContent({
         ) {
           return null;
         }
-        setHydratedRun(run);
-        upsertRunEnvelope(envelopeFromRun(run));
+        commitHydratedRun(run);
+        commitRunEnvelope(envelopeFromRun(run));
         setActiveRunId(run.id);
         dispatch({
           type: "setActiveSession",
@@ -3425,8 +3525,8 @@ export function AIChatPanelContent({
       currentChatProjectScopeKey,
       currentProjectSessionId,
       setActiveRunId,
-      setHydratedRun,
-      upsertRunEnvelope,
+      commitHydratedRun,
+      commitRunEnvelope,
     ],
   );
 
@@ -3443,8 +3543,8 @@ export function AIChatPanelContent({
         ) {
           return;
         }
-        upsertRunEnvelope(envelopeFromRun(run));
-        setHydratedRun(run);
+        commitRunEnvelope(envelopeFromRun(run));
+        commitHydratedRun(run);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       }
@@ -3452,8 +3552,8 @@ export function AIChatPanelContent({
     [
       currentChatProjectScopeKey,
       currentProjectSessionId,
-      setHydratedRun,
-      upsertRunEnvelope,
+      commitHydratedRun,
+      commitRunEnvelope,
     ],
   );
 
@@ -3492,8 +3592,8 @@ export function AIChatPanelContent({
       if (!run?.id || !projectSessionMatches(run, currentProjectSessionId)) {
         return;
       }
-      setHydratedRun(run);
-      upsertRunEnvelope(envelopeFromRun(run));
+      commitHydratedRun(run);
+      commitRunEnvelope(envelopeFromRun(run));
       setActiveRunId(run.id);
       dispatch({
         type: "setActiveSession",
@@ -3505,8 +3605,8 @@ export function AIChatPanelContent({
     [
       currentProjectSessionId,
       setActiveRunId,
-      setHydratedRun,
-      upsertRunEnvelope,
+      commitHydratedRun,
+      commitRunEnvelope,
     ],
   );
 
@@ -3609,6 +3709,9 @@ export function AIChatPanelContent({
       }
       processingCommandIntentIdsRef.current.add(intent.id);
       try {
+        if (intent.projectScopeKey !== currentChatProjectScopeKey) {
+          return;
+        }
         switch (intent.actionId) {
           case "ai.newChat": {
             const sessionId = createChatSessionId();
@@ -3655,11 +3758,7 @@ export function AIChatPanelContent({
             break;
           }
           case "ai.pendingApprovals":
-            dispatch({ type: "toggleActivityPopover", open: true });
             await refreshPendingApprovals();
-            break;
-          case "ai.runtimeStatus":
-            dispatch({ type: "toggleActivityPopover", open: true });
             break;
           case "ai.approvalSettings":
             dispatch({ type: "toggleSettingsPopover", open: true });
@@ -3675,6 +3774,7 @@ export function AIChatPanelContent({
     },
     [
       consumeCommandIntent,
+      currentChatProjectScopeKey,
       handleCancel,
       refreshPendingApprovals,
       setActiveRunId,
@@ -4319,7 +4419,6 @@ export function AIChatPanelContent({
   const closeTransientPopovers = useCallback(() => {
     dispatch({ type: "toggleProviderPopover", open: false });
     dispatch({ type: "toggleSettingsPopover", open: false });
-    dispatch({ type: "toggleActivityPopover", open: false });
     dispatchChrome({
       type: "patch",
       value: { sessionSearchOpen: false },
@@ -4375,7 +4474,6 @@ export function AIChatPanelContent({
   const handlePanelOpenSessionSearch = useCallback(() => {
     dispatch({ type: "toggleProviderPopover", open: false });
     dispatch({ type: "toggleSettingsPopover", open: false });
-    dispatch({ type: "toggleActivityPopover", open: false });
     dispatchChrome({
       type: "patch",
       value: { sessionSearchOpen: true },
@@ -4387,7 +4485,6 @@ export function AIChatPanelContent({
     const nextOpen = !sessionSearchOpen;
     dispatch({ type: "toggleProviderPopover", open: false });
     dispatch({ type: "toggleSettingsPopover", open: false });
-    dispatch({ type: "toggleActivityPopover", open: false });
     dispatchChrome({
       type: "patch",
       value: {
@@ -4432,14 +4529,6 @@ export function AIChatPanelContent({
     });
   }, [beginChatMotionWindow, closeTransientPopovers, reviewExpanded]);
 
-  const handlePanelToggleActivity = useCallback(() => {
-    dispatch({ type: "toggleActivityPopover" });
-    dispatchChrome({
-      type: "patch",
-      value: { sessionSearchOpen: false },
-    });
-  }, []);
-
   const handlePanelOpenSettings = useCallback(() => {
     dispatchApplicationMenuAction("settings.toggle");
     dispatchChrome({
@@ -4447,6 +4536,26 @@ export function AIChatPanelContent({
       value: { sessionSearchOpen: false },
     });
   }, []);
+
+  const handleOpenRunReview = useCallback(() => {
+    beginChatMotionWindow();
+    if (!fullscreen) {
+      dispatchChrome({
+        type: "patch",
+        value: { reviewOpen: true, reviewExpanded: false, historyOpen: false },
+      });
+      return;
+    }
+    dispatchChrome({ type: "openDrawer", drawer: "review" });
+  }, [beginChatMotionWindow, fullscreen]);
+
+  const handleSelectTranscriptRun = useCallback(
+    (runId: string) => {
+      setActiveRunId(runId);
+      dispatch({ type: "setActiveRun", runId });
+    },
+    [setActiveRunId],
+  );
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -4522,14 +4631,6 @@ export function AIChatPanelContent({
       },
       { separator: true },
       {
-        key: "runtime-activity",
-        label: state.activityPopoverOpen
-          ? "Close Runtime Activity"
-          : "Runtime Activity",
-        icon: <CheckCircle2 size={13} />,
-        onSelect: handlePanelToggleActivity,
-      },
-      {
         key: "settings",
         label: "AI Chat Settings",
         icon: <Settings size={13} />,
@@ -4539,12 +4640,10 @@ export function AIChatPanelContent({
     [
       handleNewChat,
       handlePanelOpenSettings,
-      handlePanelToggleActivity,
       handlePanelToggleHistory,
       handlePanelToggleSessionSearch,
       historyOpen,
       sessionSearchOpen,
-      state.activityPopoverOpen,
       transcriptRuns.length,
     ],
   );
@@ -4553,7 +4652,6 @@ export function AIChatPanelContent({
     const popoverOpen =
       state.providerPopoverOpen ||
       state.settingsPopoverOpen ||
-      state.activityPopoverOpen ||
       sessionSearchOpen;
     if (!popoverOpen) return;
 
@@ -4580,7 +4678,6 @@ export function AIChatPanelContent({
   }, [
     closeTransientPopovers,
     sessionSearchOpen,
-    state.activityPopoverOpen,
     state.providerPopoverOpen,
     state.settingsPopoverOpen,
   ]);

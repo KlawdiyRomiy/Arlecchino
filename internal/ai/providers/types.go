@@ -132,9 +132,11 @@ type GenerationTool struct {
 }
 
 type GenerationToolCall struct {
-	ID            string `json:"id,omitempty"`
-	Name          string `json:"name"`
-	ArgumentsJSON string `json:"argumentsJson,omitempty"`
+	ID               string `json:"id,omitempty"`
+	Name             string `json:"name"`
+	ArgumentsJSON    string `json:"argumentsJson,omitempty"`
+	ProviderIndex    *int   `json:"-"`
+	ThoughtSignature string `json:"-"`
 }
 
 type GenerationResponse struct {

@@ -276,7 +276,8 @@ func (s *Service) recordPlanGateIfNeeded(project *ProjectSession, runID string, 
 		return
 	}
 	run, err := s.GetChatRun(project.ID, runID)
-	if err != nil || run.Status != "completed" || strings.TrimSpace(run.Response) == "" {
+	completionAccepted := run.Status == "completed" || ((run.Status == "running" || run.Status == "queued") && !run.CanCancel)
+	if err != nil || !completionAccepted || strings.TrimSpace(run.Response) == "" {
 		return
 	}
 	if s.runHasPendingInteractionQuestion(project, runID) {

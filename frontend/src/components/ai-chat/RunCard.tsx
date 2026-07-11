@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
-  Clock3,
   Copy,
   FileText,
   Info,
@@ -21,7 +20,6 @@ import type {
   AIChatRunEnvelope,
   AIContextItemDisclosure,
   AIQuestionAnswerRequest,
-  AIRunTimelineEvent,
   AIToolProposal,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
@@ -32,11 +30,13 @@ import {
   compactText,
   formatRunTime,
   getActionMeta,
-  runActivityLabel,
-  timelineEventActivityLabel,
 } from "./aiChatPresentation";
+import { AgentRunProgress } from "./AgentRunProgress";
 import { AIChatMarkdownMessage } from "./AIChatMarkdownMessage";
+import { projectAssistantCommentary } from "./assistantCommentary";
+import { useAssistantTypewriterText } from "./assistantTypewriter";
 import { PatchArtifactCard } from "./PatchArtifactCard";
+import { mostCompleteRunText } from "./runTokenFrameBuffer";
 import { ToolProposalCard } from "./ToolProposalCard";
 import {
   ContextActionMenu,
@@ -79,37 +79,83 @@ interface RunCardProps {
   searchQuery?: string;
 }
 
-function normalizeGeneratedSpacing(value: string): string {
-  return value
-    .replace(/(\d+)\.(?=\p{L})/gu, "$1. ")
-    .replace(/([!?,;:])(?=\p{L})/gu, "$1 ");
+type MarkdownFence = { char: string; length: number };
+
+function markdownFenceAtLineStart(line: string): MarkdownFence | null {
+  const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+  return marker ? { char: marker[0], length: marker.length } : null;
 }
 
-function cleanAssistantText(value: string, prompt: string): string {
-  const raw = value.trim();
-  if (!raw) return "";
-  const assistantMarker = /<\|?im_start\|?>\s*assistant/i.exec(raw);
-  const afterAssistant = assistantMarker
-    ? raw.slice(assistantMarker.index + assistantMarker[0].length)
-    : raw;
-  const cleanedLines: string[] = [];
-  for (const line of afterAssistant
-    .replace(/<\/?\|?(?:im|lim)_(?:start|end)\|?>/gi, "\n")
-    .split(/\r?\n/)) {
-    const trimmedLine = line.trimEnd();
-    const semanticLine = trimmedLine.trim();
-    if (/^(user|assistant|system)\s*:?\s*$/i.test(semanticLine)) {
+function replaceRuntimeMarkersOutsideInlineCode(line: string): string {
+  let inlineTicks = 0;
+  let output = "";
+  for (let index = 0; index < line.length;) {
+    if (line[index] === "`") {
+      let end = index + 1;
+      while (line[end] === "`") end += 1;
+      const ticks = end - index;
+      if (inlineTicks === 0) inlineTicks = ticks;
+      else if (ticks === inlineTicks) inlineTicks = 0;
+      output += line.slice(index, end);
+      index = end;
       continue;
     }
-    if (/^(?:user\s+)?intent\s*:/i.test(semanticLine)) {
-      continue;
+    if (inlineTicks === 0) {
+      const marker = /^<\/?\|?(?:im|lim)_(?:start|end)\|?>/i.exec(
+        line.slice(index),
+      )?.[0];
+      if (marker) {
+        output += "\n";
+        index += marker.length;
+        continue;
+      }
     }
-    cleanedLines.push(trimmedLine);
+    output += line[index];
+    index += 1;
   }
-  const cleaned = cleanedLines
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return output;
+}
+
+export function cleanAssistantText(value: string, prompt: string): string {
+  if (!value.trim()) return "";
+  const afterAssistant = value.replace(
+    /^(?:[ \t]*\r?\n)*<\|?l?im_start\|?>\s*assistant[ \t]*(?:\r?\n)?/i,
+    "",
+  );
+  const cleanedLines: string[] = [];
+  let openFence: MarkdownFence | null = null;
+  for (const sourceLine of afterAssistant.split(/\r?\n/)) {
+    const fence = markdownFenceAtLineStart(sourceLine);
+    if (openFence) {
+      cleanedLines.push(sourceLine);
+      if (fence?.char === openFence.char && fence.length >= openFence.length) {
+        openFence = null;
+      }
+      continue;
+    }
+    if (fence) {
+      openFence = fence;
+      cleanedLines.push(sourceLine);
+      continue;
+    }
+
+    const displayLines =
+      replaceRuntimeMarkersOutsideInlineCode(sourceLine).split("\n");
+    for (const line of displayLines) {
+      const semanticLine = line.trim();
+      if (
+        /^(?:user|assistant|system|(?:user\s+)?intent)\s*:?\s*$/i.test(
+          semanticLine,
+        )
+      ) {
+        continue;
+      }
+      cleanedLines.push(line);
+    }
+  }
+  while (cleanedLines[0]?.trim() === "") cleanedLines.shift();
+  while (cleanedLines.at(-1)?.trim() === "") cleanedLines.pop();
+  const cleaned = cleanedLines.join("\n");
   const normalizedPrompt = prompt.replace(/\s+/g, " ").trim();
   const normalizedCleaned = cleaned.replace(/\s+/g, " ").trim();
   if (
@@ -119,111 +165,38 @@ function cleanAssistantText(value: string, prompt: string): string {
   ) {
     return "";
   }
-  return normalizeGeneratedSpacing(
-    cleaned.replace(/^(?:User\s+)?intent:\s*\n?/i, "").trim(),
-  );
+  return cleaned;
 }
 
-function typewriterStepSize(remaining: number): number {
-  if (remaining > 1600) return 160;
-  if (remaining > 640) return 80;
-  if (remaining > 240) return 32;
-  if (remaining > 80) return 10;
-  return 2;
-}
-
-function typewriterDelayMs(displayedText: string): number {
-  const last = displayedText.charAt(displayedText.length - 1);
-  if (last === "\n") return 34;
-  if (/[.!?;:]$/.test(last)) return 46;
-  return 18;
-}
-
-function nextTypewriterLength(
-  displayedText: string,
-  targetText: string,
-): number {
-  const nextLength = Math.min(
-    targetText.length,
-    displayedText.length +
-      typewriterStepSize(targetText.length - displayedText.length),
-  );
-  const partialFence = /(^|\n)( {0,3})(`{1,2}|~{1,2})$/.exec(
-    targetText.slice(0, nextLength),
-  );
-  if (!partialFence) return nextLength;
-  return Math.min(targetText.length, nextLength + 3 - partialFence[3].length);
-}
-
-function initialTypewriterLength(targetText: string): number {
-  return nextTypewriterLength("", targetText);
-}
-
-function useAssistantTypewriterText({
-  enabled,
+const AssistantResponse = React.memo(function AssistantResponse({
   reduceMotion,
   runId,
+  running,
+  searchQuery,
   targetText,
 }: {
-  enabled: boolean;
   reduceMotion: boolean;
   runId: string;
+  running: boolean;
+  searchQuery: string;
   targetText: string;
-}): string {
-  const animate = enabled && !reduceMotion && targetText.length > 0;
-  const [displayedText, setDisplayedText] = useState(() =>
-    animate
-      ? targetText.slice(0, initialTypewriterLength(targetText))
-      : targetText,
+}) {
+  const presentation = useAssistantTypewriterText({
+    reduceMotion,
+    runId,
+    running,
+    targetText,
+  });
+  return (
+    <AIChatMarkdownMessage
+      className="ai-chat-run-card__response"
+      content={presentation.text}
+      searchQuery={searchQuery}
+      streaming={running || presentation.active}
+      typewriterActive={presentation.active}
+    />
   );
-  const displayedTextRef = React.useRef(displayedText);
-  const runIdRef = React.useRef(runId);
-
-  useEffect(() => {
-    displayedTextRef.current = displayedText;
-  }, [displayedText]);
-
-  useEffect(() => {
-    if (runIdRef.current === runId) return;
-    runIdRef.current = runId;
-    const nextText = animate
-      ? targetText.slice(0, initialTypewriterLength(targetText))
-      : targetText;
-    displayedTextRef.current = nextText;
-    setDisplayedText(nextText);
-  }, [animate, runId, targetText]);
-
-  useEffect(() => {
-    if (!animate) {
-      if (displayedTextRef.current !== targetText) {
-        displayedTextRef.current = targetText;
-        setDisplayedText(targetText);
-      }
-      return undefined;
-    }
-
-    const currentText = displayedTextRef.current;
-    if (currentText === targetText) return undefined;
-    if (!targetText.startsWith(currentText)) {
-      displayedTextRef.current = targetText;
-      setDisplayedText(targetText);
-      return undefined;
-    }
-
-    const nextLength = nextTypewriterLength(currentText, targetText);
-    const nextText = targetText.slice(0, nextLength);
-    const timer = window.setTimeout(() => {
-      displayedTextRef.current = nextText;
-      setDisplayedText(nextText);
-    }, typewriterDelayMs(currentText));
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [animate, displayedText, targetText]);
-
-  return displayedText;
-}
+});
 
 function friendlyRunError(value?: string): string {
   const message = value?.trim() ?? "";
@@ -315,22 +288,6 @@ async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value);
 }
 
-function elapsedMs(
-  envelope: AIChatRunEnvelope,
-  run: AIChatRun | null,
-  now = Date.now(),
-): number {
-  const created = Date.parse(run?.createdAt || envelope.createdAt || "");
-  if (!Number.isFinite(created)) return 0;
-  const updated = Date.parse(run?.updatedAt || envelope.updatedAt || "");
-  const end =
-    envelope.status === "running" || envelope.status === "queued"
-      ? now
-      : updated;
-  if (!Number.isFinite(end) || end < created) return 0;
-  return end - created;
-}
-
 function formatModelName(value?: string | null): string {
   const text = `${value ?? ""}`.trim();
   if (!text) return "AI Model";
@@ -389,9 +346,7 @@ function runModelName(envelope: AIChatRunEnvelope): string {
     | undefined;
   const providerEnvelope = envelope.providerEnvelope;
   const egressSummary = envelope.egressSummary as
-    | ({ model?: string } & Record<string, unknown>)
-    | null
-    | undefined;
+    ({ model?: string } & Record<string, unknown>) | null | undefined;
   return (
     envelope.model ||
     providerEnvelope?.model ||
@@ -539,22 +494,6 @@ function parseArtifactPayload<T extends object>(
   return fallback;
 }
 
-function runtimeFamilyLabel(value?: string): string {
-  switch (value) {
-    case "structured_agent_runtime":
-      return "Structured agent";
-    case "jsonl_exec_runtime":
-      return "JSONL exec";
-    case "model_agent_runtime":
-      return "Model runtime";
-    case "interactive_fallback_runtime":
-    case "external_agent_cli":
-      return "Interactive fallback";
-    default:
-      return value || "Runtime";
-  }
-}
-
 function isBackgroundLinkedReviewRun(envelope: AIChatRunEnvelope): boolean {
   return (
     envelope.action === "review" &&
@@ -580,94 +519,6 @@ function isOptionalGitBaselineFailure(envelope: AIChatRunEnvelope): boolean {
       /baseline|dirty_baseline/i.test(`${part ?? ""}`.trim()),
     )
   );
-}
-
-function runtimeProofState(
-  envelope: AIChatRunEnvelope,
-  artifacts: AIChatRunArtifact[],
-): { state: "ok" | "active" | "blocked"; label: string } {
-  const agentRuntime = envelope.agentRuntime;
-  const buildMode = envelope.action === "build";
-  const patchArtifact = artifacts.find(
-    (artifact) =>
-      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
-  );
-  const terminalArtifact = artifacts.find(
-    (artifact) =>
-      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactTerminal ||
-      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactAgentTerminal,
-  );
-  const worktreeEvidenceArtifact = artifacts.find(
-    (artifact) =>
-      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactAgentWorktree,
-  );
-  const typedBuildEvidence =
-    agentRuntime?.proofState === "proved" &&
-    isTypedBuildEvidenceArtifactState(agentRuntime.artifactState);
-  if (isOptionalGitBaselineFailure(envelope)) {
-    return {
-      state: "ok",
-      label: "Worktree proof unavailable",
-    };
-  }
-  if (agentRuntime?.blockedReason || envelope.status === "error") {
-    return {
-      state: "blocked",
-      label: agentRuntime?.blockedReason || envelope.error || "blocked",
-    };
-  }
-  if (patchArtifact) {
-    return {
-      state: "ok",
-      label: `Patch artifact ${patchArtifact.status || "recorded"}`,
-    };
-  }
-  if (agentRuntime?.capturedDiffId) {
-    return { state: "ok", label: "Captured diff artifact" };
-  }
-  if (terminalArtifact && !buildMode) {
-    return {
-      state: "ok",
-      label: `Runtime evidence ${terminalArtifact.status || "recorded"}`,
-    };
-  }
-  if (worktreeEvidenceArtifact && !buildMode) {
-    return {
-      state: "ok",
-      label: `Worktree evidence ${
-        worktreeEvidenceArtifact.status || "recorded"
-      }`,
-    };
-  }
-  if (typedBuildEvidence) {
-    return {
-      state: "ok",
-      label: agentRuntime?.artifactState || "typed build evidence",
-    };
-  }
-  if (envelope.status === "running" || envelope.status === "queued") {
-    return { state: "active", label: "Waiting for proof" };
-  }
-  if (buildMode) {
-    return { state: "blocked", label: "Build proof missing" };
-  }
-  return { state: "ok", label: "No artifact required" };
-}
-
-function isTypedBuildEvidenceArtifactState(value?: string | null): boolean {
-  switch (`${value ?? ""}`.trim()) {
-    case "explicit_no_change":
-    case "diagnostic_evidence":
-    case "test_evidence":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function compactRuntimeValue(value?: string | number | null): string {
-  const text = `${value ?? ""}`.trim();
-  return text || "n/a";
 }
 
 function RunWorkSection({
@@ -696,371 +547,6 @@ function RunWorkSection({
       </div>
       <div className="ai-chat-work-section__body">{children}</div>
     </section>
-  );
-}
-
-function RuntimeTruthCard({
-  envelope,
-  artifacts,
-}: {
-  envelope: AIChatRunEnvelope;
-  artifacts: AIChatRunArtifact[];
-}) {
-  const agentRuntime = envelope.agentRuntime;
-  const providerEnvelope = envelope.providerEnvelope;
-  const runtimeReasoningEffort =
-    (agentRuntime as { reasoningEffort?: string } | null | undefined)
-      ?.reasoningEffort ||
-    (envelope as { reasoningEffort?: string }).reasoningEffort ||
-    (envelope.egressSummary as { reasoningEffort?: string } | null | undefined)
-      ?.reasoningEffort;
-  const runtimeFamily =
-    agentRuntime?.runtimeFamily ||
-    envelope.runtimeFamily ||
-    providerEnvelope?.runtimeFamily ||
-    "";
-  const transport =
-    agentRuntime?.transport || providerEnvelope?.transport || "";
-  const provider =
-    envelope.providerId ||
-    providerEnvelope?.providerId ||
-    agentRuntime?.runtimeId;
-  const model = envelope.model || providerEnvelope?.model;
-  const proof = runtimeProofState(envelope, artifacts);
-  const consent = providerEnvelope?.externalAccount
-    ? envelope.consentSummary?.externalAgentCliAccepted
-      ? "agent consent accepted"
-      : "agent consent pending"
-    : envelope.consentSummary?.localProvidersAccepted
-      ? "local consent accepted"
-      : "local consent pending";
-  const proposalTotal = envelope.toolProposalSummary?.total ?? 0;
-  const toolPolicy =
-    proposalTotal > 0
-      ? `${proposalTotal} proposal${proposalTotal === 1 ? "" : "s"}`
-      : agentRuntime?.toolPolicy ||
-        envelope.approvalSummary?.mode ||
-        "ask_each_time";
-  const proofValue =
-    proof.state === "blocked"
-      ? proof.label
-      : agentRuntime?.proofState || proof.label;
-  const rows = [
-    ["Runtime", runtimeFamilyLabel(runtimeFamily)],
-    ["Transport", compactRuntimeValue(transport)],
-    ["Provider", compactRuntimeValue(provider)],
-    ["Model", compactRuntimeValue(model)],
-    ["Reasoning", compactRuntimeValue(runtimeReasoningEffort || "auto")],
-    ["Status", compactRuntimeValue(agentRuntime?.status || envelope.status)],
-    ["Health", compactRuntimeValue(agentRuntime?.healthStatus)],
-    ["Consent", consent],
-    ["Tools", toolPolicy],
-    ["Sandbox", compactRuntimeValue(agentRuntime?.sandboxPolicy)],
-    ["Adapter", compactRuntimeValue(agentRuntime?.adapterVersion)],
-    ["Protocol", compactRuntimeValue(agentRuntime?.protocolVersion)],
-    ["Fallback", agentRuntime?.fallbackRuntime ? "yes" : "no"],
-    ["Proof", compactRuntimeValue(proofValue)],
-    [
-      "Artifact",
-      compactRuntimeValue(agentRuntime?.artifactState || proof.label),
-    ],
-  ];
-  if (agentRuntime?.failureCode) {
-    rows.push(["Failure", compactRuntimeValue(agentRuntime.failureCode)]);
-  }
-  const primaryRows = [
-    ["Provider", compactRuntimeValue(provider)],
-    ["Model", compactRuntimeValue(model)],
-    ["Reasoning", compactRuntimeValue(runtimeReasoningEffort || "auto")],
-    ["Consent", consent],
-    ["Tools", toolPolicy],
-    ["Proof", compactRuntimeValue(proofValue)],
-    [
-      "Artifact",
-      compactRuntimeValue(agentRuntime?.artifactState || proof.label),
-    ],
-  ];
-  const diagnosticTitle = rows
-    .map(([label, value]) => `${label}: ${value}`)
-    .join("\n");
-  const icon =
-    proof.state === "blocked" ? (
-      <AlertTriangle size={14} />
-    ) : proof.state === "active" ? (
-      <Wrench size={14} />
-    ) : (
-      <ShieldCheck size={14} />
-    );
-  return (
-    <RunWorkSection
-      icon={icon}
-      meta={runtimeFamilyLabel(runtimeFamily)}
-      title="Verification"
-      tone={
-        proof.state === "blocked"
-          ? "warning"
-          : proof.state === "active"
-            ? "active"
-            : "success"
-      }
-    >
-      <div
-        className="ai-chat-runtime-proof"
-        data-state={proof.state}
-        title={diagnosticTitle}
-      >
-        <div className="ai-chat-runtime-proof__pills">
-          {primaryRows.map(([label, value]) => (
-            <span className="ai-chat-runtime-proof__pill" key={label}>
-              <small>{label}</small>
-              <strong>{value}</strong>
-            </span>
-          ))}
-        </div>
-      </div>
-    </RunWorkSection>
-  );
-}
-
-interface ToolLifecyclePayload {
-  toolId: string;
-  action: string;
-  status: string;
-  artifactId: string;
-  outputPreview: string;
-  error: string;
-  targetPaths: string[];
-  riskLevel: string;
-  approvalModeRequired: string;
-  allowedByCurrentPolicy: boolean;
-  hardDenyReason: string;
-  lifecycle: string[];
-}
-
-function parseToolLifecyclePayload(
-  artifact: AIChatRunArtifact,
-): ToolLifecyclePayload {
-  const fallback: ToolLifecyclePayload = {
-    toolId: artifact.title.replace(/^Tool:\s*/i, "") || "tool",
-    action: "",
-    status: artifact.status || "recorded",
-    artifactId: "",
-    outputPreview: artifact.summary || "",
-    error: "",
-    targetPaths: [],
-    riskLevel: "",
-    approvalModeRequired: "",
-    allowedByCurrentPolicy: false,
-    hardDenyReason: "",
-    lifecycle: [],
-  };
-  try {
-    const payload = JSON.parse(artifact.payloadJson || "{}") as Record<
-      string,
-      unknown
-    >;
-    const audit =
-      payload.audit && typeof payload.audit === "object"
-        ? (payload.audit as Record<string, unknown>)
-        : {};
-    const proposal =
-      payload.proposal && typeof payload.proposal === "object"
-        ? (payload.proposal as Record<string, unknown>)
-        : {};
-    const targetPaths = Array.isArray(proposal.targetPaths)
-      ? proposal.targetPaths.filter(
-          (value): value is string => typeof value === "string",
-        )
-      : Array.isArray(audit.targetPaths)
-        ? audit.targetPaths.filter(
-            (value): value is string => typeof value === "string",
-          )
-        : [];
-    const lifecycle = Array.isArray(payload.lifecycle)
-      ? payload.lifecycle.filter(
-          (value): value is string => typeof value === "string",
-        )
-      : [];
-    return {
-      toolId:
-        (typeof payload.toolId === "string" && payload.toolId) ||
-        (typeof audit.toolId === "string" && audit.toolId) ||
-        fallback.toolId,
-      action:
-        (typeof payload.action === "string" && payload.action) ||
-        (typeof audit.action === "string" && audit.action) ||
-        fallback.action,
-      status:
-        (typeof payload.status === "string" && payload.status) ||
-        (typeof audit.status === "string" && audit.status) ||
-        fallback.status,
-      artifactId:
-        (typeof payload.artifactId === "string" && payload.artifactId) ||
-        (typeof audit.artifactId === "string" && audit.artifactId) ||
-        "",
-      outputPreview:
-        (typeof payload.outputPreview === "string" && payload.outputPreview) ||
-        (typeof audit.outputPreview === "string" && audit.outputPreview) ||
-        fallback.outputPreview,
-      error:
-        (typeof payload.error === "string" && payload.error) ||
-        (typeof audit.error === "string" && audit.error) ||
-        "",
-      targetPaths,
-      riskLevel:
-        (typeof proposal.riskLevel === "string" && proposal.riskLevel) || "",
-      approvalModeRequired:
-        (typeof proposal.approvalModeRequired === "string" &&
-          proposal.approvalModeRequired) ||
-        "",
-      allowedByCurrentPolicy:
-        typeof proposal.allowedByCurrentPolicy === "boolean"
-          ? proposal.allowedByCurrentPolicy
-          : false,
-      hardDenyReason:
-        (typeof proposal.hardDenyReason === "string" &&
-          proposal.hardDenyReason) ||
-        "",
-      lifecycle,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function toolLifecycleState(status: string): "ok" | "blocked" | "active" {
-  const normalized = status.toLocaleLowerCase();
-  if (
-    normalized.includes("approval_required") ||
-    normalized.includes("blocked") ||
-    normalized.includes("error") ||
-    normalized.includes("denied")
-  ) {
-    return "blocked";
-  }
-  if (normalized.includes("started") || normalized.includes("running")) {
-    return "active";
-  }
-  return "ok";
-}
-
-function toolLifecycleMeta(payload: ToolLifecyclePayload): string {
-  return [
-    payload.action,
-    payload.status,
-    payload.lifecycle.length > 0 ? payload.lifecycle.join(" -> ") : "",
-    payload.artifactId,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function toolLifecycleApprovalLabel(payload: ToolLifecyclePayload): string {
-  if (payload.hardDenyReason) {
-    return `Hard deny: ${payload.hardDenyReason}`;
-  }
-  if (payload.allowedByCurrentPolicy) {
-    return "Policy allowed";
-  }
-  return payload.approvalModeRequired
-    ? `Requires ${payload.approvalModeRequired}`
-    : "";
-}
-
-function ToolLifecycleArtifacts({
-  artifacts,
-}: {
-  artifacts: AIChatRunArtifact[];
-}) {
-  if (artifacts.length === 0) return null;
-  return (
-    <RunWorkSection
-      icon={<Wrench size={14} />}
-      meta={`${artifacts.length} event${artifacts.length === 1 ? "" : "s"}`}
-      title="Tool activity"
-    >
-      <div className="ai-chat-tool-lifecycle" aria-label="Tool execution log">
-        {artifacts.map((artifact) => {
-          const payload = parseToolLifecyclePayload(artifact);
-          const state = toolLifecycleState(payload.status);
-          const Icon = state === "blocked" ? AlertTriangle : Wrench;
-          const detail =
-            payload.error ||
-            payload.targetPaths[0] ||
-            payload.outputPreview ||
-            artifact.summary;
-          const approvalLabel = toolLifecycleApprovalLabel(payload);
-          return (
-            <div
-              className="ai-chat-tool-lifecycle__item"
-              data-state={state}
-              data-risk={payload.riskLevel || "unknown"}
-              key={artifact.id}
-            >
-              <div className="ai-chat-tool-lifecycle__head">
-                <span className="ai-chat-tool-lifecycle__title">
-                  <Icon size={14} />
-                  {payload.toolId}
-                </span>
-                <span className="ai-chat-tool-lifecycle__meta">
-                  {toolLifecycleMeta(payload)}
-                </span>
-              </div>
-              {payload.riskLevel || approvalLabel ? (
-                <div className="ai-chat-tool-lifecycle__badges">
-                  {payload.riskLevel ? (
-                    <span className="ai-chat-tool-lifecycle__badge">
-                      Risk: {payload.riskLevel}
-                    </span>
-                  ) : null}
-                  {approvalLabel ? (
-                    <span className="ai-chat-tool-lifecycle__badge">
-                      {approvalLabel}
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-              {detail ? (
-                <p className="ai-chat-tool-lifecycle__detail">{detail}</p>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </RunWorkSection>
-  );
-}
-
-function RunTimeline({ events }: { events: AIRunTimelineEvent[] }) {
-  const visible = events.slice(-6);
-  if (visible.length === 0) return null;
-  return (
-    <div className="ai-chat-run-timeline" aria-label="Run timeline">
-      {visible.map((event) => (
-        <div
-          className="ai-chat-run-timeline__item"
-          data-status={event.status || "recorded"}
-          key={event.id}
-          title={[
-            event.source,
-            event.type,
-            event.status,
-            event.createdAt,
-            event.summary,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        >
-          <Clock3 size={12} />
-          <span>
-            {timelineEventActivityLabel(event) ||
-              event.type?.replace(/_/g, " ") ||
-              "event"}
-          </span>
-          {event.status ? <small>{event.status}</small> : null}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -1392,17 +878,6 @@ export function RunCard({
   >(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const running = envelope.status === "running" || envelope.status === "queued";
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return undefined;
-    setNow(Date.now());
-    const id = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(id);
-    };
-  }, [running]);
   const action = envelope.action as AIChatAction;
   const meta = getActionMeta(action);
   const backgroundLinkedReview = isBackgroundLinkedReviewRun(envelope);
@@ -1415,9 +890,15 @@ export function RunCard({
   const assistantTitle = backgroundLinkedReview
     ? "Background review"
     : assistantModelTitle(envelope);
-  const responseSource =
-    running && streamingText ? streamingText : run?.response || streamingText;
-  const response = cleanAssistantText(responseSource || "", prompt);
+  const responseSource = mostCompleteRunText(
+    run?.response || "",
+    streamingText,
+    running,
+  );
+  const response = React.useMemo(
+    () => cleanAssistantText(responseSource || "", prompt),
+    [prompt, responseSource],
+  );
   const terminalEnvelopeOnly =
     !run &&
     !running &&
@@ -1431,25 +912,11 @@ export function RunCard({
     : run && !running && !response
       ? "No assistant text recorded."
       : "";
-  const displayedResponse = useAssistantTypewriterText({
-    enabled: running && Boolean(response),
-    reduceMotion: Boolean(reduceMotion),
-    runId: envelope.id,
-    targetText: response,
-  });
-  const typewriterActive =
-    running && !reduceMotion && displayedResponse.length < response.length;
   const contextItems = contextItemsForRun(envelope, run);
-  const runElapsedMs = elapsedMs(envelope, run, now);
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
   const patchArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
-  );
-  const toolLifecycleArtifacts = artifacts.filter(
-    (artifact) =>
-      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactToolProposal ||
-      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactTerminal,
   );
   const memoryArtifacts = artifacts.filter(
     (artifact) =>
@@ -1470,25 +937,28 @@ export function RunCard({
     artifactBusyId && artifactBusyId.startsWith(`question:${envelope.id}:`),
   );
   const timelineEvents = envelope.timeline ?? [];
+  const commentary = React.useMemo(
+    () => projectAssistantCommentary(timelineEvents, running ? "" : response),
+    [response, running, timelineEvents],
+  );
   const runtimeNotice = envelope.runNotice;
-  const activityLabel = runActivityLabel({
-    status: envelope.status,
-    activeText: response,
-    contextItems,
-    elapsedMs: runElapsedMs,
-    timelineEvents,
-    artifacts,
-    toolProposalCount: proposals.length,
-    artifactBusyId,
-  });
   const toolReviewDisabledReason = reviewDisabledReason(envelope, run);
   const mentionItems = contextItems.filter((item) => item.source === "mention");
-  const proof = runtimeProofState(envelope, artifacts);
   const optionalGitBaselineError = isOptionalGitBaselineFailure(envelope);
+  const hasAssistantBody = Boolean(
+    response ||
+    responsePlaceholder ||
+    questionArtifacts.length > 0 ||
+    planGateArtifact ||
+    proposals.length > 0 ||
+    patchArtifacts.length > 0 ||
+    memoryArtifacts.length > 0 ||
+    (envelope.error && !optionalGitBaselineError),
+  );
   const hasRunDetails =
     Boolean(envelope.agentRuntime) ||
-    toolLifecycleArtifacts.length > 0 ||
     timelineEvents.length > 0 ||
+    running ||
     Boolean(runtimeNotice);
   const runDetailsActionClass = [
     "ai-chat-message-action",
@@ -1501,9 +971,9 @@ export function RunCard({
   ]
     .filter(Boolean)
     .join(" ");
-  const runDetailsTitle = runtimeNotice
-    ? `${runtimeNotice.title} details`
-    : "Run details";
+  const runDetailsTitle = detailsOpen
+    ? "Hide Agent Runtime"
+    : "Show Agent Runtime";
   const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -1606,7 +1076,7 @@ export function RunCard({
     { separator: true },
     {
       key: "toggle-details",
-      label: detailsOpen ? "Hide Run Details" : "Show Run Details",
+      label: detailsOpen ? "Hide Agent Runtime" : "Show Agent Runtime",
       icon: <Info size={13} />,
       hidden: !hasRunDetails,
       onSelect: toggleDetails,
@@ -1679,7 +1149,7 @@ export function RunCard({
     { separator: true },
     {
       key: "toggle-details",
-      label: detailsOpen ? "Hide Run Details" : "Show Run Details",
+      label: detailsOpen ? "Hide Agent Runtime" : "Show Agent Runtime",
       icon: <Info size={13} />,
       hidden: !hasRunDetails,
       onSelect: toggleDetails,
@@ -1827,168 +1297,143 @@ export function RunCard({
                 </time>
               ) : null}
             </div>
-            <ContextActionMenu
-              ignoredTargetSelector=".ai-chat-code-block, .ai-chat-markdown__inline-code, button, input, textarea, a"
-              items={assistantMessageContextItems}
-              nativeScope="ai-chat-message"
-              nativeSurfaceId={envelope.id}
-              nativeTargetId={`${envelope.id}:response`}
-            >
-              <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
-                {response ? (
-                  <AIChatMarkdownMessage
-                    className="ai-chat-run-card__response"
-                    content={displayedResponse}
-                    searchQuery={searchQuery}
-                    streaming={running}
-                    typewriterActive={typewriterActive}
-                  />
-                ) : running ? (
-                  <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-                    {activityLabel}&hellip;
-                  </div>
-                ) : responsePlaceholder ? (
-                  <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-                    {responsePlaceholder}
-                  </div>
-                ) : null}
-
-                {questionArtifacts.length > 0 ? (
-                  <div className="ai-chat-question-stack">
-                    {questionArtifacts.map((artifact) => (
-                      <InteractionQuestionCard
-                        artifact={artifact}
-                        busy={questionBusy}
-                        key={artifact.id}
-                        runId={envelope.id}
-                        onSubmit={onSubmitQuestionAnswer}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-
-                {planGateArtifact ? (
-                  <PlanGateCard
-                    artifact={planGateArtifact}
-                    busyId={artifactBusyId}
-                    planRunId={envelope.id}
-                    onAcceptPlan={onAcceptPlan}
-                    onRequestPlanRevision={onRequestPlanRevision}
-                  />
-                ) : null}
-
-                <AnimatePresence initial={false}>
-                  {detailsOpen && hasRunDetails ? (
-                    <m.div
-                      className="ai-chat-run-details"
-                      layout
-                      initial={
-                        reduceMotion
-                          ? { opacity: 0 }
-                          : { opacity: 0, height: 0 }
-                      }
-                      animate={
-                        reduceMotion
-                          ? { opacity: 1 }
-                          : { opacity: 1, height: "auto" }
-                      }
-                      exit={
-                        reduceMotion
-                          ? { opacity: 0 }
-                          : { opacity: 0, height: 0 }
-                      }
-                      transition={{
-                        duration: reduceMotion ? 0.1 : 0.18,
-                        ease: [0.22, 1, 0.36, 1],
-                      }}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {runtimeNotice?.details ? (
-                        <div className="ai-chat-run-details__notice">
-                          <strong>
-                            {runtimeNotice.message || runtimeNotice.title}
-                          </strong>
-                          <span>{runtimeNotice.details}</span>
-                        </div>
-                      ) : null}
-                      <ToolLifecycleArtifacts
-                        artifacts={toolLifecycleArtifacts}
-                      />
-                      <RuntimeTruthCard
-                        envelope={envelope}
-                        artifacts={artifacts}
-                      />
-                      <RunTimeline events={timelineEvents} />
-                    </m.div>
-                  ) : null}
-                </AnimatePresence>
-
-                {proposals.length > 0 ? (
-                  <RunWorkSection
-                    icon={<Wrench size={14} />}
-                    meta={`${proposals.length} proposal${proposals.length === 1 ? "" : "s"}`}
-                    title="Approval"
-                    tone="warning"
+            {commentary.length > 0 ? (
+              <div
+                className="ai-chat-commentary-stack"
+                aria-label="Agent progress updates"
+                aria-live={active ? "polite" : undefined}
+              >
+                {commentary.map((item) => (
+                  <m.div
+                    className="ai-chat-commentary-message"
+                    data-kind={item.kind}
+                    key={item.id}
+                    initial={
+                      reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }
+                    }
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: reduceMotion ? 0.08 : 0.18 }}
                   >
-                    <div className="ai-chat-run-card__tools">
-                      {proposals.map((proposal) => (
-                        <ToolProposalCard
-                          key={`${proposal.kind}-${proposal.id || proposal.name}`}
-                          approveOnceBusy={
-                            artifactBusyId ===
-                            `approve:once:${proposal.id || proposal.name || proposal.kind}`
-                          }
-                          approveRunBusy={
-                            artifactBusyId ===
-                            `approve:run:${proposal.id || proposal.name || proposal.kind}`
-                          }
-                          busy={
-                            artifactBusyId === (proposal.id || proposal.name)
-                          }
-                          canApprove={canApproveToolProposal(proposal)}
-                          canDeny={canDenyToolProposal(proposal)}
-                          canPreview={canPreviewToolProposal(proposal)}
-                          denyBusy={
-                            artifactBusyId ===
-                            `deny:${proposal.id || proposal.name || proposal.kind}`
-                          }
-                          reviewDisabledReason={toolReviewDisabledReason}
-                          onDeny={(nextProposal) =>
-                            onDenyToolProposal?.(
-                              nextProposal,
-                              envelope.id,
-                              envelope.revision,
-                            )
-                          }
-                          onApprove={(nextProposal, scope) =>
-                            onApproveToolProposal?.(
-                              nextProposal,
-                              envelope.id,
-                              scope,
-                              envelope.revision,
-                            )
-                          }
-                          onPreview={(nextProposal) =>
-                            onPreviewToolProposal?.(
-                              nextProposal,
-                              envelope.id,
-                              envelope.revision,
-                            )
-                          }
-                          proposal={proposal}
+                    <span
+                      className="ai-chat-commentary-message__marker"
+                      aria-hidden="true"
+                    />
+                    <AIChatMarkdownMessage
+                      className="ai-chat-commentary-message__content"
+                      content={item.content}
+                      searchQuery={searchQuery}
+                    />
+                  </m.div>
+                ))}
+              </div>
+            ) : null}
+            {hasAssistantBody ? (
+              <ContextActionMenu
+                ignoredTargetSelector=".ai-chat-code-block, .ai-chat-markdown__inline-code, button, input, textarea, a"
+                items={assistantMessageContextItems}
+                nativeScope="ai-chat-message"
+                nativeSurfaceId={envelope.id}
+                nativeTargetId={`${envelope.id}:response`}
+              >
+                <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
+                  {response ? (
+                    <AssistantResponse
+                      reduceMotion={Boolean(reduceMotion)}
+                      runId={envelope.id}
+                      running={running}
+                      searchQuery={searchQuery}
+                      targetText={response}
+                    />
+                  ) : responsePlaceholder ? (
+                    <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
+                      {responsePlaceholder}
+                    </div>
+                  ) : null}
+
+                  {questionArtifacts.length > 0 ? (
+                    <div className="ai-chat-question-stack">
+                      {questionArtifacts.map((artifact) => (
+                        <InteractionQuestionCard
+                          artifact={artifact}
+                          busy={questionBusy}
+                          key={artifact.id}
+                          runId={envelope.id}
+                          onSubmit={onSubmitQuestionAnswer}
                         />
                       ))}
                     </div>
-                  </RunWorkSection>
-                ) : null}
+                  ) : null}
 
-                {patchArtifacts.length > 0 ? (
-                  <RunWorkSection
-                    icon={<FileText size={14} />}
-                    meta={`${patchArtifacts.length} artifact${patchArtifacts.length === 1 ? "" : "s"}`}
-                    title="Patch"
-                    tone="warning"
-                  >
+                  {planGateArtifact ? (
+                    <PlanGateCard
+                      artifact={planGateArtifact}
+                      busyId={artifactBusyId}
+                      planRunId={envelope.id}
+                      onAcceptPlan={onAcceptPlan}
+                      onRequestPlanRevision={onRequestPlanRevision}
+                    />
+                  ) : null}
+
+                  {proposals.length > 0 ? (
+                    <RunWorkSection
+                      icon={<Wrench size={14} />}
+                      meta={`${proposals.length} proposal${proposals.length === 1 ? "" : "s"}`}
+                      title="Approval"
+                      tone="warning"
+                    >
+                      <div className="ai-chat-run-card__tools">
+                        {proposals.map((proposal) => (
+                          <ToolProposalCard
+                            key={`${proposal.kind}-${proposal.id || proposal.name}`}
+                            approveOnceBusy={
+                              artifactBusyId ===
+                              `approve:once:${proposal.id || proposal.name || proposal.kind}`
+                            }
+                            approveRunBusy={
+                              artifactBusyId ===
+                              `approve:run:${proposal.id || proposal.name || proposal.kind}`
+                            }
+                            busy={
+                              artifactBusyId === (proposal.id || proposal.name)
+                            }
+                            canApprove={canApproveToolProposal(proposal)}
+                            canDeny={canDenyToolProposal(proposal)}
+                            canPreview={canPreviewToolProposal(proposal)}
+                            denyBusy={
+                              artifactBusyId ===
+                              `deny:${proposal.id || proposal.name || proposal.kind}`
+                            }
+                            reviewDisabledReason={toolReviewDisabledReason}
+                            onDeny={(nextProposal) =>
+                              onDenyToolProposal?.(
+                                nextProposal,
+                                envelope.id,
+                                envelope.revision,
+                              )
+                            }
+                            onApprove={(nextProposal, scope) =>
+                              onApproveToolProposal?.(
+                                nextProposal,
+                                envelope.id,
+                                scope,
+                                envelope.revision,
+                              )
+                            }
+                            onPreview={(nextProposal) =>
+                              onPreviewToolProposal?.(
+                                nextProposal,
+                                envelope.id,
+                                envelope.revision,
+                              )
+                            }
+                            proposal={proposal}
+                          />
+                        ))}
+                      </div>
+                    </RunWorkSection>
+                  ) : null}
+
+                  {patchArtifacts.length > 0 ? (
                     <div className="ai-chat-run-card__artifacts">
                       {patchArtifacts.map((artifact) => (
                         <PatchArtifactCard
@@ -2010,29 +1455,27 @@ export function RunCard({
                         />
                       ))}
                     </div>
-                  </RunWorkSection>
-                ) : null}
+                  ) : null}
 
-                {memoryArtifacts.length > 0 ? (
-                  <MemoryCitations
-                    artifacts={memoryArtifacts}
-                    artifactBusyId={artifactBusyId}
-                    onApproveMnemonicArtifact={onApproveMnemonicArtifact}
-                  />
-                ) : null}
+                  {memoryArtifacts.length > 0 ? (
+                    <MemoryCitations
+                      artifacts={memoryArtifacts}
+                      artifactBusyId={artifactBusyId}
+                      onApproveMnemonicArtifact={onApproveMnemonicArtifact}
+                    />
+                  ) : null}
 
-                {envelope.error &&
-                !runtimeNotice &&
-                !optionalGitBaselineError ? (
-                  <div
-                    className="ai-chat-run-card__error"
-                    title={envelope.error}
-                  >
-                    {friendlyRunError(envelope.error)}
-                  </div>
-                ) : null}
-              </div>
-            </ContextActionMenu>
+                  {envelope.error && !optionalGitBaselineError ? (
+                    <div
+                      className="ai-chat-run-card__error"
+                      title={envelope.error}
+                    >
+                      {friendlyRunError(envelope.error)}
+                    </div>
+                  ) : null}
+                </div>
+              </ContextActionMenu>
+            ) : null}
             {response || hasRunDetails ? (
               <div className="ai-chat-message-actions ai-chat-message-actions--assistant">
                 {response ? (
@@ -2063,6 +1506,41 @@ export function RunCard({
                 ) : null}
               </div>
             ) : null}
+            <AnimatePresence initial={false}>
+              {detailsOpen && hasRunDetails ? (
+                <m.div
+                  className="ai-chat-agent-inspector"
+                  initial={
+                    reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }
+                  }
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                  transition={{
+                    duration: reduceMotion ? 0.1 : 0.18,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <AgentRunProgress announce={active} envelope={envelope} />
+                  {runtimeNotice ? (
+                    <div
+                      className="ai-chat-agent-inspector__notice"
+                      data-severity={runtimeNotice.severity}
+                    >
+                      <AlertTriangle aria-hidden="true" size={14} />
+                      <span>
+                        <strong>
+                          {runtimeNotice.message || runtimeNotice.title}
+                        </strong>
+                        {runtimeNotice.details ? (
+                          <small>{runtimeNotice.details}</small>
+                        ) : null}
+                      </span>
+                    </div>
+                  ) : null}
+                </m.div>
+              ) : null}
+            </AnimatePresence>
           </div>
         </div>
       </m.article>

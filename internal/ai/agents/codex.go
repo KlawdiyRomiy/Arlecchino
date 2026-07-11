@@ -31,7 +31,7 @@ const (
 	codexModelCatalogTimeout = 10 * time.Second
 	codexDescriptorCacheTTL  = 2 * time.Minute
 	codexAdapterVersion      = "arlecchino-codex-runtime-v1"
-	codexCompatibilityRange  = "codex-cli 0.130.x"
+	codexCompatibilityRange  = "codex-cli 0.144.x app-server v2"
 )
 
 var secretLikeTerminalPattern = regexp.MustCompile(`(?i)(bearer\s+|api[_-]?key\s*[:=]\s*["']?|token\s*[:=]\s*["']?|secret\s*[:=]\s*["']?|password\s*[:=]\s*["']?)[A-Za-z0-9._\-+/=]{8,}["']?`)
@@ -348,6 +348,8 @@ type codexJSONLObserver struct {
 	firstEventSeen bool
 	finalMessage   strings.Builder
 	errorText      string
+	pendingMessage string
+	pendingPayload map[string]any
 }
 
 func newCodexJSONLObserver(runID string, emit func(Event)) *codexJSONLObserver {
@@ -402,14 +404,20 @@ func (o *codexJSONLObserver) Observe(line []byte) {
 		o.appendMessageDelta(deltaText)
 		o.emit(Event{RunID: o.runID, Type: EventMessage, Status: "message.delta", Text: deltaText, Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 	case finalText != "":
-		o.setFinalMessage(finalText)
-		o.emit(Event{RunID: o.runID, Type: EventMessage, Status: "message.final", Text: finalText, Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+		o.stageMessageCandidate(finalText, payload)
+		if strings.Contains(eventType, "turn.completed") {
+			o.flushPendingFinalMessage()
+			o.emit(Event{RunID: o.runID, Type: EventStatus, Status: eventType, Text: "Codex JSONL turn completed.", Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+		}
 	case strings.Contains(eventType, "message") || strings.Contains(eventType, "item.completed") || strings.Contains(eventType, "turn.completed"):
 		if failed, reason := codexJSONLTurnFailure(payload); failed {
 			payload["failureCode"] = FailureProviderError
 			o.markError(reason)
 			o.emit(Event{RunID: o.runID, Type: EventError, Status: "turn.failed", Text: reason, Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 		} else {
+			if strings.Contains(eventType, "turn.completed") {
+				o.flushPendingFinalMessage()
+			}
 			o.emit(Event{RunID: o.runID, Type: EventStatus, Status: eventType, Text: "Codex JSONL event received.", Payload: payload, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 		}
 	case strings.Contains(eventType, "delta"):
@@ -423,13 +431,51 @@ func (o *codexJSONLObserver) Observe(line []byte) {
 	}
 }
 
+func (o *codexJSONLObserver) stageMessageCandidate(text string, payload map[string]any) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if o.pendingMessage != "" {
+		o.emit(Event{
+			RunID:     o.runID,
+			Type:      EventMessage,
+			Status:    "message.commentary",
+			Text:      o.pendingMessage,
+			Payload:   o.pendingPayload,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	o.pendingMessage = text
+	o.pendingPayload = payload
+}
+
+func (o *codexJSONLObserver) flushPendingFinalMessage() {
+	if strings.TrimSpace(o.pendingMessage) == "" {
+		return
+	}
+	text := o.pendingMessage
+	payload := o.pendingPayload
+	o.pendingMessage = ""
+	o.pendingPayload = nil
+	o.setFinalMessage(text)
+	o.emit(Event{
+		RunID:     o.runID,
+		Type:      EventMessage,
+		Status:    "message.final",
+		Text:      text,
+		Payload:   payload,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 func codexJSONLDeltaMessageText(eventType string, payload map[string]any) string {
 	lower := strings.ToLower(strings.TrimSpace(eventType))
 	if !strings.Contains(lower, "delta") || codexNonAnswerKind(lower) || codexJSONLPayloadIsNonAnswer(payload) {
 		return ""
 	}
 	if lower == "item.delta" || strings.Contains(lower, "message") || strings.Contains(lower, "agent") || strings.Contains(lower, "assistant") {
-		return sanitizedMessageText(firstNonEmpty(
+		return sanitizedMessageText(firstMessageFragment(
 			stringValue(payload["delta"]),
 			stringFromPath(payload, "message", "delta"),
 			stringFromPath(payload, "message", "text"),
@@ -456,6 +502,8 @@ func codexJSONLFinalMessageText(eventType string, payload map[string]any) string
 	return sanitizedMessageText(firstNonEmpty(
 		stringFromPath(payload, "message", "text"),
 		stringFromPath(payload, "message", "content"),
+		stringFromPath(payload, "item", "text"),
+		stringFromPath(payload, "item", "content"),
 		stringFromPath(payload, "item", "message", "text"),
 		stringFromPath(payload, "item", "message", "content"),
 		stringValue(payload["text"]),

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -126,7 +128,7 @@ func (p *AnthropicProvider) ListModels(ctx context.Context) ([]AIModelDescriptor
 		models = append(models, EnrichModelDescriptor(p.kind, AIModelDescriptor{
 			ID:               id,
 			DisplayName:      firstNonEmptyString(model.DisplayName, id),
-			Streaming:        false,
+			Streaming:        true,
 			ToolCalling:      true,
 			StructuredOutput: true,
 			PatchGeneration:  true,
@@ -165,6 +167,7 @@ type anthropicMessageRequest struct {
 	Temperature float64            `json:"temperature,omitempty"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
 	ToolChoice  any                `json:"tool_choice,omitempty"`
+	Stream      bool               `json:"stream,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -200,6 +203,37 @@ type anthropicMessageResponse struct {
 	} `json:"error,omitempty"`
 }
 
+type anthropicStreamEvent struct {
+	Type    string `json:"type"`
+	Index   int    `json:"index,omitempty"`
+	Message struct {
+		Model string `json:"model,omitempty"`
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage,omitempty"`
+	} `json:"message,omitempty"`
+	ContentBlock anthropicContentBlock `json:"content_block,omitempty"`
+	Delta        struct {
+		Type        string `json:"type,omitempty"`
+		Text        string `json:"text,omitempty"`
+		PartialJSON string `json:"partial_json,omitempty"`
+		StopReason  string `json:"stop_reason,omitempty"`
+	} `json:"delta,omitempty"`
+	Usage struct {
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage,omitempty"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+type anthropicStreamBlock struct {
+	content     anthropicContentBlock
+	partialJSON strings.Builder
+	completed   bool
+}
+
 func (p *AnthropicProvider) Generate(ctx context.Context, req GenerationRequest, sink TokenSink) (GenerationResponse, error) {
 	if p.secret == "" {
 		return GenerationResponse{}, fmt.Errorf("provider requires an API key")
@@ -220,6 +254,10 @@ func (p *AnthropicProvider) Generate(ctx context.Context, req GenerationRequest,
 		Temperature: req.Temperature,
 		Tools:       anthropicToolsFromGenerationRequest(req.Tools),
 		ToolChoice:  anthropicToolChoice(req.ToolChoice, req.Tools),
+		Stream:      req.Stream && sink != nil,
+	}
+	if request.Stream {
+		return p.generateStreaming(ctx, request, sink)
 	}
 	var response anthropicMessageResponse
 	status, err := postJSON(ctx, p.client, p.endpoint+"/messages", p.headers(), request, &response)
@@ -230,6 +268,9 @@ func (p *AnthropicProvider) Generate(ctx context.Context, req GenerationRequest,
 		return GenerationResponse{RawStatus: status}, errors.New(response.Error.Message)
 	}
 	text, toolCalls := anthropicResponseContent(response.Content)
+	if err := validateGenerationToolCalls(toolCalls); err != nil {
+		return GenerationResponse{Text: text, Model: firstNonEmptyString(response.Model, model), RawStatus: status, FinishedAt: NowString()}, err
+	}
 	if sink != nil && text != "" {
 		if err := sink(text); err != nil {
 			return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString()}, err
@@ -250,6 +291,146 @@ func (p *AnthropicProvider) Generate(ctx context.Context, req GenerationRequest,
 	}, nil
 }
 
+func (p *AnthropicProvider) generateStreaming(ctx context.Context, request anthropicMessageRequest, sink TokenSink) (GenerationResponse, error) {
+	resp, err := postJSONRaw(ctx, p.client, p.endpoint+"/messages", p.headers(), request)
+	if err != nil {
+		return GenerationResponse{}, err
+	}
+	defer resp.Body.Close()
+	status := resp.StatusCode
+	if status < 200 || status >= 300 {
+		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		return GenerationResponse{RawStatus: status}, fmt.Errorf("provider returned HTTP %d: %s", status, strings.TrimSpace(string(limited)))
+	}
+
+	model := request.Model
+	var text strings.Builder
+	usage := GenerationTokenUsage{Source: "provider"}
+	blocks := map[int]*anthropicStreamBlock{}
+	completed := false
+	stopReason := ""
+	result := func() GenerationResponse {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		return GenerationResponse{
+			Text:       text.String(),
+			Model:      model,
+			RawStatus:  status,
+			FinishedAt: NowString(),
+			ToolCalls:  anthropicToolCallsFromStreamBlocks(blocks),
+			Usage:      usage,
+		}
+	}
+	err = scanServerSentEvents(resp.Body, func(_ string, data []byte) error {
+		if len(data) == 0 {
+			return nil
+		}
+		var event anthropicStreamEvent
+		if decodeErr := json.Unmarshal(data, &event); decodeErr != nil {
+			return decodeErr
+		}
+		if event.Error != nil && strings.TrimSpace(event.Error.Message) != "" {
+			return errors.New(event.Error.Message)
+		}
+		switch event.Type {
+		case "message_start":
+			model = firstNonEmptyString(event.Message.Model, model)
+			usage.InputTokens = event.Message.Usage.InputTokens
+			if event.Message.Usage.OutputTokens > usage.OutputTokens {
+				usage.OutputTokens = event.Message.Usage.OutputTokens
+			}
+		case "content_block_start":
+			block := &anthropicStreamBlock{content: event.ContentBlock}
+			blocks[event.Index] = block
+			if event.ContentBlock.Type == "text" && event.ContentBlock.Text != "" {
+				text.WriteString(event.ContentBlock.Text)
+				if sinkErr := sink(event.ContentBlock.Text); sinkErr != nil {
+					return sinkErr
+				}
+			}
+		case "content_block_delta":
+			block := blocks[event.Index]
+			if block == nil {
+				block = &anthropicStreamBlock{}
+				blocks[event.Index] = block
+			}
+			switch event.Delta.Type {
+			case "text_delta":
+				if event.Delta.Text != "" {
+					text.WriteString(event.Delta.Text)
+					if sinkErr := sink(event.Delta.Text); sinkErr != nil {
+						return sinkErr
+					}
+				}
+			case "input_json_delta":
+				block.partialJSON.WriteString(event.Delta.PartialJSON)
+			}
+		case "content_block_stop":
+			block := blocks[event.Index]
+			if block == nil {
+				return fmt.Errorf("anthropic stream stopped unknown content block %d", event.Index)
+			}
+			block.completed = true
+		case "message_delta":
+			stopReason = strings.TrimSpace(event.Delta.StopReason)
+			if event.Usage.OutputTokens > usage.OutputTokens {
+				usage.OutputTokens = event.Usage.OutputTokens
+			}
+		case "message_stop":
+			completed = true
+		}
+		return nil
+	})
+	if err != nil {
+		return result(), err
+	}
+	if !completed {
+		return result(), errors.New("anthropic stream ended before message_stop")
+	}
+	toolCalls := anthropicToolCallsFromStreamBlocks(blocks)
+	if len(toolCalls) > 0 && stopReason != "tool_use" {
+		return result(), fmt.Errorf("anthropic tool stream ended with stop_reason %q", stopReason)
+	}
+	for index, block := range blocks {
+		if block != nil && block.content.Type == "tool_use" && !block.completed {
+			return result(), fmt.Errorf("anthropic tool stream ended before content_block_stop for index %d", index)
+		}
+	}
+	if err := validateGenerationToolCalls(toolCalls); err != nil {
+		return result(), err
+	}
+	return result(), nil
+}
+
+func anthropicToolCallsFromStreamBlocks(blocks map[int]*anthropicStreamBlock) []GenerationToolCall {
+	indices := make([]int, 0, len(blocks))
+	for index := range blocks {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	toolCalls := []GenerationToolCall{}
+	for _, index := range indices {
+		block := blocks[index]
+		if block == nil || block.content.Type != "tool_use" || strings.TrimSpace(block.content.Name) == "" {
+			continue
+		}
+		arguments := strings.TrimSpace(block.partialJSON.String())
+		if arguments == "" && block.content.Input != nil {
+			if encoded, err := json.Marshal(block.content.Input); err == nil {
+				arguments = string(encoded)
+			}
+		}
+		if arguments == "" {
+			arguments = "{}"
+		}
+		toolCalls = append(toolCalls, GenerationToolCall{
+			ID:            strings.TrimSpace(block.content.ID),
+			Name:          strings.TrimSpace(block.content.Name),
+			ArgumentsJSON: arguments,
+		})
+	}
+	return toolCalls
+}
+
 func anthropicMessagesFromGenerationRequest(req GenerationRequest) []anthropicMessage {
 	if len(req.Messages) == 0 {
 		if strings.TrimSpace(req.Prompt) == "" {
@@ -266,15 +447,26 @@ func anthropicMessagesFromGenerationRequest(req GenerationRequest) []anthropicMe
 			role = "user"
 		}
 		if len(message.ToolCalls) > 0 {
-			messages = append(messages, anthropicMessage{Role: "assistant", Content: anthropicToolUseBlocks(message.ToolCalls)})
+			blocks := anthropicToolUseBlocks(message.ToolCalls)
+			if content := strings.TrimSpace(message.Content); content != "" {
+				blocks = append([]anthropicContentBlock{{Type: "text", Text: content}}, blocks...)
+			}
+			messages = append(messages, anthropicMessage{Role: "assistant", Content: blocks})
 			continue
 		}
 		if strings.TrimSpace(message.ToolCallID) != "" {
-			messages = append(messages, anthropicMessage{Role: "user", Content: []anthropicContentBlock{{
+			resultBlock := anthropicContentBlock{
 				Type:      "tool_result",
 				ToolUseID: strings.TrimSpace(message.ToolCallID),
 				Content:   strings.TrimSpace(message.Content),
-			}}})
+			}
+			if len(messages) > 0 && messages[len(messages)-1].Role == "user" {
+				if blocks, ok := anthropicToolResultBlocks(messages[len(messages)-1].Content); ok {
+					messages[len(messages)-1].Content = append(blocks, resultBlock)
+					continue
+				}
+			}
+			messages = append(messages, anthropicMessage{Role: "user", Content: []anthropicContentBlock{resultBlock}})
 			continue
 		}
 		if strings.TrimSpace(message.Content) == "" || strings.ToLower(strings.TrimSpace(message.Role)) == "system" {
@@ -283,6 +475,19 @@ func anthropicMessagesFromGenerationRequest(req GenerationRequest) []anthropicMe
 		messages = append(messages, anthropicMessage{Role: role, Content: message.Content})
 	}
 	return messages
+}
+
+func anthropicToolResultBlocks(content any) ([]anthropicContentBlock, bool) {
+	blocks, ok := content.([]anthropicContentBlock)
+	if !ok || len(blocks) == 0 {
+		return nil, false
+	}
+	for _, block := range blocks {
+		if block.Type != "tool_result" {
+			return nil, false
+		}
+	}
+	return blocks, true
 }
 
 func anthropicToolUseBlocks(calls []GenerationToolCall) []anthropicContentBlock {

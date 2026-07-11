@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const codexAppServerProtocolVersion = "codex-app-server-v2-jsonrpc"
+const (
+	codexAppServerProtocolVersion        = "codex-app-server-v2-jsonrpc"
+	codexAppServerDefaultReasoningEffort = "medium"
+)
 
 type codexRPCMessage struct {
 	ID     any            `json:"id,omitempty"`
@@ -47,20 +50,22 @@ type codexAppServerSession struct {
 }
 
 type codexAppServerObserver struct {
-	runID        string
-	emit         func(Event)
-	mu           sync.Mutex
-	threadID     string
-	turnID       string
-	firstEvent   bool
-	completed    bool
-	blockedError string
-	done         chan struct{}
-	finalMessage strings.Builder
+	runID         string
+	emit          func(Event)
+	mu            sync.Mutex
+	threadID      string
+	turnID        string
+	firstEvent    bool
+	completed     bool
+	blockedError  string
+	done          chan struct{}
+	finalMessage  strings.Builder
+	messagePhases map[string]string
 }
 
 func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit func(Event)) Result {
 	startedAt := time.Now().UTC().Format(time.RFC3339)
+	reasoningEffort := codexAppServerReasoningEffortForRequest(req.ReasoningEffort)
 	binary, err := a.binaryPath()
 	if err != nil {
 		return UnsupportedResult(err.Error())
@@ -152,17 +157,7 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 	}
 	session.observer.setThreadID(threadID)
 
-	turnParams := map[string]any{
-		"threadId":       threadID,
-		"cwd":            req.ProjectRoot,
-		"approvalPolicy": "never",
-		"input":          []map[string]any{codexAppServerTextInput(req.Prompt)},
-		"model":          codexModelForRequest(req.Model),
-		"sandboxPolicy":  codexAppServerSandboxPolicy(req.Action, req.ProjectRoot),
-	}
-	if effort := codexReasoningEffortForRequest(req.ReasoningEffort); effort != "" {
-		turnParams["effort"] = effort
-	}
+	turnParams := codexAppServerTurnParams(req, threadID)
 	turnResult, err := session.request(preflightCtx, "turn/start", turnParams)
 	if err != nil {
 		return session.errorResult("Codex app-server turn start failed.", err, startedAt)
@@ -182,7 +177,7 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 			"threadId":        threadID,
 			"turnId":          turnID,
 			"sandboxPolicy":   codexSandboxForAction(req.Action),
-			"reasoningEffort": codexReasoningEffortForRequest(req.ReasoningEffort),
+			"reasoningEffort": reasoningEffort,
 			"argvPrompt":      false,
 		},
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -503,9 +498,10 @@ func (s *codexAppServerSession) errorResult(message string, err error, startedAt
 
 func newCodexAppServerObserver(runID string, emit func(Event)) *codexAppServerObserver {
 	return &codexAppServerObserver{
-		runID: strings.TrimSpace(runID),
-		emit:  emit,
-		done:  make(chan struct{}),
+		runID:         strings.TrimSpace(runID),
+		emit:          emit,
+		done:          make(chan struct{}),
+		messagePhases: map[string]string{},
 	}
 }
 
@@ -524,11 +520,19 @@ func (o *codexAppServerObserver) Observe(method string, params map[string]any) {
 			o.setTurnID(id)
 		}
 	}
+	if method == "item/started" {
+		o.rememberMessagePhase(params)
+	}
 	text := codexAppServerStatusText(method, params)
 	switch method {
 	case "item/agentMessage/delta":
 		text = codexAppServerAgentMessageDeltaText(params)
 		if text != "" {
+			phase := o.messagePhase(params)
+			if phase == "commentary" {
+				o.emit(Event{RunID: o.runID, Type: EventStatus, Status: "message.commentary.delta", Text: "Codex commentary delta received.", Payload: codexAppServerEventPayload(method, params), CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+				return
+			}
 			o.appendMessageDelta(text)
 			o.emit(Event{RunID: o.runID, Type: EventMessage, Status: "message.delta", Text: text, Payload: codexAppServerEventPayload(method, params), CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 			return
@@ -536,8 +540,15 @@ func (o *codexAppServerObserver) Observe(method string, params map[string]any) {
 	case "item/completed":
 		text = codexAppServerCompletedMessageText(params)
 		if text != "" {
+			phase := o.messagePhase(params)
+			if phase == "commentary" {
+				o.emit(Event{RunID: o.runID, Type: EventMessage, Status: "message.commentary", Text: text, Payload: codexAppServerEventPayload(method, params), CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+				o.forgetMessagePhase(params)
+				return
+			}
 			o.setFinalMessage(text)
 			o.emit(Event{RunID: o.runID, Type: EventMessage, Status: "message.final", Text: text, Payload: codexAppServerEventPayload(method, params), CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+			o.forgetMessagePhase(params)
 			return
 		}
 	case "turn/completed":
@@ -557,6 +568,43 @@ func (o *codexAppServerObserver) Observe(method string, params map[string]any) {
 		o.block(text)
 	}
 	o.emit(Event{RunID: o.runID, Type: EventStatus, Status: method, Text: firstNonEmpty(text, "Codex app-server event received."), Payload: codexAppServerEventPayload(method, params), CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+}
+
+func (o *codexAppServerObserver) rememberMessagePhase(params map[string]any) {
+	itemID := codexAppServerItemID(params)
+	phase := codexAppServerMessagePhase(params)
+	if itemID == "" || phase == "" {
+		return
+	}
+	o.mu.Lock()
+	if o.messagePhases == nil {
+		o.messagePhases = map[string]string{}
+	}
+	o.messagePhases[itemID] = phase
+	o.mu.Unlock()
+}
+
+func (o *codexAppServerObserver) messagePhase(params map[string]any) string {
+	if phase := codexAppServerMessagePhase(params); phase != "" {
+		return phase
+	}
+	itemID := codexAppServerItemID(params)
+	if itemID == "" {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.messagePhases[itemID]
+}
+
+func (o *codexAppServerObserver) forgetMessagePhase(params map[string]any) {
+	itemID := codexAppServerItemID(params)
+	if itemID == "" {
+		return
+	}
+	o.mu.Lock()
+	delete(o.messagePhases, itemID)
+	o.mu.Unlock()
 }
 
 func (o *codexAppServerObserver) emitFirstProviderEvent(method string) {
@@ -679,10 +727,28 @@ func codexModelForRequest(model string) any {
 func codexAppServerArgs(req RunRequest, disableFeatureArgs []string) []string {
 	args := []string{"app-server", "--listen", "stdio://", "-c", "mcp_servers={}"}
 	args = append(args, disableFeatureArgs...)
-	if effort := codexReasoningEffortForRequest(req.ReasoningEffort); effort != "" {
-		args = append(args, "-c", "model_reasoning_effort=\""+effort+"\"")
-	}
+	effort := codexAppServerReasoningEffortForRequest(req.ReasoningEffort)
+	args = append(args, "-c", "model_reasoning_effort=\""+effort+"\"")
 	return args
+}
+
+func codexAppServerReasoningEffortForRequest(value string) string {
+	if effort := codexReasoningEffortForRequest(value); effort != "" {
+		return effort
+	}
+	return codexAppServerDefaultReasoningEffort
+}
+
+func codexAppServerTurnParams(req RunRequest, threadID string) map[string]any {
+	return map[string]any{
+		"threadId":       threadID,
+		"cwd":            req.ProjectRoot,
+		"approvalPolicy": "never",
+		"input":          []map[string]any{codexAppServerTextInput(req.Prompt)},
+		"model":          codexModelForRequest(req.Model),
+		"effort":         codexAppServerReasoningEffortForRequest(req.ReasoningEffort),
+		"sandboxPolicy":  codexAppServerSandboxPolicy(req.Action, req.ProjectRoot),
+	}
 }
 
 func codexAppServerTextInput(prompt string) map[string]any {
@@ -750,6 +816,9 @@ func codexAppServerEventPayload(method string, params map[string]any) map[string
 	if itemType := codexAppServerItemKind(params); itemType != "" {
 		payload["itemType"] = itemType
 	}
+	if phase := codexAppServerMessagePhase(params); phase != "" {
+		payload["messagePhase"] = phase
+	}
 	if status := firstNonEmpty(stringFromPath(params, "turn", "status"), stringFromPath(params, "status")); status != "" {
 		payload["status"] = sanitizedEventText(status)
 	}
@@ -757,6 +826,30 @@ func codexAppServerEventPayload(method string, params map[string]any) map[string
 		payload["unifiedDiff"] = diff
 	}
 	return payload
+}
+
+func codexAppServerItemID(params map[string]any) string {
+	return sanitizedEventText(firstNonEmpty(
+		stringFromPath(params, "item", "id"),
+		stringFromPath(params, "itemId"),
+		stringFromPath(params, "message", "id"),
+	))
+}
+
+func codexAppServerMessagePhase(params map[string]any) string {
+	phase := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		stringFromPath(params, "item", "phase"),
+		stringFromPath(params, "message", "phase"),
+		stringFromPath(params, "phase"),
+	)))
+	switch strings.ReplaceAll(phase, "-", "_") {
+	case "commentary":
+		return "commentary"
+	case "final", "final_answer", "finalanswer":
+		return "final_answer"
+	default:
+		return ""
+	}
 }
 
 func codexAppServerStatusText(method string, params map[string]any) string {
@@ -811,7 +904,7 @@ func stringFromPath(value map[string]any, path ...string) string {
 }
 
 func codexAppServerAgentMessageDeltaText(params map[string]any) string {
-	return sanitizedMessageText(firstNonEmpty(
+	return sanitizedMessageText(firstMessageFragment(
 		stringFromPath(params, "delta"),
 		stringFromPath(params, "message", "delta"),
 		stringFromPath(params, "message", "text"),

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -46,7 +47,7 @@ const (
 	chatPromptHistoryPromptLimit   = 600
 	chatPromptHistoryResponseLimit = 1400
 	chatStreamGuardMaxHeldBytes    = 32 << 10
-	maxChatToolContinuationRounds  = 3
+	maxChatToolContinuationRounds  = 6
 )
 
 var defaultChatStopSequences = []string{
@@ -76,18 +77,22 @@ func (s *Service) StartChatRun(ctx context.Context, projectID string, req AIChat
 }
 
 func (s *Service) startChatRun(_ context.Context, projectID string, req AIChatRunRequest, displayPrompt string) (AIChatRun, error) {
+	s.projectRunsMu.RLock()
 	project := s.project(projectID)
 	if project == nil {
+		s.projectRunsMu.RUnlock()
 		return AIChatRun{}, fmt.Errorf("AI project session is not open")
 	}
 	req = s.resolveChatRunRequest(req)
 	if strings.TrimSpace(req.Prompt) == "" {
+		s.projectRunsMu.RUnlock()
 		return AIChatRun{}, fmt.Errorf("chat prompt is empty")
 	}
 	if req.Action == "" {
 		req.Action = AIChatActionPlan
 	}
 	if !validChatAction(req.Action) {
+		s.projectRunsMu.RUnlock()
 		return AIChatRun{}, fmt.Errorf("unsupported chat action %q", req.Action)
 	}
 	if strings.TrimSpace(displayPrompt) == "" {
@@ -124,12 +129,14 @@ func (s *Service) startChatRun(_ context.Context, projectID string, req AIChatRu
 	done := make(chan struct{})
 	s.mu.Lock()
 	s.runs[runID] = run
+	s.runOwners[runID] = project
+	delete(s.retiredRuns, runID)
 	s.runCancels[runID] = cancel
-	s.runDone[runID] = done
 	runCopy := *run
 	s.mu.Unlock()
-	s.persistChatRun(runCopy)
-	s.emitEvent("ai:chat:run-started", runCopy)
+	s.projectRunsMu.RUnlock()
+	s.persistChatRun(project, runCopy)
+	s.emitRunEvent(project, runID, "ai:chat:run-started", runCopy)
 	s.recordRunTimeline(project, AIRunTimelineEvent{
 		RunID:            runCopy.ID,
 		SessionID:        normalizeChatSessionID(runCopy.SessionID),
@@ -143,60 +150,70 @@ func (s *Service) startChatRun(_ context.Context, projectID string, req AIChatRu
 		Capability:       providers.CapabilityChat,
 		Summary:          string(runCopy.Action) + " run started",
 	})
+	startCommentary := ""
+	if !isMinimalChatRequest(req) {
+		startCommentary = agentRuntimeCommentaryForRequest(req, "Preparing the request and its context.", "Готовлю запрос и нужный контекст.")
+	}
+	s.publishAgentRuntimePhase(project, runID, "starting", "active", "Preparing request", "", startCommentary, "progress", false)
 	s.emitRunEnvelope(project.ID, runID)
 
-	go func() {
-		defer s.markRunDone(runID)
-		s.runChat(runCtx, project.ID, runID, req)
-	}()
+	if !s.launchOwnedRun(project, runID, done, func() {
+		s.runChat(runCtx, project, runID, req)
+	}) {
+		cancel()
+		return runCopy, fmt.Errorf("AI project session changed before the chat run could start")
+	}
 	return runCopy, nil
 }
 
 func (s *Service) CancelChatRun(projectID string, runID string) (AIChatRun, error) {
 	projectID = normalizeProjectID(projectID)
+	project := s.project(projectID)
+	if project == nil {
+		return AIChatRun{}, fmt.Errorf("AI project session is not open")
+	}
 	runID = strings.TrimSpace(runID)
 	s.mu.Lock()
 	run := s.runs[runID]
-	if run != nil && run.ProjectSessionID != projectID {
+	if run == nil || run.ProjectSessionID != projectID || s.currentRunOwnerLocked(runID) != project {
 		s.mu.Unlock()
 		return AIChatRun{}, fmt.Errorf("chat run %q was not found", runID)
+	}
+	if run.Status != "running" || !run.CanCancel {
+		runCopy := *run
+		s.mu.Unlock()
+		return runCopy, nil
 	}
 	cancel := s.runCancels[runID]
 	if cancel != nil {
 		cancel()
 	}
-	if run != nil && run.Status == "running" {
-		run.Status = "canceled"
-		run.CanCancel = false
-		run.Revision++
-		run.UpdatedAt = utcNow()
-	}
+	run.Status = "canceled"
+	run.CanCancel = false
+	run.Revision++
+	run.UpdatedAt = utcNow()
 	runCopy := AIChatRun{}
 	if run != nil {
 		runCopy = *run
 	}
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
-	if run == nil {
-		return AIChatRun{}, fmt.Errorf("chat run %q was not found", runID)
-	}
-	s.persistChatRun(runCopy)
-	s.emitEvent("ai:chat:run-canceled", runCopy)
-	if project := s.project(runCopy.ProjectSessionID); project != nil {
-		s.recordRunTimeline(project, AIRunTimelineEvent{
-			RunID:            runCopy.ID,
-			SessionID:        normalizeChatSessionID(runCopy.SessionID),
-			ProjectSessionID: runCopy.ProjectSessionID,
-			Source:           "chat_runtime",
-			Type:             "run_canceled",
-			Status:           "canceled",
-			Actor:            "user",
-			ProviderID:       runCopy.ProviderID,
-			Model:            runCopy.Model,
-			Capability:       providers.CapabilityChat,
-			Summary:          "Run canceled by user.",
-		})
-	}
+	s.persistChatRun(project, runCopy)
+	s.emitRunEvent(project, runID, "ai:chat:run-canceled", runCopy)
+	s.publishAgentRuntimePhase(project, runID, "completed", "canceled", "Run canceled", "Canceled by user.", "", "", true)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runCopy.ID,
+		SessionID:        normalizeChatSessionID(runCopy.SessionID),
+		ProjectSessionID: runCopy.ProjectSessionID,
+		Source:           "chat_runtime",
+		Type:             "run_canceled",
+		Status:           "canceled",
+		Actor:            "user",
+		ProviderID:       runCopy.ProviderID,
+		Model:            runCopy.Model,
+		Capability:       providers.CapabilityChat,
+		Summary:          "Run canceled by user.",
+	})
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 	return runCopy, nil
 }
@@ -207,7 +224,9 @@ func (s *Service) GetChatRun(projectID string, runID string) (AIChatRun, error) 
 	runID = strings.TrimSpace(runID)
 	s.mu.RLock()
 	run := s.runs[runID]
-	if run != nil && run.ProjectSessionID == projectID {
+	owner := s.runOwners[runID]
+	_, retired := s.retiredRuns[runID]
+	if run != nil && run.ProjectSessionID == projectID && !retired && ((project != nil && (owner == project || owner == nil)) || (project == nil && owner != nil)) {
 		runCopy := *run
 		s.mu.RUnlock()
 		return normalizeChatRunForDisplay(runCopy), nil
@@ -230,9 +249,8 @@ func (s *Service) GetChatRun(projectID string, runID string) (AIChatRun, error) 
 	return AIChatRun{}, fmt.Errorf("chat run %q was not found", runID)
 }
 
-func (s *Service) runChat(ctx context.Context, projectID string, runID string, req AIChatRunRequest) {
-	project := s.project(projectID)
-	if project == nil {
+func (s *Service) runChat(ctx context.Context, project *ProjectSession, runID string, req AIChatRunRequest) {
+	if !s.liveRunCanUseProject(project, runID) {
 		s.finishRunError(runID, "AI project session is not open")
 		return
 	}
@@ -253,6 +271,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	if len(req.Context.ContinuityCapsuleIDs) == 0 {
 		req.Context.ContinuityCapsuleIDs = req.ContinuityCapsuleIDs
 	}
+	s.publishAgentRuntimePhase(project, runID, "context", "active", "Preparing context", "Collecting the approved run context.", "", "", false)
 	prepared, prepareErr := s.prepareChatContextForRun(project, runID, req)
 	snapshot := prepared.Snapshot
 	contextSummary := summarizeContextSnapshot(snapshot)
@@ -278,7 +297,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		return
 	}
 	s.recordContextPlaneTimeline(project, runID, req, contextSummary)
-	s.emitEvent("ai:chat:context-ready", map[string]any{"runId": runID, "contextSummary": contextSummary})
+	s.emitRunEvent(project, runID, "ai:chat:context-ready", map[string]any{"runId": runID, "contextSummary": contextSummary})
 	s.recordRunTimeline(project, AIRunTimelineEvent{
 		RunID:            runID,
 		SessionID:        normalizeChatSessionID(req.SessionID),
@@ -292,6 +311,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Redaction:        contextSummary.Redaction,
 		Summary:          contextArtifactSummary(contextSummary),
 	})
+	s.publishAgentRuntimePhase(project, runID, "context", "done", "Context ready", contextArtifactSummary(contextSummary), "", "", false)
+	s.publishAgentRuntimePhase(project, runID, "running", "active", "Resolving runtime", "Selecting the requested provider, model, and runtime.", "", "", false)
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactContext, "Context disclosure", contextArtifactSummary(contextSummary), snapshot)
 	s.emitRunEnvelope(project.ID, runID)
 
@@ -387,7 +408,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	generationReq.Tools = toolset.Tools
 	if len(generationReq.Tools) > 0 {
 		generationReq.ToolChoice = "auto"
-		generationReq.Stream = false
 	}
 	if generationReq.MaxTokens <= 0 {
 		generationReq.MaxTokens = defaultChatMaxTokens(req.Action)
@@ -447,53 +467,24 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Redaction:        snapshot.Redaction,
 		Summary:          "Provider request started.",
 	})
-	var streamGuard *chatStreamGuard
+	s.publishAgentRuntimePhase(project, runID, "running", "active", "Agent is working", "Provider request is active.", "", "", false)
+	var providerStream *chatProviderStream
 	var tokenSink providers.TokenSink
-	releaseBufferedProviderResponse := false
 	if generationReq.Stream {
-		streamGuard = newChatStreamGuard(req, system, generationReq.Prompt)
-		tokenSink = func(token string) error {
-			if ctx.Err() != nil || s.runIsCanceled(runID) {
-				return context.Canceled
-			}
-			if token == "" {
-				return nil
-			}
-			displayToken := sanitizedDisplayChunk(token)
-			releaseToken, observeErr := streamGuard.Observe(token, displayToken)
-			if releaseToken != "" {
-				s.emitStreamingChatToken(runID, releaseToken)
-			}
-			return observeErr
-		}
-	} else if len(generationReq.Tools) > 0 {
-		releaseBufferedProviderResponse = true
-		tokenSink = func(token string) error {
-			if ctx.Err() != nil || s.runIsCanceled(runID) {
-				return context.Canceled
-			}
-			return nil
-		}
+		providerStream = newChatProviderStream(s, ctx, runID, req, system, generationReq.Prompt, len(generationReq.Tools) > 0)
+		tokenSink = providerStream.Sink
 	}
 	response, err := provider.Generate(ctx, generationReq, tokenSink)
-	if streamGuard != nil {
-		if releaseToken := streamGuard.Flush(); releaseToken != "" {
-			s.emitStreamingChatToken(runID, releaseToken)
-		}
+	if !s.liveRunCanUseProject(project, runID) {
+		return
 	}
+	providerStream.Flush()
 	record.LatencyMs = time.Since(started).Milliseconds()
 	if ctx.Err() != nil || s.runIsCanceled(runID) {
 		record.Status = "canceled"
 		record.Canceled = true
 		applyGenerationUsageToEgress(&record, generationReq, response, descriptor, toolset)
-		if project.Egress != nil {
-			stored, ledgerErr := project.Egress.Append(record)
-			if ledgerErr == nil {
-				record = stored
-			}
-		}
-		s.emitEvent("ai:chat:egress-recorded", record)
-		s.recordEgressTimeline(project, runID, record)
+		record = s.recordChatEgress(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 			if run.AgentRuntime != nil {
@@ -503,7 +494,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				run.AgentRuntime.FailureCode = agents.FailureCanceled
 			}
 		})
-		s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 		s.finishRunCanceled(runID, record)
 		return
 	}
@@ -513,14 +503,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		record.ErrorClass = errorClass(err)
 		record.Canceled = ctx.Err() != nil
 		applyGenerationUsageToEgress(&record, generationReq, response, descriptor, toolset)
-		if project.Egress != nil {
-			stored, ledgerErr := project.Egress.Append(record)
-			if ledgerErr == nil {
-				record = stored
-			}
-		}
-		s.emitEvent("ai:chat:egress-recorded", record)
-		s.recordEgressTimeline(project, runID, record)
+		record = s.recordChatEgress(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 			if run.AgentRuntime != nil {
@@ -531,7 +514,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				run.AgentRuntime.BlockedReason = err.Error()
 			}
 		})
-		s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 		if record.Canceled {
 			s.finishRunCanceled(runID, record)
 			return
@@ -539,22 +521,18 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.finishRunError(runID, err.Error())
 		return
 	}
-	if retryResp, blocked := s.retryEmptyChatResponse(ctx, project, runID, provider, generationReq, req, system, snapshot, response); blocked {
+	retryOutcome := s.retryEmptyChatResponse(ctx, project, runID, provider, descriptor, generationReq, req, system, snapshot, toolset, response, record)
+	if retryOutcome.Blocked {
 		return
+	}
+	response = retryOutcome.Response
+	if retryOutcome.Retried {
+		record = retryOutcome.Record
 	} else {
-		response = retryResp
+		record.Status = "completed"
+		applyGenerationUsageToEgress(&record, generationReq, response, descriptor, toolset)
+		record = s.recordChatEgress(project, runID, record)
 	}
-	record.LatencyMs = time.Since(started).Milliseconds()
-	record.Status = "completed"
-	applyGenerationUsageToEgress(&record, generationReq, response, descriptor, toolset)
-	if project.Egress != nil {
-		stored, ledgerErr := project.Egress.Append(record)
-		if ledgerErr == nil {
-			record = stored
-		}
-	}
-	s.emitEvent("ai:chat:egress-recorded", record)
-	s.recordEgressTimeline(project, runID, record)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.EgressRecordID = record.ID
 		if run.AgentRuntime != nil {
@@ -564,14 +542,17 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			}
 		}
 	})
-	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 	s.emitRunEnvelope(project.ID, runID)
-	finalResponse := cleanChatGeneratedResponse(firstNonEmpty(s.chatRunResponse(runID), response.Text), req, system, generationReq.Prompt)
+	finalResponse := cleanChatGeneratedResponse(firstNonEmpty(response.Text, s.chatRunResponse(runID)), req, system, generationReq.Prompt)
 	finalResponse, fencedToolCallRequests := extractChatToolCallRequests(finalResponse)
 	modelToolResponse := finalResponse
 	buildPatchArtifactReady := false
 	buildEvidenceState := ""
-	toolCallRequests := chatToolCallRequestsFromGenerationResponse(response)
+	toolCallRequests, toolCallErr := chatToolCallRequestsFromGenerationResponse(response)
+	if toolCallErr != nil {
+		s.finishRunError(runID, toolCallErr.Error())
+		return
+	}
 	fencedStartIndex := len(toolCallRequests)
 	for index, toolReq := range fencedToolCallRequests {
 		toolCallRequests = append(toolCallRequests, chatToolCallRequestFromToolRequest(toolReq, fencedStartIndex+index))
@@ -580,7 +561,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	if len(toolCallRequests) == 0 {
 		fallback := s.resolveBuildEditFallback(project, runID, req, snapshot, finalResponse)
 		if fallback.Attempted {
-			releaseBufferedProviderResponse = false
 			s.clearChatRunResponse(project.ID, runID)
 			if fallback.Err != nil {
 				s.finishRunError(runID, fallback.Err.Error())
@@ -596,7 +576,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		}
 	}
 	if rewriteGuard, ok := detectBuildRewriteGuard(req, finalResponse, len(toolCallRequests) > 0); ok {
-		releaseBufferedProviderResponse = false
 		s.clearChatRunResponse(project.ID, runID)
 		s.recordBuildRewriteGuardArtifact(project, runID, rewriteGuard)
 		s.emitRunEnvelope(project.ID, runID)
@@ -620,10 +599,10 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			return
 		}
 	}
-	if strings.TrimSpace(finalResponse) == "" && len(toolCallRequests) > 0 {
+	if strings.TrimSpace(finalResponse) == "" && len(toolCallRequests) > 0 && !toolCallsOnlyBroadcastAgentCommunication(toolCallRequests) {
 		finalResponse = "Prepared tool results for review."
 	}
-	if strings.TrimSpace(finalResponse) == "" {
+	if strings.TrimSpace(finalResponse) == "" && len(toolCallRequests) == 0 {
 		s.finishRunEmptyResponse(runID, record, descriptor.ID, firstNonEmpty(response.Model, generationReq.Model), response)
 		return
 	}
@@ -634,9 +613,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		run.ToolProposals = nil
 		run.EgressRecordID = record.ID
 	})
-	if releaseBufferedProviderResponse && len(toolCallRequests) == 0 {
-		s.emitBufferedChatResponseToken(runID, finalResponse)
-	}
 	var executedToolCalls []chatExecutedToolCall
 	if chatRequestUsesToolLoop(req) {
 		executedToolCalls = s.executeChatToolCalls(ctx, project, runID, req, toolCallRequests)
@@ -655,18 +631,12 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				}
 			}
 		}
-		if readyMessage, ok := completedReviewArtifactToolMessage(executedToolCalls); ok {
+		readyMessage, patchReady := completedReviewArtifactToolMessage(executedToolCalls)
+		if patchReady {
 			buildPatchArtifactReady = true
-			finalResponse = readyMessage
-			s.updateRun(runID, func(run *AIChatRun) {
-				run.Response = finalResponse
-				run.ProviderID = descriptor.ID
-				run.Model = firstNonEmpty(response.Model, generationReq.Model)
-				run.ToolProposals = nil
-				run.EgressRecordID = record.ID
-			})
-			s.emitRunEnvelope(project.ID, runID)
-		} else if waitingMessage, ok := chatToolResultsContainInteractionQuestion(executedToolCalls); ok {
+			modelToolResponse = firstNonEmpty(modelToolResponse, readyMessage)
+		}
+		if waitingMessage, ok := chatToolResultsContainInteractionQuestion(executedToolCalls); ok {
 			finalResponse = waitingMessage
 			s.updateRun(runID, func(run *AIChatRun) {
 				run.Response = finalResponse
@@ -676,8 +646,14 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				run.EgressRecordID = record.ID
 			})
 			s.emitRunEnvelope(project.ID, runID)
+		} else if failureMessage, failed := failedChatToolResultMessage(executedToolCalls); failed {
+			s.finishRunError(runID, failureMessage)
+			return
+		} else if len(productiveChatToolResults(executedToolCalls)) == 0 && strings.TrimSpace(finalResponse) != "" {
+			// Communication calls are a timeline sidecar. A visible response that
+			// arrived with them is already final and must not cost another provider turn.
 		} else if len(executedToolCalls) > 0 {
-			if fallbackEditUsed {
+			if fallbackEditUsed && !patchReady {
 				s.finishRunError(runID, fallbackEditToolFailureMessage(executedToolCalls))
 				return
 			}
@@ -705,6 +681,11 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			}
 		}
 	}
+	verificationCommentary := ""
+	if !isMinimalChatRequest(req) {
+		verificationCommentary = agentRuntimeCommentaryForRequest(req, "The main work is complete. Checking the result before the final response.", "Основная работа завершена. Проверяю результат перед финальным ответом.")
+	}
+	s.publishAgentRuntimePhase(project, runID, "verifying", "active", "Checking result", "Validating runtime outcome and review evidence.", verificationCommentary, "verification", false)
 	if req.Action == AIChatActionBuild && !buildPatchArtifactReady {
 		buildPatchArtifactReady = s.buildRunHasReviewablePatchArtifact(project, runID)
 	}
@@ -730,31 +711,90 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		return
 	}
 	s.emitRunEnvelope(project.ID, runID)
-	if project.Mnemonic != nil && project.Mnemonic.Enabled() {
-		if ctx.Err() == nil && s.projectIsCurrent(projectID, project) {
-			_, _ = s.ProposeMnemonicEntry(project.ID, AIMnemonicWriteProposalRequest{
-				RunID: runID,
-				Entry: AIMnemonicEntryInput{
-					Type:       "chat_summary",
-					Source:     "ai-chat",
-					Tags:       []string{string(req.Action)},
-					Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(finalResponse, req, system, generationReq.Prompt)),
-					Importance: 5,
-					Trust:      mnemonic.TrustGenerated,
-					Provenance: map[string]string{"source": "ai-chat-summary", "runId": runID},
-				},
-				Reason: "Generated chat summary requires review before durable Mnemonic promotion.",
-			})
+	if ctx.Err() != nil || s.runIsCanceled(runID) {
+		if !s.runIsCanceled(runID) {
+			s.finishRunCanceled(runID, AIEgressRecord{ID: record.ID, Canceled: true})
+		}
+		return
+	}
+	markRunCompleted := func(run *AIChatRun) {
+		run.Status = "completed"
+		run.CanCancel = false
+		if run.AgentRuntime == nil {
+			return
+		}
+		run.AgentRuntime.Status = "completed"
+		run.AgentRuntime.HealthStatus = "completed"
+		if req.Action == AIChatActionBuild && buildPatchArtifactReady {
+			run.AgentRuntime.ProofState = "proved"
+			run.AgentRuntime.ProofReason = "model runtime completed through Arlecchino-owned tool and artifact path"
+			run.AgentRuntime.ArtifactState = "patch_artifact"
+		} else if req.Action == AIChatActionBuild && buildEvidenceState != "" {
+			run.AgentRuntime.ProofState = "completed"
+			run.AgentRuntime.ProofReason = "model runtime completed with typed Build evidence and no reviewable file change"
+			run.AgentRuntime.ArtifactState = buildEvidenceState
+		} else if req.Action == AIChatActionBuild {
+			run.AgentRuntime.ProofState = "completed"
+			run.AgentRuntime.ProofReason = "model runtime completed without a reviewable patch artifact; no file change was recorded"
+			run.AgentRuntime.ArtifactState = "no_patch_artifact"
+		} else {
+			run.AgentRuntime.ProofState = "proved"
+			run.AgentRuntime.ProofReason = "model runtime completed without requiring a build artifact"
+			run.AgentRuntime.ArtifactState = "not_required"
 		}
 	}
-	completionSessionID := normalizeChatSessionID("")
-	if currentRun, err := s.GetChatRun(projectID, runID); err == nil {
-		completionSessionID = normalizeChatSessionID(currentRun.SessionID)
+	acceptedRun, completionProject, completed := s.updateRunningRun(ctx, runID, func(run *AIChatRun) {
+		run.CanCancel = false
+		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
+		run.RuntimeFamily = modelRuntimeFamily
+		run.ProviderID = descriptor.ID
+		run.Model = firstNonEmpty(response.Model, generationReq.Model)
+		run.ToolProposals = nil
+		run.EgressRecordID = record.ID
+	})
+	if !completed {
+		if ctx.Err() != nil && !s.runIsCanceled(runID) {
+			s.finishRunCanceled(runID, AIEgressRecord{ID: record.ID, Canceled: true})
+		}
+		return
 	}
-	s.recordRunTimeline(project, AIRunTimelineEvent{
+	completionSessionID := normalizeChatSessionID(acceptedRun.SessionID)
+	s.recordTurnContextCapsule(completionProject, runID, req, contextSummary, cleanChatGeneratedResponse(firstNonEmpty(finalResponse, response.Text), req, system, generationReq.Prompt))
+	s.recordPlanGateIfNeeded(completionProject, runID, req.Action)
+	if completionProject.Mnemonic != nil && completionProject.Mnemonic.Enabled() && s.projectIsCurrent(completionProject.ID, completionProject) {
+		_, _ = s.ProposeMnemonicEntry(completionProject.ID, AIMnemonicWriteProposalRequest{
+			RunID: runID,
+			Entry: AIMnemonicEntryInput{
+				Type:       "chat_summary",
+				Source:     "ai-chat",
+				Tags:       []string{string(req.Action)},
+				Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(finalResponse, req, system, generationReq.Prompt)),
+				Importance: 5,
+				Trust:      mnemonic.TrustGenerated,
+				Provenance: map[string]string{"source": "ai-chat-summary", "runId": runID},
+			},
+			Reason: "Generated chat summary requires review before durable Mnemonic promotion.",
+		})
+	}
+	completedAt := utcNow()
+	persistedRun := acceptedRun
+	if acceptedRun.AgentRuntime != nil {
+		agentRuntime := *acceptedRun.AgentRuntime
+		persistedRun.AgentRuntime = &agentRuntime
+	}
+	markRunCompleted(&persistedRun)
+	persistedRun.Revision++
+	persistedRun.UpdatedAt = completedAt
+	s.persistChatRun(completionProject, persistedRun)
+	completedRun, completionProject, published := s.publishCompletedRun(runID, acceptedRun.Revision, completedAt, markRunCompleted)
+	if !published {
+		return
+	}
+	s.publishAgentRuntimePhase(completionProject, runID, "completed", "done", "Result confirmed", "", "", "", true)
+	s.recordRunTimeline(completionProject, AIRunTimelineEvent{
 		RunID:            runID,
 		SessionID:        completionSessionID,
-		ProjectSessionID: project.ID,
+		ProjectSessionID: completionProject.ID,
 		Source:           "chat_runtime",
 		Type:             "run_completed",
 		Status:           "completed",
@@ -764,47 +804,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Capability:       providers.CapabilityChat,
 		Summary:          "Run completed.",
 	})
-	s.recordTurnContextCapsule(project, runID, req, contextSummary, cleanChatGeneratedResponse(firstNonEmpty(finalResponse, response.Text), req, system, generationReq.Prompt))
-	s.updateRun(runID, func(run *AIChatRun) {
-		run.Status = "completed"
-		run.CanCancel = false
-		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
-		run.RuntimeFamily = modelRuntimeFamily
-		run.ProviderID = descriptor.ID
-		run.Model = firstNonEmpty(response.Model, generationReq.Model)
-		run.ToolProposals = nil
-		run.EgressRecordID = record.ID
-		if run.AgentRuntime != nil {
-			run.AgentRuntime.Status = "completed"
-			run.AgentRuntime.HealthStatus = "completed"
-			if req.Action == AIChatActionBuild && buildPatchArtifactReady {
-				run.AgentRuntime.ProofState = "proved"
-				run.AgentRuntime.ProofReason = "model runtime completed through Arlecchino-owned tool and artifact path"
-				run.AgentRuntime.ArtifactState = "patch_artifact"
-			} else if req.Action == AIChatActionBuild && buildEvidenceState != "" {
-				run.AgentRuntime.ProofState = "completed"
-				run.AgentRuntime.ProofReason = "model runtime completed with typed Build evidence and no reviewable file change"
-				run.AgentRuntime.ArtifactState = buildEvidenceState
-			} else if req.Action == AIChatActionBuild {
-				run.AgentRuntime.ProofState = "completed"
-				run.AgentRuntime.ProofReason = "model runtime completed without a reviewable patch artifact; no file change was recorded"
-				run.AgentRuntime.ArtifactState = "no_patch_artifact"
-			} else {
-				run.AgentRuntime.ProofState = "proved"
-				run.AgentRuntime.ProofReason = "model runtime completed without requiring a build artifact"
-				run.AgentRuntime.ArtifactState = "not_required"
-			}
-		}
-	})
-	s.recordPlanGateIfNeeded(project, runID, req.Action)
-	s.emitRunEnvelope(project.ID, runID)
-	if run, err := s.GetChatRun(projectID, runID); err == nil {
-		s.persistChatRun(run)
-		s.emitEvent("ai:chat:run-completed", run)
-	}
-	s.mu.Lock()
-	delete(s.runCancels, runID)
-	s.mu.Unlock()
+	s.emitRunEnvelope(completionProject.ID, runID)
+	s.emitRunEvent(completionProject, runID, "ai:chat:run-completed", completedRun)
 }
 
 func chatRequestUsesToolLoop(req AIChatRunRequest) bool {
@@ -831,12 +832,6 @@ func chatRequestAllowsContinuationTools(req AIChatRunRequest) bool {
 	return chatRequestUsesProviderTools(req)
 }
 
-func (s *Service) emitBufferedChatResponseToken(runID string, response string) {
-	if token := sanitizedDisplayChunk(response); strings.TrimSpace(token) != "" {
-		s.emitChatToken(runID, token, nil)
-	}
-}
-
 func (s *Service) emitStreamingChatToken(runID string, token string) {
 	s.emitChatToken(runID, token, func(run *AIChatRun, token string) {
 		run.Response += token
@@ -844,9 +839,14 @@ func (s *Service) emitStreamingChatToken(runID string, token string) {
 }
 
 func (s *Service) emitReplacementChatToken(runID string, token string) {
-	s.emitChatToken(runID, token, func(run *AIChatRun, token string) {
-		run.Response = token
-	})
+	s.mu.RLock()
+	project := s.currentRunOwnerLocked(runID)
+	s.mu.RUnlock()
+	if project == nil {
+		return
+	}
+	s.clearChatRunResponse(project.ID, runID)
+	s.emitStreamingChatToken(runID, token)
 }
 
 func (s *Service) emitChatToken(runID string, token string, apply func(*AIChatRun, string)) {
@@ -855,15 +855,23 @@ func (s *Service) emitChatToken(runID string, token string, apply func(*AIChatRu
 		return
 	}
 	firstTokenAt := utcNow()
-	s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
-	s.updateRun(runID, func(run *AIChatRun) {
-		if strings.TrimSpace(run.FirstTokenAt) == "" {
-			run.FirstTokenAt = firstTokenAt
-		}
-		if apply != nil {
-			apply(run, token)
-		}
-	})
+	s.mu.Lock()
+	project := s.currentRunOwnerLocked(runID)
+	run := s.runs[runID]
+	if project == nil || run == nil || (run.Status != "running" && run.Status != "queued") || !s.liveRunCanUseProjectLocked(project, runID) {
+		s.mu.Unlock()
+		return
+	}
+	if strings.TrimSpace(run.FirstTokenAt) == "" {
+		run.FirstTokenAt = firstTokenAt
+	}
+	if apply != nil {
+		apply(run, token)
+	}
+	run.Revision++
+	run.UpdatedAt = utcNow()
+	s.mu.Unlock()
+	s.emitRunEvent(project, runID, "ai:chat:token", map[string]any{"runId": runID, "token": token})
 }
 
 func (s *Service) ensureBuildToolCapability(ctx context.Context, project *ProjectSession, descriptor AIProviderDescriptor, model string, toolset chatToolset) error {
@@ -938,7 +946,57 @@ type chatToolContinuationOutcome struct {
 	Failed        bool
 }
 
+type chatEmptyRetryOutcome struct {
+	Response providers.GenerationResponse
+	Record   AIEgressRecord
+	Retried  bool
+	Blocked  bool
+}
+
+const chatToolContinuationProtocolError = "AI provider tool continuation ended without a verified final response"
+
+func productiveChatToolResults(results []chatExecutedToolCall) []chatExecutedToolCall {
+	if len(results) == 0 {
+		return nil
+	}
+	productive := make([]chatExecutedToolCall, 0, len(results))
+	for _, result := range results {
+		if isAgentCommunicationToolID(result.Result.ToolID) {
+			continue
+		}
+		productive = append(productive, result)
+	}
+	return productive
+}
+
+func generationToolsWithoutAgentCommunication(tools []providers.GenerationTool) []providers.GenerationTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	filtered := make([]providers.GenerationTool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Name == providerToolAgentStatusUpdate || tool.Name == providerToolAgentCommentary {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
+}
+
+func toolCallsOnlyBroadcastAgentCommunication(calls []chatToolCallRequest) bool {
+	if len(calls) == 0 {
+		return false
+	}
+	for _, call := range calls {
+		if !isAgentCommunicationToolID(call.Request.ToolID) {
+			return false
+		}
+	}
+	return true
+}
+
 func completedReviewArtifactToolMessage(results []chatExecutedToolCall) (string, bool) {
+	results = productiveChatToolResults(results)
 	if len(results) == 0 {
 		return "", false
 	}
@@ -957,6 +1015,19 @@ func completedReviewArtifactToolMessage(results []chatExecutedToolCall) (string,
 		return "Patch preview is ready for review.", true
 	}
 	return fmt.Sprintf("%d patch previews are ready for review.", readyCount), true
+}
+
+func failedChatToolResultMessage(results []chatExecutedToolCall) (string, bool) {
+	results = productiveChatToolResults(results)
+	for _, executed := range results {
+		result := executed.Result
+		switch strings.TrimSpace(result.Status) {
+		case "blocked", "denied", "error":
+			detail := firstNonEmpty(strings.TrimSpace(result.Error), strings.TrimSpace(result.OutputPreview), strings.TrimSpace(result.Status))
+			return fmt.Sprintf("Tool %s %s: %s", firstNonEmpty(strings.TrimSpace(result.ToolID), "call"), result.Status, detail), true
+		}
+	}
+	return "", false
 }
 
 func buildResponseClaimsReviewablePatchArtifact(response string) bool {
@@ -1089,6 +1160,9 @@ func (s *Service) recordDisallowedChatToolArtifact(project *ProjectSession, runI
 	if err != nil {
 		return
 	}
+	if !s.runCanUseProject(project, runID) {
+		return
+	}
 	kind := AIToolKindContextRead
 	if descriptor, ok := s.toolDescriptor(req.ToolID); ok {
 		kind = descriptor.Kind
@@ -1129,14 +1203,23 @@ func (s *Service) recordDisallowedChatToolArtifact(project *ProjectSession, runI
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	if !s.runCanUseProject(project, runID) {
+		return
+	}
 	_ = project.ChatArtifacts.Upsert(artifact)
-	s.emitEvent("ai:tool:lifecycle-recorded", artifact)
+	s.emitRunEvent(project, runID, "ai:tool:lifecycle-recorded", artifact)
 }
 
 func allowedChatToolIDsForRequest(req AIChatRunRequest) map[string]struct{} {
 	tools := generationToolsForChatRequest(req)
 	if buildUsesFastCurrentFileEditToolset(req) {
-		tools = filterGenerationTools(tools, providerToolFileEditPreview, providerToolFileCreatePreview)
+		tools = filterGenerationTools(
+			tools,
+			providerToolAgentStatusUpdate,
+			providerToolAgentCommentary,
+			providerToolFileEditPreview,
+			providerToolFileCreatePreview,
+		)
 	}
 	if len(tools) == 0 {
 		return nil
@@ -1207,37 +1290,56 @@ func (s *Service) executeChatToolCalls(ctx context.Context, project *ProjectSess
 			},
 			Result: result,
 		})
-		s.emitEvent("ai:chat:tool-result", map[string]any{
-			"runId":      runID,
-			"toolId":     result.ToolID,
-			"status":     result.Status,
-			"artifactId": result.ArtifactID,
-		})
-		s.emitRunEnvelope(project.ID, runID)
+		if !isAgentCommunicationToolID(result.ToolID) {
+			s.emitRunEvent(project, runID, "ai:chat:tool-result", map[string]any{
+				"runId":      runID,
+				"toolId":     result.ToolID,
+				"status":     result.Status,
+				"artifactId": result.ArtifactID,
+			})
+			s.emitRunEnvelope(project.ID, runID)
+		}
 	}
 	return results
 }
 
 func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *ProjectSession, runID string, req AIChatRunRequest, provider providers.Provider, descriptor AIProviderDescriptor, baseReq providers.GenerationRequest, snapshot AIContextSnapshot, system string, assistantText string, toolResults []chatExecutedToolCall) chatToolContinuationOutcome {
-	if len(toolResults) == 0 || ctx.Err() != nil || s.runIsCanceled(runID) {
+	if len(toolResults) == 0 {
 		return chatToolContinuationOutcome{}
+	}
+	if ctx.Err() != nil || s.runIsCanceled(runID) {
+		s.finishRunCanceled(runID, AIEgressRecord{Canceled: true})
+		return chatToolContinuationOutcome{Canceled: true}
 	}
 	loopState := newChatToolLoopState()
 	loopState.remember(toolResults)
+	communicationOnlyContinuation := len(productiveChatToolResults(toolResults)) == 0
 	messages := buildChatToolContinuationMessages(baseReq.Messages, assistantText, toolResults)
 	var last chatToolContinuationOutcome
+	artifactReady := false
+	if _, ok := completedReviewArtifactToolMessage(toolResults); ok {
+		artifactReady = true
+	}
 	for round := 0; round < maxChatToolContinuationRounds; round++ {
+		if ctx.Err() != nil || s.runIsCanceled(runID) {
+			s.finishRunCanceled(runID, last.Record)
+			last.Canceled = true
+			return last
+		}
 		allowMoreTools := chatRequestAllowsContinuationTools(req) && round < maxChatToolContinuationRounds-1
 		continuationReq := baseReq
 		continuationReq.Prompt = ""
 		continuationReq.Messages = messages
-		continuationReq.Stream = false
+		continuationReq.Stream = true
 		continuationReq.Tools = nil
 		continuationReq.ToolChoice = "none"
 		continuationReq.System = system
 		toolset := chatToolset{Profile: chatToolProfileNone, ToolSupport: true}
 		if allowMoreTools {
 			toolset = generationToolsetForChatRequest(req, descriptor, continuationReq.Model)
+			if communicationOnlyContinuation {
+				toolset.Tools = generationToolsWithoutAgentCommunication(toolset.Tools)
+			}
 			continuationReq.Tools = toolset.Tools
 			if len(continuationReq.Tools) > 0 {
 				continuationReq.ToolChoice = "auto"
@@ -1282,7 +1384,31 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 			Source:           "chat_tool_result",
 			ChatAction:       req.Action,
 		}
-		response, err := provider.Generate(ctx, continuationReq, nil)
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runID,
+			SessionID:        normalizeChatSessionID(req.SessionID),
+			ProjectSessionID: project.ID,
+			Source:           "provider",
+			Type:             "provider_request",
+			Status:           "started",
+			Actor:            "model",
+			ProviderID:       descriptor.ID,
+			Model:            continuationReq.Model,
+			CorrelationID:    requestID,
+			Capability:       providers.CapabilityChat,
+			DataCategories:   snapshot.DataCategories,
+			Redaction:        snapshot.Redaction,
+			Summary:          "Provider continuation started.",
+		})
+		var providerStream *chatProviderStream
+		var tokenSink providers.TokenSink
+		if continuationReq.Stream {
+			s.clearChatRunResponse(project.ID, runID)
+			providerStream = newChatProviderStream(s, ctx, runID, req, system, baseReq.Prompt, len(continuationReq.Tools) > 0)
+			tokenSink = providerStream.Sink
+		}
+		response, err := provider.Generate(ctx, continuationReq, tokenSink)
+		providerStream.Flush()
 		record.LatencyMs = time.Since(started).Milliseconds()
 		if ctx.Err() != nil || s.runIsCanceled(runID) {
 			record.Status = "canceled"
@@ -1292,7 +1418,7 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 			s.finishRunCanceled(runID, record)
 			return chatToolContinuationOutcome{Record: record, Canceled: true}
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, errChatStreamStopped) {
 			record.Status = "error"
 			record.ErrorClass = errorClass(err)
 			applyGenerationUsageToEgress(&record, continuationReq, response, descriptor, toolset)
@@ -1305,12 +1431,17 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 		record = s.recordChatEgress(project, runID, record)
 		text := cleanChatGeneratedResponse(response.Text, req, system, baseReq.Prompt)
 		text, fencedToolCallRequests := extractChatToolCallRequests(text)
-		toolCallRequests := chatToolCallRequestsFromGenerationResponse(response)
+		toolCallRequests, toolCallErr := chatToolCallRequestsFromGenerationResponse(response)
+		if toolCallErr != nil {
+			s.finishRunError(runID, toolCallErr.Error())
+			last.Failed = true
+			return last
+		}
 		fencedStartIndex := len(toolCallRequests)
 		for index, toolReq := range fencedToolCallRequests {
 			toolCallRequests = append(toolCallRequests, chatToolCallRequestFromToolRequest(toolReq, fencedStartIndex+index))
 		}
-		last = chatToolContinuationOutcome{Response: response, Record: record}
+		last = chatToolContinuationOutcome{Response: response, Record: record, ArtifactReady: artifactReady}
 		if allowMoreTools && len(toolCallRequests) > 0 {
 			if strings.TrimSpace(text) != "" {
 				s.updateRun(runID, func(run *AIChatRun) {
@@ -1319,44 +1450,79 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 				s.emitRunEnvelope(project.ID, runID)
 			}
 			executed := s.executeChatToolCalls(ctx, project, runID, req, toolCallRequests, loopState)
+			if ctx.Err() != nil || s.runIsCanceled(runID) {
+				s.finishRunCanceled(runID, record)
+				last.Canceled = true
+				return last
+			}
 			if len(executed) == 0 {
+				s.finishRunError(runID, chatToolContinuationProtocolError)
+				last.Failed = true
+				return last
+			}
+			productive := productiveChatToolResults(executed)
+			if communicationOnlyContinuation && len(productive) == 0 {
 				if strings.TrimSpace(text) != "" {
 					last.Text = text
 					last.Completed = true
+					return last
 				}
+				s.finishRunError(runID, chatToolContinuationProtocolError)
+				last.Failed = true
 				return last
 			}
+			communicationOnlyContinuation = len(productive) == 0
 			if readyMessage, ok := completedReviewArtifactToolMessage(executed); ok {
-				last.Text = readyMessage
-				last.Completed = true
+				artifactReady = true
 				last.ArtifactReady = true
-				return last
+				messages = buildChatToolContinuationMessages(messages, firstNonEmpty(text, readyMessage), executed)
+				continue
 			}
 			if waitingMessage, ok := chatToolResultsContainInteractionQuestion(executed); ok {
 				last.Text = waitingMessage
 				last.Completed = true
 				return last
 			}
+			if failureMessage, failed := failedChatToolResultMessage(executed); failed {
+				s.finishRunError(runID, failureMessage)
+				last.Failed = true
+				return last
+			}
+			if len(productiveChatToolResults(executed)) == 0 && strings.TrimSpace(text) != "" {
+				last.Text = text
+				last.Completed = true
+				return last
+			}
 			messages = buildChatToolContinuationMessages(messages, text, executed)
 			continue
 		}
+		if len(toolCallRequests) > 0 {
+			s.finishRunError(runID, chatToolContinuationProtocolError)
+			last.Failed = true
+			return last
+		}
 		if strings.TrimSpace(text) == "" {
+			s.finishRunError(runID, chatToolContinuationProtocolError)
+			last.Failed = true
 			return last
 		}
 		last.Text = text
 		last.Completed = true
 		return last
 	}
+	s.finishRunError(runID, chatToolContinuationProtocolError)
+	last.Failed = true
 	return last
 }
 
 func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *ProjectSession, runID string, req AIChatRunRequest, provider providers.Provider, descriptor AIProviderDescriptor, baseReq providers.GenerationRequest, snapshot AIContextSnapshot, system string, blockedResponse string, guard buildRewriteGuardDecision) chatToolContinuationOutcome {
 	if ctx.Err() != nil || s.runIsCanceled(runID) {
-		return chatToolContinuationOutcome{}
+		s.finishRunCanceled(runID, AIEgressRecord{Canceled: true})
+		return chatToolContinuationOutcome{Canceled: true}
 	}
 	retryReq := baseReq
 	retryReq.Prompt = ""
-	retryReq.Stream = false
+	retryReq.Stream = true
 	toolset := generationToolsetForChatRequest(req, descriptor, retryReq.Model)
 	retryReq.Tools = toolset.Tools
 	retryReq.ToolChoice = "auto"
@@ -1411,7 +1577,26 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		Source:           "chat_rewrite_guard",
 		ChatAction:       req.Action,
 	}
-	response, err := provider.Generate(ctx, retryReq, nil)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		SessionID:        normalizeChatSessionID(req.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "provider",
+		Type:             "provider_request",
+		Status:           "started",
+		Actor:            "model",
+		ProviderID:       descriptor.ID,
+		Model:            retryReq.Model,
+		CorrelationID:    requestID,
+		Capability:       providers.CapabilityChat,
+		DataCategories:   snapshot.DataCategories,
+		Redaction:        snapshot.Redaction,
+		Summary:          "Provider rewrite-guard retry started.",
+	})
+	s.clearChatRunResponse(project.ID, runID)
+	providerStream := newChatProviderStream(s, ctx, runID, req, system, baseReq.Prompt, len(retryReq.Tools) > 0)
+	response, err := provider.Generate(ctx, retryReq, providerStream.Sink)
+	providerStream.Flush()
 	record.LatencyMs = time.Since(started).Milliseconds()
 	if ctx.Err() != nil || s.runIsCanceled(runID) {
 		record.Status = "canceled"
@@ -1421,7 +1606,7 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		s.finishRunCanceled(runID, record)
 		return chatToolContinuationOutcome{Record: record, Canceled: true}
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errChatStreamStopped) {
 		record.Status = "error"
 		record.ErrorClass = errorClass(err)
 		applyGenerationUsageToEgress(&record, retryReq, response, descriptor, toolset)
@@ -1434,23 +1619,37 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 	record = s.recordChatEgress(project, runID, record)
 	text := cleanChatGeneratedResponse(response.Text, req, system, baseReq.Prompt)
 	text, fencedToolCallRequests := extractChatToolCallRequests(text)
-	toolCallRequests := chatToolCallRequestsFromGenerationResponse(response)
+	toolCallRequests, toolCallErr := chatToolCallRequestsFromGenerationResponse(response)
+	if toolCallErr != nil {
+		s.finishRunError(runID, toolCallErr.Error())
+		return chatToolContinuationOutcome{Response: response, Record: record, Failed: true}
+	}
 	fencedStartIndex := len(toolCallRequests)
 	for index, toolReq := range fencedToolCallRequests {
 		toolCallRequests = append(toolCallRequests, chatToolCallRequestFromToolRequest(toolReq, fencedStartIndex+index))
 	}
 	if len(toolCallRequests) == 0 {
-		return chatToolContinuationOutcome{Response: response, Record: record}
+		s.finishRunError(runID, buildRewriteGuardProtocolError(guard))
+		return chatToolContinuationOutcome{Response: response, Record: record, Failed: true}
 	}
 	if strings.TrimSpace(text) == "" {
 		text = "Prepared targeted tool results for review."
 	}
 	executed := s.executeChatToolCalls(ctx, project, runID, req, toolCallRequests)
+	if ctx.Err() != nil || s.runIsCanceled(runID) {
+		s.finishRunCanceled(runID, record)
+		return chatToolContinuationOutcome{Response: response, Record: record, Canceled: true}
+	}
 	if len(executed) == 0 {
-		return chatToolContinuationOutcome{Response: response, Record: record, Text: text, Completed: true}
+		s.finishRunError(runID, buildRewriteGuardProtocolError(guard))
+		return chatToolContinuationOutcome{Response: response, Record: record, Failed: true}
 	}
 	if readyMessage, ok := completedReviewArtifactToolMessage(executed); ok {
 		return chatToolContinuationOutcome{Response: response, Record: record, Text: readyMessage, Completed: true, ArtifactReady: true}
+	}
+	if failureMessage, failed := failedChatToolResultMessage(executed); failed {
+		s.finishRunError(runID, failureMessage)
+		return chatToolContinuationOutcome{Response: response, Record: record, Failed: true}
 	}
 	outcome := s.continueChatRunAfterToolResults(ctx, project, runID, req, provider, descriptor, retryReq, snapshot, system, text, executed)
 	if outcome.Canceled || outcome.Failed {
@@ -1462,15 +1661,31 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 	if outcome.Completed && strings.TrimSpace(outcome.Text) != "" {
 		return outcome
 	}
-	return chatToolContinuationOutcome{Response: response, Record: record, Text: text, Completed: true}
+	s.finishRunError(runID, buildRewriteGuardProtocolError(guard))
+	return chatToolContinuationOutcome{Response: response, Record: record, Failed: true}
 }
 
 func (s *Service) clearChatRunResponse(projectID string, runID string) {
-	s.updateRun(runID, func(run *AIChatRun) {
-		run.Response = ""
-	})
-	if strings.TrimSpace(projectID) != "" {
-		s.emitRunEnvelope(projectID, runID)
+	projectID = strings.TrimSpace(projectID)
+	s.mu.Lock()
+	run := s.runs[runID]
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil || (projectID != "" && project.ID != projectID) {
+		s.mu.Unlock()
+		return
+	}
+	run.Response = ""
+	run.Revision++
+	run.UpdatedAt = utcNow()
+	revision := run.Revision
+	s.mu.Unlock()
+	if projectID != "" {
+		s.emitRunEvent(project, runID, "ai:chat:stream-reset", map[string]any{
+			"runId":            runID,
+			"projectSessionId": project.ID,
+			"revision":         revision,
+		})
+		s.emitRunEnvelope(project.ID, runID)
 	}
 }
 
@@ -1542,13 +1757,16 @@ func buildRewriteGuardProtocolError(guard buildRewriteGuardDecision) string {
 }
 
 func (s *Service) recordChatEgress(project *ProjectSession, runID string, record AIEgressRecord) AIEgressRecord {
+	if !s.runCanUseProject(project, runID) {
+		return record
+	}
 	if project.Egress != nil {
 		stored, ledgerErr := project.Egress.Append(record)
 		if ledgerErr == nil {
 			record = stored
 		}
 	}
-	s.emitEvent("ai:chat:egress-recorded", record)
+	s.emitRunEvent(project, runID, "ai:chat:egress-recorded", record)
 	s.recordEgressTimeline(project, runID, record)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.EgressRecordID = record.ID
@@ -1828,7 +2046,7 @@ func buildRewriteGuardFallbackMessage(guard buildRewriteGuardDecision) string {
 }
 
 func (s *Service) recordBuildRewriteGuardArtifact(project *ProjectSession, runID string, guard buildRewriteGuardDecision) {
-	if project == nil || project.ChatArtifacts == nil || strings.TrimSpace(runID) == "" {
+	if project == nil || project.ChatArtifacts == nil || strings.TrimSpace(runID) == "" || !s.runCanUseProject(project, runID) {
 		return
 	}
 	run, err := s.GetChatRun(project.ID, runID)
@@ -1880,25 +2098,36 @@ func (s *Service) recordBuildRewriteGuardArtifact(project *ProjectSession, runID
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	if !s.runCanUseProject(project, runID) {
+		return
+	}
 	_ = project.ChatArtifacts.Upsert(artifact)
-	s.emitEvent("ai:tool:lifecycle-recorded", artifact)
+	s.emitRunEvent(project, runID, "ai:tool:lifecycle-recorded", artifact)
 }
 
-func (s *Service) markRunDone(runID string) {
-	s.mu.Lock()
-	done := s.runDone[runID]
-	delete(s.runDone, runID)
-	delete(s.runCancels, runID)
-	s.mu.Unlock()
+func (s *Service) markRunDone(runID string, done chan struct{}) {
 	if done != nil {
 		close(done)
 	}
+	s.mu.Lock()
+	if s.runDone[runID] == done {
+		delete(s.runDone, runID)
+		delete(s.runCancels, runID)
+	}
+	if _, retired := s.retiredRuns[runID]; retired {
+		delete(s.runOwners, runID)
+		delete(s.retiredRuns, runID)
+	}
+	s.mu.Unlock()
+	s.agentCommunicationMu.Lock()
+	delete(s.agentCommunication, runID)
+	s.agentCommunicationMu.Unlock()
 }
 
 func (s *Service) updateRun(runID string, update func(*AIChatRun)) {
 	s.mu.Lock()
 	run := s.runs[runID]
-	if run == nil {
+	if run == nil || s.currentRunOwnerLocked(runID) == nil {
 		s.mu.Unlock()
 		return
 	}
@@ -1908,11 +2137,46 @@ func (s *Service) updateRun(runID string, update func(*AIChatRun)) {
 	s.mu.Unlock()
 }
 
+func (s *Service) updateRunningRun(ctx context.Context, runID string, update func(*AIChatRun)) (AIChatRun, *ProjectSession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.runs[runID]
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil || (run.Status != "running" && run.Status != "queued") || (ctx != nil && ctx.Err() != nil) {
+		return AIChatRun{}, nil, false
+	}
+	if update != nil {
+		update(run)
+	}
+	run.Revision++
+	run.UpdatedAt = utcNow()
+	delete(s.runCancels, runID)
+	return *run, project, true
+}
+
+func (s *Service) publishCompletedRun(runID string, acceptedRevision int64, completedAt string, update func(*AIChatRun)) (AIChatRun, *ProjectSession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.runs[runID]
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil || (run.Status != "running" && run.Status != "queued") || run.CanCancel || run.Revision != acceptedRevision {
+		return AIChatRun{}, nil, false
+	}
+	if update != nil {
+		update(run)
+	}
+	run.Status = "completed"
+	run.CanCancel = false
+	run.Revision++
+	run.UpdatedAt = completedAt
+	return *run, project, true
+}
+
 func (s *Service) chatRunResponse(runID string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	run := s.runs[runID]
-	if run == nil {
+	if run == nil || s.currentRunOwnerLocked(runID) == nil {
 		return ""
 	}
 	return run.Response
@@ -1922,13 +2186,14 @@ func (s *Service) runIsCanceled(runID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	run := s.runs[runID]
-	return run != nil && run.Status == "canceled"
+	return run == nil || s.currentRunOwnerLocked(runID) == nil || run.Status == "canceled"
 }
 
 func (s *Service) finishRunEmptyResponse(runID string, record AIEgressRecord, providerID string, model string, response providers.GenerationResponse) {
 	s.mu.Lock()
 	run := s.runs[runID]
-	if run == nil || run.Status == "canceled" {
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil || run.Status == "canceled" {
 		delete(s.runCancels, runID)
 		s.mu.Unlock()
 		return
@@ -1957,23 +2222,22 @@ func (s *Service) finishRunEmptyResponse(runID string, record AIEgressRecord, pr
 	runCopy := *run
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
-	s.persistChatRun(runCopy)
-	s.emitEvent("ai:chat:run-error", runCopy)
-	if project := s.project(runCopy.ProjectSessionID); project != nil {
-		s.recordRunTimeline(project, AIRunTimelineEvent{
-			RunID:            runCopy.ID,
-			SessionID:        normalizeChatSessionID(runCopy.SessionID),
-			ProjectSessionID: runCopy.ProjectSessionID,
-			Source:           "chat_runtime",
-			Type:             "run_error",
-			Status:           "error",
-			Actor:            "system",
-			ProviderID:       runCopy.ProviderID,
-			Model:            runCopy.Model,
-			Capability:       providers.CapabilityChat,
-			Summary:          runCopy.Error,
-		})
-	}
+	s.persistChatRun(project, runCopy)
+	s.emitRunEvent(project, runID, "ai:chat:run-error", runCopy)
+	s.publishAgentRuntimePhase(project, runID, "completed", "error", "Run failed", runCopy.Error, "", "", true)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runCopy.ID,
+		SessionID:        normalizeChatSessionID(runCopy.SessionID),
+		ProjectSessionID: runCopy.ProjectSessionID,
+		Source:           "chat_runtime",
+		Type:             "run_error",
+		Status:           "error",
+		Actor:            "system",
+		ProviderID:       runCopy.ProviderID,
+		Model:            runCopy.Model,
+		Capability:       providers.CapabilityChat,
+		Summary:          runCopy.Error,
+	})
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
 
@@ -1984,11 +2248,39 @@ func emptyChatResponseMessage(response providers.GenerationResponse) string {
 	return "AI provider returned no visible assistant response."
 }
 
-func (s *Service) retryEmptyChatResponse(ctx context.Context, project *ProjectSession, runID string, provider providers.Provider, generationReq providers.GenerationRequest, req AIChatRunRequest, system string, snapshot AIContextSnapshot, response providers.GenerationResponse) (providers.GenerationResponse, bool) {
+func (s *Service) retryEmptyChatResponse(
+	ctx context.Context,
+	project *ProjectSession,
+	runID string,
+	provider providers.Provider,
+	descriptor AIProviderDescriptor,
+	generationReq providers.GenerationRequest,
+	req AIChatRunRequest,
+	system string,
+	snapshot AIContextSnapshot,
+	toolset chatToolset,
+	response providers.GenerationResponse,
+	initialRecord AIEgressRecord,
+) chatEmptyRetryOutcome {
+	outcome := chatEmptyRetryOutcome{Response: response, Record: initialRecord}
 	current := cleanChatGeneratedResponse(firstNonEmpty(s.chatRunResponse(runID), response.Text), req, system, generationReq.Prompt)
-	if strings.TrimSpace(current) != "" || len(response.ToolCalls) > 0 || ctx.Err() != nil || s.runIsCanceled(runID) {
-		return response, false
+	if strings.TrimSpace(current) != "" || len(response.ToolCalls) > 0 {
+		return outcome
 	}
+	if ctx.Err() != nil || s.runIsCanceled(runID) {
+		initialRecord.Status = "canceled"
+		initialRecord.Canceled = true
+		applyGenerationUsageToEgress(&initialRecord, generationReq, response, descriptor, toolset)
+		initialRecord = s.recordChatEgress(project, runID, initialRecord)
+		s.finishRunCanceled(runID, initialRecord)
+		outcome.Record = initialRecord
+		outcome.Blocked = true
+		return outcome
+	}
+	initialRecord.Status = "completed"
+	applyGenerationUsageToEgress(&initialRecord, generationReq, response, descriptor, toolset)
+	initialRecord = s.recordChatEgress(project, runID, initialRecord)
+	outcome.Record = initialRecord
 	if err := s.revalidatePreparedContinuity(project, snapshot); err != nil {
 		s.recordRunTimeline(project, AIRunTimelineEvent{
 			RunID:            runID,
@@ -2004,29 +2296,97 @@ func (s *Service) retryEmptyChatResponse(ctx context.Context, project *ProjectSe
 			Summary:          err.Error(),
 		})
 		s.finishRunError(runID, err.Error())
-		return response, true
+		outcome.Blocked = true
+		return outcome
 	}
 	retryReq := generationReq
-	retryReq.Stream = false
-	retryResp, err := provider.Generate(ctx, retryReq, nil)
-	if err != nil || ctx.Err() != nil || s.runIsCanceled(runID) {
-		return response, false
+	retryReq.Stream = true
+	started := time.Now()
+	requestID := uuid.NewString()
+	retryRecord := AIEgressRecord{
+		ID:               "eg-" + requestID,
+		RequestID:        requestID,
+		ProviderID:       descriptor.ID,
+		ProviderKind:     descriptor.Kind,
+		Endpoint:         descriptor.Endpoint,
+		Model:            retryReq.Model,
+		ReasoningEffort:  retryReq.ReasoningEffort,
+		Capability:       providers.CapabilityChat,
+		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
+		ProjectSessionID: project.ID,
+		DataCategories:   snapshot.DataCategories,
+		Redaction:        snapshot.Redaction,
+		Status:           "started",
+		OptInSource:      "chat_empty_retry",
+		CreatedAt:        utcNow(),
+		RunID:            runID,
+		Source:           "chat_empty_retry",
+		ChatAction:       req.Action,
 	}
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		SessionID:        normalizeChatSessionID(req.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "provider",
+		Type:             "provider_request",
+		Status:           "started",
+		Actor:            "model",
+		ProviderID:       descriptor.ID,
+		Model:            retryReq.Model,
+		CorrelationID:    requestID,
+		Capability:       providers.CapabilityChat,
+		DataCategories:   snapshot.DataCategories,
+		Redaction:        snapshot.Redaction,
+		Summary:          "Provider empty-response retry started.",
+	})
+	s.clearChatRunResponse(project.ID, runID)
+	providerStream := newChatProviderStream(s, ctx, runID, req, system, retryReq.Prompt, len(retryReq.Tools) > 0)
+	retryResp, err := provider.Generate(ctx, retryReq, providerStream.Sink)
+	if !s.liveRunCanUseProject(project, runID) {
+		outcome.Blocked = true
+		return outcome
+	}
+	providerStream.Flush()
+	retryRecord.LatencyMs = time.Since(started).Milliseconds()
+	outcome.Response = retryResp
+	outcome.Record = retryRecord
+	outcome.Retried = true
+	if ctx.Err() != nil || s.runIsCanceled(runID) {
+		retryRecord.Status = "canceled"
+		retryRecord.Canceled = true
+		applyGenerationUsageToEgress(&retryRecord, retryReq, retryResp, descriptor, toolset)
+		retryRecord = s.recordChatEgress(project, runID, retryRecord)
+		s.finishRunCanceled(runID, retryRecord)
+		outcome.Record = retryRecord
+		outcome.Blocked = true
+		return outcome
+	}
+	if err != nil && !errors.Is(err, errChatStreamStopped) {
+		retryRecord.Status = "error"
+		retryRecord.ErrorClass = errorClass(err)
+		applyGenerationUsageToEgress(&retryRecord, retryReq, retryResp, descriptor, toolset)
+		retryRecord = s.recordChatEgress(project, runID, retryRecord)
+		s.finishRunError(runID, err.Error())
+		outcome.Record = retryRecord
+		outcome.Blocked = true
+		return outcome
+	}
+	retryRecord.Status = "completed"
+	applyGenerationUsageToEgress(&retryRecord, retryReq, retryResp, descriptor, toolset)
+	retryRecord = s.recordChatEgress(project, runID, retryRecord)
+	outcome.Record = retryRecord
 	cleaned := cleanChatGeneratedResponse(retryResp.Text, req, system, retryReq.Prompt)
-	if strings.TrimSpace(cleaned) == "" {
-		return retryResp, false
+	if strings.TrimSpace(cleaned) != "" && strings.TrimSpace(s.chatRunResponse(runID)) == "" {
+		s.emitStreamingChatToken(runID, cleaned)
 	}
-	if len(generationReq.Tools) > 0 {
-		return retryResp, false
-	}
-	s.emitReplacementChatToken(runID, cleaned)
-	return retryResp, false
+	return outcome
 }
 
 func (s *Service) finishRunError(runID string, message string) {
 	s.mu.Lock()
 	run := s.runs[runID]
-	if run == nil || run.Status == "canceled" {
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil || run.Status == "canceled" {
 		delete(s.runCancels, runID)
 		s.mu.Unlock()
 		return
@@ -2052,36 +2412,36 @@ func (s *Service) finishRunError(runID string, message string) {
 	runCopy := *run
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
-	s.persistChatRun(runCopy)
-	s.emitEvent("ai:chat:run-error", runCopy)
-	if project := s.project(runCopy.ProjectSessionID); project != nil {
-		s.recordRunTimeline(project, AIRunTimelineEvent{
-			RunID:            runCopy.ID,
-			SessionID:        normalizeChatSessionID(runCopy.SessionID),
-			ProjectSessionID: runCopy.ProjectSessionID,
-			Source:           "chat_runtime",
-			Type:             "run_error",
-			Status:           "error",
-			Actor:            "system",
-			ProviderID:       runCopy.ProviderID,
-			Model:            runCopy.Model,
-			Capability:       providers.CapabilityChat,
-			Summary:          runCopy.Error,
-		})
-	}
+	s.persistChatRun(project, runCopy)
+	s.emitRunEvent(project, runID, "ai:chat:run-error", runCopy)
+	s.publishAgentRuntimePhase(project, runID, "completed", "error", "Run failed", runCopy.Error, "", "", true)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runCopy.ID,
+		SessionID:        normalizeChatSessionID(runCopy.SessionID),
+		ProjectSessionID: runCopy.ProjectSessionID,
+		Source:           "chat_runtime",
+		Type:             "run_error",
+		Status:           "error",
+		Actor:            "system",
+		ProviderID:       runCopy.ProviderID,
+		Model:            runCopy.Model,
+		Capability:       providers.CapabilityChat,
+		Summary:          runCopy.Error,
+	})
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
 
 func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 	s.mu.Lock()
 	run := s.runs[runID]
-	if run == nil {
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil {
 		delete(s.runCancels, runID)
 		s.mu.Unlock()
 		return
 	}
 	req := AIChatRunRequest{Action: run.Action, Prompt: run.UserPrompt}
-	shouldEmit := run.Status != "canceled"
+	alreadyCanceled := run.Status == "canceled"
 	run.Status = "canceled"
 	run.Response = cleanChatGeneratedResponse(run.Response, req, chatSystemPrompt(req), "")
 	if run.AgentRuntime != nil {
@@ -2094,31 +2454,31 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 	runCopy := *run
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
-	s.persistChatRun(runCopy)
-	if shouldEmit {
-		s.emitEvent("ai:chat:run-canceled", runCopy)
+	s.persistChatRun(project, runCopy)
+	if alreadyCanceled {
+		s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
+		return
 	}
-	if project := s.project(runCopy.ProjectSessionID); project != nil {
-		s.recordRunTimeline(project, AIRunTimelineEvent{
-			RunID:            runCopy.ID,
-			SessionID:        normalizeChatSessionID(runCopy.SessionID),
-			ProjectSessionID: runCopy.ProjectSessionID,
-			Source:           "chat_runtime",
-			Type:             "run_canceled",
-			Status:           "canceled",
-			Actor:            "system",
-			ProviderID:       runCopy.ProviderID,
-			Model:            runCopy.Model,
-			Capability:       providers.CapabilityChat,
-			Summary:          "Run canceled.",
-		})
-	}
+	s.emitRunEvent(project, runID, "ai:chat:run-canceled", runCopy)
+	s.publishAgentRuntimePhase(project, runID, "completed", "canceled", "Run canceled", "", "", "", true)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runCopy.ID,
+		SessionID:        normalizeChatSessionID(runCopy.SessionID),
+		ProjectSessionID: runCopy.ProjectSessionID,
+		Source:           "chat_runtime",
+		Type:             "run_canceled",
+		Status:           "canceled",
+		Actor:            "system",
+		ProviderID:       runCopy.ProviderID,
+		Model:            runCopy.Model,
+		Capability:       providers.CapabilityChat,
+		Summary:          "Run canceled.",
+	})
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
 
-func (s *Service) persistChatRun(run AIChatRun) {
-	project := s.project(run.ProjectSessionID)
-	if project == nil || project.ChatHistory == nil {
+func (s *Service) persistChatRun(project *ProjectSession, run AIChatRun) {
+	if project == nil || project.ChatHistory == nil || !s.runCanUseProject(project, run.ID) {
 		return
 	}
 	run.SessionID = normalizeChatSessionID(run.SessionID)
@@ -2296,6 +2656,9 @@ func chatSystemPrompt(req AIChatRunRequest) string {
 		modePrompt,
 		chatRuntimeBoundaryPrompt(req),
 		chatModeBoundaryPrompt(req),
+	}
+	if communicationSkill := agentCommunicationSkillPrompt(req); communicationSkill != "" {
+		parts = append(parts, communicationSkill)
 	}
 	if manifest := chatContextManifestPrompt(req); manifest != "" {
 		parts = append(parts, manifest)
@@ -3233,8 +3596,8 @@ func defaultChatMaxTokens(action AIChatAction) int {
 }
 
 type chatStreamGuard struct {
-	raw            strings.Builder
-	text           strings.Builder
+	rawTail        string
+	textTail       string
 	held           strings.Builder
 	released       bool
 	req            AIChatRunRequest
@@ -3242,21 +3605,258 @@ type chatStreamGuard struct {
 	providerPrompt string
 }
 
+const (
+	chatStreamRawTailBytes  = 256
+	chatStreamTextTailBytes = 32 << 10
+	chatStreamFlushInterval = 40 * time.Millisecond
+)
+
+func appendChatStreamTail(current string, next string, limit int) string {
+	if next == "" {
+		return current
+	}
+	combined := current + next
+	if limit <= 0 || len(combined) <= limit {
+		return combined
+	}
+	start := len(combined) - limit
+	for start < len(combined) && !utf8.RuneStart(combined[start]) {
+		start++
+	}
+	return combined[start:]
+}
+
+type chatProviderStream struct {
+	service            *Service
+	ctx                context.Context
+	runID              string
+	guard              *chatStreamGuard
+	toolFenceFilter    *chatToolFenceStreamFilter
+	preserveToolStream bool
+	displayStopped     bool
+	outputMu           sync.Mutex
+	pendingOutput      strings.Builder
+	outputTimer        *time.Timer
+	outputClosed       bool
+}
+
+func newChatProviderStream(service *Service, ctx context.Context, runID string, req AIChatRunRequest, system string, providerPrompt string, preserveToolStream bool) *chatProviderStream {
+	stream := &chatProviderStream{
+		service:            service,
+		ctx:                ctx,
+		runID:              runID,
+		guard:              newChatStreamGuard(req, system, providerPrompt),
+		preserveToolStream: preserveToolStream,
+	}
+	if preserveToolStream {
+		stream.toolFenceFilter = &chatToolFenceStreamFilter{}
+	}
+	return stream
+}
+
+func (stream *chatProviderStream) Sink(token string) error {
+	if stream == nil || stream.service == nil {
+		return nil
+	}
+	if stream.ctx.Err() != nil || stream.service.runIsCanceled(stream.runID) {
+		return context.Canceled
+	}
+	if token == "" || stream.displayStopped {
+		return nil
+	}
+	displayToken := sanitizedDisplayChunk(token)
+	if stream.toolFenceFilter != nil {
+		displayToken = stream.toolFenceFilter.Observe(displayToken)
+	}
+	releaseToken, observeErr := stream.guard.Observe(token, displayToken)
+	if releaseToken != "" {
+		stream.enqueueOutput(releaseToken)
+	}
+	if errors.Is(observeErr, errChatStreamStopped) && stream.preserveToolStream {
+		stream.displayStopped = true
+		return nil
+	}
+	return observeErr
+}
+
+func (stream *chatProviderStream) Flush() {
+	if stream == nil || stream.service == nil {
+		return
+	}
+	if stream.ctx.Err() != nil || stream.service.runIsCanceled(stream.runID) {
+		stream.closeOutput(false)
+		return
+	}
+	if stream.displayStopped {
+		stream.closeOutput(true)
+		return
+	}
+	if stream.toolFenceFilter != nil {
+		if displayTail := stream.toolFenceFilter.Flush(); displayTail != "" {
+			releaseToken, observeErr := stream.guard.Observe("", displayTail)
+			if releaseToken != "" {
+				stream.enqueueOutput(releaseToken)
+			}
+			if errors.Is(observeErr, errChatStreamStopped) {
+				stream.closeOutput(true)
+				return
+			}
+		}
+	}
+	if releaseToken := stream.guard.Flush(); releaseToken != "" {
+		stream.enqueueOutput(releaseToken)
+	}
+	stream.closeOutput(true)
+}
+
+func (stream *chatProviderStream) enqueueOutput(token string) {
+	if stream == nil || token == "" {
+		return
+	}
+	stream.outputMu.Lock()
+	defer stream.outputMu.Unlock()
+	if stream.outputClosed {
+		return
+	}
+	stream.pendingOutput.WriteString(token)
+	if stream.outputTimer == nil {
+		stream.outputTimer = time.AfterFunc(chatStreamFlushInterval, stream.flushScheduledOutput)
+	}
+}
+
+func (stream *chatProviderStream) flushScheduledOutput() {
+	if stream == nil {
+		return
+	}
+	stream.outputMu.Lock()
+	defer stream.outputMu.Unlock()
+	stream.outputTimer = nil
+	if stream.outputClosed || stream.pendingOutput.Len() == 0 {
+		return
+	}
+	token := stream.pendingOutput.String()
+	stream.pendingOutput.Reset()
+	stream.service.emitStreamingChatToken(stream.runID, token)
+}
+
+func (stream *chatProviderStream) closeOutput(emit bool) {
+	if stream == nil {
+		return
+	}
+	stream.outputMu.Lock()
+	defer stream.outputMu.Unlock()
+	if stream.outputClosed {
+		return
+	}
+	stream.outputClosed = true
+	if stream.outputTimer != nil {
+		stream.outputTimer.Stop()
+		stream.outputTimer = nil
+	}
+	if emit && stream.pendingOutput.Len() > 0 {
+		token := stream.pendingOutput.String()
+		stream.pendingOutput.Reset()
+		stream.service.emitStreamingChatToken(stream.runID, token)
+		return
+	}
+	stream.pendingOutput.Reset()
+}
+
+const chatToolFenceMarker = "```arlecchino-tool"
+
+type chatToolFenceStreamFilter struct {
+	pending     string
+	suppressing bool
+}
+
+func (filter *chatToolFenceStreamFilter) Observe(chunk string) string {
+	if filter == nil || chunk == "" {
+		return chunk
+	}
+	filter.pending += chunk
+	var visible strings.Builder
+	for {
+		if filter.suppressing {
+			if closing := strings.Index(filter.pending, "```"); closing >= 0 {
+				filter.pending = filter.pending[closing+3:]
+				filter.suppressing = false
+				continue
+			}
+			filter.pending = trailingMarkerPrefix(filter.pending, "```")
+			return visible.String()
+		}
+		if opening := strings.Index(filter.pending, chatToolFenceMarker); opening >= 0 {
+			visible.WriteString(filter.pending[:opening])
+			filter.pending = filter.pending[opening+len(chatToolFenceMarker):]
+			filter.suppressing = true
+			continue
+		}
+		trailing := trailingMarkerPrefix(filter.pending, chatToolFenceMarker)
+		emitLength := len(filter.pending) - len(trailing)
+		if trailing != "" {
+			for emitLength > 0 {
+				switch filter.pending[emitLength-1] {
+				case ' ', '\t', '\r', '\n':
+					emitLength--
+				default:
+					goto markerPrefixReady
+				}
+			}
+		}
+	markerPrefixReady:
+		visible.WriteString(filter.pending[:emitLength])
+		filter.pending = filter.pending[emitLength:]
+		return visible.String()
+	}
+}
+
+func (filter *chatToolFenceStreamFilter) Flush() string {
+	if filter == nil {
+		return ""
+	}
+	if filter.suppressing {
+		filter.pending = ""
+		return ""
+	}
+	visible := filter.pending
+	filter.pending = ""
+	return visible
+}
+
+func trailingMarkerPrefix(value string, marker string) string {
+	maxLength := len(value)
+	if len(marker)-1 < maxLength {
+		maxLength = len(marker) - 1
+	}
+	for length := maxLength; length > 0; length-- {
+		if strings.HasSuffix(value, marker[:length]) {
+			return value[len(value)-length:]
+		}
+	}
+	return ""
+}
+
 func newChatStreamGuard(req AIChatRunRequest, system string, providerPrompt string) *chatStreamGuard {
 	return &chatStreamGuard{req: req, system: system, providerPrompt: providerPrompt}
 }
 
 func (g *chatStreamGuard) Observe(rawToken string, displayToken string) (string, error) {
+	stopMarker := false
+	repeatedText := false
 	if rawToken != "" {
-		g.raw.WriteString(rawToken)
+		stopMarker = containsChatStopMarker(g.rawTail + rawToken)
+		g.rawTail = appendChatStreamTail(g.rawTail, rawToken, chatStreamRawTailBytes)
 	}
 	if displayToken != "" {
-		g.text.WriteString(displayToken)
+		if strings.ContainsAny(displayToken, ".!?\n。！？") {
+			repeatedText = shouldStopRepeatedGeneratedText(g.textTail + displayToken)
+		}
+		g.textTail = appendChatStreamTail(g.textTail, displayToken, chatStreamTextTailBytes)
 		if !g.released {
 			g.held.WriteString(displayToken)
 		}
 	}
-	if containsChatStopMarker(g.raw.String()) || shouldStopRepeatedGeneratedText(g.text.String()) {
+	if stopMarker || repeatedText {
 		return "", errChatStreamStopped
 	}
 	if displayToken == "" {
@@ -3321,7 +3921,7 @@ func visibleChatStreamCandidate(value string, req AIChatRunRequest, system strin
 	if stop {
 		candidate = trimmed
 	}
-	return strings.TrimSpace(candidate), stop
+	return candidate, stop
 }
 
 func isPossibleInternalPromptEchoPrefix(value string, req AIChatRunRequest, system string, providerPrompt string) bool {
@@ -3470,10 +4070,6 @@ func extractChatToolCallRequests(value string) (string, []AIToolCallRequest) {
 		if inToolBlock && strings.HasPrefix(trimmed, "```") {
 			if req, ok := parseChatToolCallBlock(strings.Join(block, "\n")); ok {
 				requests = append(requests, req)
-			} else {
-				visible = append(visible, "```arlecchino-tool")
-				visible = append(visible, block...)
-				visible = append(visible, "```")
 			}
 			inToolBlock = false
 			block = block[:0]
@@ -3484,10 +4080,6 @@ func extractChatToolCallRequests(value string) (string, []AIToolCallRequest) {
 			continue
 		}
 		visible = append(visible, line)
-	}
-	if inToolBlock {
-		visible = append(visible, "```arlecchino-tool")
-		visible = append(visible, block...)
 	}
 	return strings.TrimSpace(strings.Join(visible, "\n")), requests
 }
@@ -3561,7 +4153,7 @@ func truncateInternalPromptEchoTail(value string) (string, bool) {
 		}
 	}
 	if best < 0 {
-		return strings.TrimSpace(value), false
+		return value, false
 	}
 	return strings.TrimSpace(value[:best]), true
 }
@@ -3575,7 +4167,7 @@ func isLineBoundary(value string, idx int) bool {
 }
 
 func stripExactUserPromptEchoPrefix(value string, prompt string) (string, bool) {
-	trimmed := strings.TrimSpace(value)
+	trimmed := strings.TrimLeftFunc(value, unicode.IsSpace)
 	prompt = strings.TrimSpace(prompt)
 	if trimmed == "" || prompt == "" {
 		return value, false
@@ -3588,20 +4180,20 @@ func stripExactUserPromptEchoPrefix(value string, prompt string) (string, bool) 
 	}
 	suffix := strings.TrimLeft(trimmed[len(prompt):], " \t")
 	if strings.HasPrefix(suffix, "\n") || strings.HasPrefix(suffix, "\r") {
-		return strings.TrimSpace(suffix), true
+		return strings.TrimLeftFunc(suffix, unicode.IsSpace), true
 	}
 	return value, false
 }
 
 func stripLeadingInternalPromptEchoPrefix(value string, req AIChatRunRequest, system string, providerPrompt string) (string, bool) {
-	out := strings.TrimSpace(value)
+	out := strings.TrimLeftFunc(value, unicode.IsSpace)
 	if out == "" {
 		return "", false
 	}
 	changed := false
 	for i := 0; i < 24; i++ {
 		if next, ok := stripLeadingInternalTagEchoPrefix(out); ok {
-			out = strings.TrimSpace(next)
+			out = strings.TrimLeftFunc(next, unicode.IsSpace)
 			changed = true
 			if out == "" {
 				return "", true
@@ -3609,7 +4201,7 @@ func stripLeadingInternalPromptEchoPrefix(value string, req AIChatRunRequest, sy
 			continue
 		}
 		if next, ok := stripLeadingInternalTextEchoPrefix(out, req, system, providerPrompt); ok {
-			out = strings.TrimSpace(next)
+			out = strings.TrimLeftFunc(next, unicode.IsSpace)
 			changed = true
 			if out == "" {
 				return "", true
@@ -3621,7 +4213,7 @@ func stripLeadingInternalPromptEchoPrefix(value string, req AIChatRunRequest, sy
 	if changed {
 		return out, true
 	}
-	return strings.TrimSpace(value), false
+	return value, false
 }
 
 func stripLeadingInternalTagEchoPrefix(value string) (string, bool) {

@@ -125,6 +125,10 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		execReq.Action = AIToolCallActionExecute
 	}
 	switch req.ToolID {
+	case "agent.status.update":
+		result = s.executeAgentStatusUpdateTool(project, execReq, result)
+	case "agent.commentary":
+		result = s.executeAgentCommentaryTool(project, execReq, result)
 	case "context.read":
 		result = s.executeContextReadTool(project, execReq, result)
 	case "diagnostics.read":
@@ -343,6 +347,10 @@ func newToolCallResult(req AIToolCallRequest, descriptor AIToolDescriptor, propo
 }
 
 func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResult, proposal AIToolProposal, payload any) AIToolCallResult {
+	runID := strings.TrimSpace(result.Audit.RunID)
+	if runID != "" && !s.runCanUseProject(project, runID) {
+		return result
+	}
 	result.OutputPreview = truncateUTF8(sanitizedDisplayText(result.OutputPreview), maxToolOutputPreviewBytes)
 	result.Error = sanitizedDisplayText(result.Error)
 	result.Audit.Status = result.Status
@@ -351,6 +359,9 @@ func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResul
 	result.Audit.Error = result.Error
 	result.Audit.AllowedByCurrentPolicy = proposal.AllowedByCurrentPolicy
 	result.Audit.HardDenyReason = proposal.HardDenyReason
+	if isAgentCommunicationToolID(result.ToolID) {
+		return result
+	}
 	if project != nil && project.ToolAudit != nil {
 		stored, err := project.ToolAudit.Append(result.Audit)
 		if err == nil {
@@ -359,14 +370,21 @@ func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResul
 	}
 	s.emitToolLifecycleArtifact(project, result, proposal, toolLifecycleFinalPhase(result.Status), payload)
 	s.updatePendingApprovalFromToolResult(project, result, proposal)
-	s.emitEvent("ai:tool:call-recorded", result)
+	if runID != "" {
+		s.emitRunEvent(project, runID, "ai:tool:call-recorded", result)
+	} else {
+		s.emitEvent("ai:tool:call-recorded", result)
+	}
 	return result
 }
 
 func (s *Service) emitToolLifecycleArtifact(project *ProjectSession, result AIToolCallResult, proposal AIToolProposal, phase string, payload any) {
+	if isAgentCommunicationToolID(result.ToolID) {
+		return
+	}
 	artifact, ok := s.recordToolLifecycleArtifact(project, result, proposal, phase, payload)
 	if ok {
-		s.emitEvent("ai:tool:lifecycle-recorded", artifact)
+		s.emitRunEvent(project, artifact.RunID, "ai:tool:lifecycle-recorded", artifact)
 	}
 }
 

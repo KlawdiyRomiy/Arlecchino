@@ -118,16 +118,6 @@ export function SettingsPopover({
             }
           />
         </label>
-        <label className="ai-chat-toggle-row">
-          <span>Runtime activity</span>
-          <input
-            checked={displayPrefs.showActivity}
-            type="checkbox"
-            onChange={(event) =>
-              onDisplayPrefChange("showActivity", event.target.checked)
-            }
-          />
-        </label>
       </div>
 
       <div className="ai-chat-popover__section">

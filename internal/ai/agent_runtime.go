@@ -288,6 +288,14 @@ func (s *Service) registerAgentTerminalIO(runID string, write func([]byte) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if write == nil && resize == nil {
+		delete(s.agentInputs, runID)
+		delete(s.agentResizes, runID)
+		return
+	}
+	if s.currentRunOwnerLocked(runID) == nil {
+		return
+	}
 	if s.agentInputs == nil {
 		s.agentInputs = map[string]func([]byte) error{}
 	}
@@ -362,6 +370,11 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 	if !ok {
 		return AIChatRun{}, fmt.Errorf("agent runtime %q does not expose an interactive auth flow", providerID)
 	}
+	s.projectRunsMu.RLock()
+	if s.project(projectID) != project {
+		s.projectRunsMu.RUnlock()
+		return AIChatRun{}, fmt.Errorf("AI project session changed before the agent auth run could start")
+	}
 	runID := uuid.NewString()
 	now := utcNow()
 	sessionID := defaultChatSessionID
@@ -388,12 +401,14 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 	done := make(chan struct{})
 	s.mu.Lock()
 	s.runs[runID] = run
+	s.runOwners[runID] = project
+	delete(s.retiredRuns, runID)
 	s.runCancels[runID] = cancel
-	s.runDone[runID] = done
 	runCopy := *run
 	s.mu.Unlock()
-	s.persistChatRun(runCopy)
-	s.emitEvent("ai:chat:run-started", runCopy)
+	s.projectRunsMu.RUnlock()
+	s.persistChatRun(project, runCopy)
+	s.emitRunEvent(project, runID, "ai:chat:run-started", runCopy)
 	s.recordRunTimeline(project, AIRunTimelineEvent{
 		RunID:            runCopy.ID,
 		SessionID:        sessionID,
@@ -418,14 +433,19 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 		},
 	})
 	s.emitRunEnvelope(project.ID, runID)
-	go func() {
-		defer s.markRunDone(runID)
+	if !s.launchOwnedRun(project, runID, done, func() {
 		s.runExternalAgentAuth(runCtx, project, runID, authRunner, adapter, descriptor)
-	}()
+	}) {
+		cancel()
+		return runCopy, fmt.Errorf("AI project session changed before the agent auth run could start")
+	}
 	return runCopy, nil
 }
 
 func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSession, runID string, req AIChatRunRequest, snapshot AIContextSnapshot, contextSummary AIContextSummary, adapter agents.Adapter, descriptor providers.AIProviderDescriptor) {
+	if !s.liveRunCanUseProject(project, runID) {
+		return
+	}
 	runtimeFamily := agentRuntimeFamilyForRun(req, descriptor)
 	transport := agentTransportForRun(runtimeFamily, descriptor)
 	s.updateRun(runID, func(run *AIChatRun) {
@@ -484,6 +504,7 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		}
 	})
 	s.emitRunEnvelope(project.ID, runID)
+	s.publishAgentRuntimePhase(project, runID, "running", "active", "Agent is working", "External runtime is active.", "", "", false)
 
 	started := time.Now()
 	history := s.chatHistoryForPrompt(project, runID, req.SessionID, chatPromptHistoryLimit)
@@ -509,6 +530,9 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		s.handleAgentRuntimeEvent(project, runID, event)
 	})
 	s.registerAgentTerminalIO(runID, nil, nil)
+	if !s.liveRunCanUseProject(project, runID) {
+		return
+	}
 
 	record.LatencyMs = time.Since(started).Milliseconds()
 	if result.Status == "canceled" || ctx.Err() != nil || s.runIsCanceled(runID) {
@@ -573,6 +597,11 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		return
 	}
 
+	verificationCommentary := ""
+	if !isMinimalChatRequest(req) {
+		verificationCommentary = agentRuntimeCommentaryForRequest(req, "The main work is complete. Checking the result before the final response.", "Основная работа завершена. Проверяю результат перед финальным ответом.")
+	}
+	s.publishAgentRuntimePhase(project, runID, "verifying", "active", "Checking result", "Validating runtime proof and review evidence.", verificationCommentary, "verification", false)
 	record.Status = "completed"
 	record = s.storeAgentEgressRecord(project, runID, record)
 	transcriptID := s.recordAgentTranscriptArtifact(project, runID, result)
@@ -687,6 +716,9 @@ func (s *Service) finishExternalAgentConsentBlocked(project *ProjectSession, run
 }
 
 func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSession, runID string, authRunner agents.AuthRunner, adapter agents.Adapter, descriptor providers.AIProviderDescriptor) {
+	if !s.liveRunCanUseProject(project, runID) {
+		return
+	}
 	s.updateRun(runID, func(run *AIChatRun) {
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.Status = "running"
@@ -708,6 +740,9 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 		s.handleAgentRuntimeEvent(project, runID, event)
 	})
 	s.registerAgentTerminalIO(runID, nil, nil)
+	if !s.liveRunCanUseProject(project, runID) {
+		return
+	}
 	transcriptID := s.recordAgentTranscriptArtifact(project, runID, result)
 	if invalidator, ok := adapter.(agents.CacheInvalidator); ok {
 		invalidator.Invalidate()
@@ -740,8 +775,8 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			Summary:          "Interactive fallback authentication canceled.",
 		})
 		if run, err := s.GetChatRun(project.ID, runID); err == nil {
-			s.persistChatRun(run)
-			s.emitEvent("ai:chat:run-canceled", run)
+			s.persistChatRun(project, run)
+			s.emitRunEvent(project, runID, "ai:chat:run-canceled", run)
 		}
 		s.finishAgentAuthCleanup(runID, adapter)
 		return
@@ -777,8 +812,8 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			Summary:          "Interactive fallback authentication failed.",
 		})
 		if run, err := s.GetChatRun(project.ID, runID); err == nil {
-			s.persistChatRun(run)
-			s.emitEvent("ai:chat:run-error", run)
+			s.persistChatRun(project, run)
+			s.emitRunEvent(project, runID, "ai:chat:run-error", run)
 		}
 		s.finishAgentAuthCleanup(runID, adapter)
 		return
@@ -813,8 +848,8 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 		Summary:          fmt.Sprintf("Interactive fallback authentication completed in %d ms.", latencyMs),
 	})
 	if run, err := s.GetChatRun(project.ID, runID); err == nil {
-		s.persistChatRun(run)
-		s.emitEvent("ai:chat:run-completed", run)
+		s.persistChatRun(project, run)
+		s.emitRunEvent(project, runID, "ai:chat:run-completed", run)
 	}
 	s.finishAgentAuthCleanup(runID, adapter)
 }
@@ -829,10 +864,14 @@ func (s *Service) finishAgentAuthCleanup(runID string, adapter agents.Adapter) {
 }
 
 func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string, event agents.Event) {
-	s.updateAgentRuntimeProofFromEvent(runID, event)
-	s.recordRuntimeApprovalEvent(project, runID, event)
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
 	if event.Type == agents.EventTerminalData {
-		s.emitEvent("ai:agent:terminal-data", map[string]any{
+		if !s.activeRunCanUseProject(project, runID) {
+			return
+		}
+		s.emitRunEvent(project, runID, "ai:agent:terminal-data", map[string]any{
 			"runId":            runID,
 			"projectSessionId": project.ID,
 			"data":             string(event.Data),
@@ -850,23 +889,57 @@ func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string,
 			return
 		}
 	}
-	if event.Type == agents.EventArtifact {
-		s.recordAgentRuntimeEvidenceFromEvent(project, runID, event)
-	}
-	s.recordAgentRuntimePatchFromEvent(project, runID, event)
 	if shouldDropAgentRuntimeStatusEvent(event) {
 		return
 	}
-	s.emitEvent("ai:agent:status", map[string]any{
-		"runId":            runID,
-		"projectSessionId": project.ID,
-		"type":             event.Type,
-		"status":           event.Status,
-		"text":             sanitizedDisplayText(event.Text),
-		"payload":          event.Payload,
-		"createdAt":        event.CreatedAt,
-	})
-	s.recordRunTimeline(project, AIRunTimelineEvent{
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
+	if !s.updateAgentRuntimeProofFromEvent(runID, event) {
+		return
+	}
+	s.recordRuntimeApprovalEvent(project, runID, event)
+	if event.Type == agents.EventMessage {
+		if event.Text != "" && event.Status == "message.commentary" {
+			message := truncateUTF8(sanitizedDisplayText(event.Text), maxAgentCommentaryBytes)
+			if message == "" {
+				return
+			}
+			correlationID := firstNonEmpty(
+				runtimePayloadString(event.Payload, "itemId"),
+				runtimeCorrelationID(runID, event.Status),
+			)
+			recorded, _ := s.recordAgentCommentary(project, runID, "progress", message, "", correlationID)
+			if !recorded {
+				return
+			}
+			if !s.activeRunCanUseProject(project, runID) {
+				return
+			}
+			s.emitRunEvent(project, runID, "ai:agent:commentary", map[string]any{
+				"runId":            runID,
+				"projectSessionId": project.ID,
+				"correlationId":    correlationID,
+				"message":          message,
+				"createdAt":        event.CreatedAt,
+			})
+			return
+		}
+	}
+	if event.Type == agents.EventArtifact {
+		if !s.activeRunCanUseProject(project, runID) {
+			return
+		}
+		s.recordAgentRuntimeEvidenceFromEvent(project, runID, event)
+	}
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
+	s.recordAgentRuntimePatchFromEvent(project, runID, event)
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
+	recorded := s.recordActiveAgentTimeline(project, AIRunTimelineEvent{
 		RunID:            runID,
 		ProjectSessionID: project.ID,
 		Source:           "agent_runtime",
@@ -874,6 +947,18 @@ func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string,
 		Status:           string(event.Status),
 		Actor:            "agent",
 		Summary:          sanitizedDisplayText(event.Text),
+	})
+	if !recorded || !s.activeRunCanUseProject(project, runID) {
+		return
+	}
+	s.emitRunEvent(project, runID, "ai:agent:status", map[string]any{
+		"runId":            runID,
+		"projectSessionId": project.ID,
+		"type":             event.Type,
+		"status":           event.Status,
+		"text":             sanitizedDisplayText(event.Text),
+		"payload":          event.Payload,
+		"createdAt":        event.CreatedAt,
 	})
 }
 
@@ -891,13 +976,13 @@ func shouldDropAgentRuntimeStatusEvent(event agents.Event) bool {
 		strings.Contains(status, "exec/output")
 }
 
-func (s *Service) updateAgentRuntimeProofFromEvent(runID string, event agents.Event) {
+func (s *Service) updateAgentRuntimeProofFromEvent(runID string, event agents.Event) bool {
 	status := strings.TrimSpace(event.Status)
 	if status == "" {
 		status = string(event.Type)
 	}
 	createdAt := firstNonEmpty(event.CreatedAt, utcNow())
-	s.updateRun(runID, func(run *AIChatRun) {
+	return s.updateActiveRun(runID, func(run *AIChatRun) {
 		if run.AgentRuntime == nil {
 			return
 		}
@@ -1087,12 +1172,15 @@ func (s *Service) startAgentEgressRecord(project *ProjectSession, runID string, 
 }
 
 func (s *Service) storeAgentEgressRecord(project *ProjectSession, runID string, record AIEgressRecord) AIEgressRecord {
+	if !s.runCanUseProject(project, runID) {
+		return record
+	}
 	if project != nil && project.Egress != nil {
 		if stored, err := project.Egress.Append(record); err == nil {
 			record = stored
 		}
 	}
-	s.emitEvent("ai:chat:egress-recorded", record)
+	s.emitRunEvent(project, runID, "ai:chat:egress-recorded", record)
 	s.recordEgressTimeline(project, runID, record)
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "External agent egress", egressArtifactSummary(record), record)
 	if project != nil {
@@ -1142,7 +1230,7 @@ func (s *Service) recordAgentWorktreeBaselineDiagnostic(project *ProjectSession,
 }
 
 func (s *Service) recordAgentRuntimeEvidenceFromEvent(project *ProjectSession, runID string, event agents.Event) {
-	if project == nil || strings.TrimSpace(runID) == "" {
+	if project == nil || strings.TrimSpace(runID) == "" || !s.activeRunCanUseProject(project, runID) {
 		return
 	}
 	evidenceState := firstNonEmpty(
@@ -1168,9 +1256,18 @@ func (s *Service) recordAgentRuntimeEvidenceFromEvent(project *ProjectSession, r
 	if evidence.Summary == "" {
 		evidence.Summary = "Runtime produced typed Build evidence."
 	}
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactRuntimeEvidence, "Agent Build evidence", evidence.Summary, evidence)
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
 	s.recordAgentBuildEvidenceCompatArtifact(project, runID, evidence.Summary, evidence)
-	s.updateRun(runID, func(run *AIChatRun) {
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
+	s.updateActiveRun(runID, func(run *AIChatRun) {
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.ArtifactState = evidenceState
 		}
@@ -1231,7 +1328,7 @@ func (s *Service) firstRunBuildEvidenceArtifactState(project *ProjectSession, ru
 }
 
 func (s *Service) recordAgentRuntimePatchFromEvent(project *ProjectSession, runID string, event agents.Event) {
-	if project == nil || strings.TrimSpace(runID) == "" {
+	if project == nil || strings.TrimSpace(runID) == "" || !s.activeRunCanUseProject(project, runID) {
 		return
 	}
 	status := strings.TrimSpace(event.Status)
@@ -1242,6 +1339,9 @@ func (s *Service) recordAgentRuntimePatchFromEvent(project *ProjectSession, runI
 	if strings.TrimSpace(diff) == "" || s.buildRunHasReviewablePatchArtifact(project, runID) {
 		return
 	}
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
 	result, err := s.PreviewPatch(project.ID, AIPatchPreviewRequest{
 		RunID:       runID,
 		Title:       "Runtime patch preview",
@@ -1249,7 +1349,7 @@ func (s *Service) recordAgentRuntimePatchFromEvent(project *ProjectSession, runI
 		UnifiedDiff: diff,
 	})
 	if err != nil {
-		s.recordRunTimeline(project, AIRunTimelineEvent{
+		s.recordActiveAgentTimeline(project, AIRunTimelineEvent{
 			RunID:            runID,
 			ProjectSessionID: project.ID,
 			Source:           "agent_runtime",
@@ -1262,7 +1362,10 @@ func (s *Service) recordAgentRuntimePatchFromEvent(project *ProjectSession, runI
 		})
 		return
 	}
-	s.updateRun(runID, func(run *AIChatRun) {
+	if !s.activeRunCanUseProject(project, runID) {
+		return
+	}
+	s.updateActiveRun(runID, func(run *AIChatRun) {
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.ArtifactState = "patch_artifact"
 			run.AgentRuntime.CapturedDiffID = result.Artifact.ID
@@ -1272,6 +1375,7 @@ func (s *Service) recordAgentRuntimePatchFromEvent(project *ProjectSession, runI
 
 func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string, req AIChatRunRequest, descriptor providers.AIProviderDescriptor, record AIEgressRecord, result agents.Result, transcriptID string, diffArtifact AIChatRunArtifact) {
 	response := agentRunDisplayResponse(result, &diffArtifact)
+	s.publishAgentRuntimePhase(project, runID, "completed", "done", "Result confirmed", "", "", "", true)
 	s.recordRunTimeline(project, AIRunTimelineEvent{
 		RunID:            runID,
 		SessionID:        normalizeChatSessionID(req.SessionID),
@@ -1321,8 +1425,8 @@ func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string,
 	s.recordPlanGateIfNeeded(project, runID, req.Action)
 	s.emitRunEnvelope(project.ID, runID)
 	if run, err := s.GetChatRun(project.ID, runID); err == nil {
-		s.persistChatRun(run)
-		s.emitEvent("ai:chat:run-completed", run)
+		s.persistChatRun(project, run)
+		s.emitRunEvent(project, runID, "ai:chat:run-completed", run)
 	}
 	s.mu.Lock()
 	delete(s.runCancels, runID)
@@ -1372,6 +1476,8 @@ func buildExternalAgentPrompt(req AIChatRunRequest, snapshot AIContextSnapshot, 
 	b.WriteString(". Keep all visible work grounded in the supplied Arlecchino context.\n")
 	b.WriteString("Do not claim file changes unless the files are actually changed in the project worktree; Arlecchino will capture and validate git diff evidence after you exit.\n")
 	b.WriteString("Do not read or write secrets, token files, .env files, provider auth storage, cookies, keychains, or paths outside the project.\n")
+	b.WriteString(externalAgentCommunicationSkillPrompt())
+	b.WriteString("\n")
 	if req.Action == AIChatActionBuild {
 		b.WriteString("For Build mode, either make concrete project file changes or clearly explain why no change is needed; terminal transcript alone is not accepted as build output.\n")
 	}
@@ -1426,6 +1532,9 @@ func agentWorktreeBaselineUnchanged(projectRoot string, baseline agentWorktreeBa
 }
 
 func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string, req AIChatRunRequest, baseline agentWorktreeBaseline) (AIChatRunArtifact, error) {
+	if !s.runCanUseProject(project, runID) {
+		return AIChatRunArtifact{}, context.Canceled
+	}
 	if baseline.Error != "" {
 		if agentBaselineGitUnavailable(baseline.Error) {
 			return AIChatRunArtifact{}, nil
@@ -1481,6 +1590,9 @@ func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+	if !s.runCanUseProject(project, runID) {
+		return AIChatRunArtifact{}, context.Canceled
+	}
 	if err := project.ChatArtifacts.Upsert(artifact); err != nil {
 		return AIChatRunArtifact{}, err
 	}
@@ -1498,6 +1610,9 @@ func (s *Service) emitAgentCapturedDiffAppliedEvents(project *ProjectSession, ar
 	if s == nil || project == nil || len(files) == 0 {
 		return
 	}
+	if !s.runCanUseProject(project, artifact.RunID) {
+		return
+	}
 	eventFiles := make([]map[string]any, 0, len(files))
 	for _, file := range files {
 		absPath, err := safeProjectPath(project.ProjectRoot, file.Path)
@@ -1511,9 +1626,9 @@ func (s *Service) emitAgentCapturedDiffAppliedEvents(project *ProjectSession, ar
 			"created":      !file.Exists,
 		})
 		if file.Exists {
-			s.emitEvent("file:changed", absPath)
+			s.emitRunEvent(project, artifact.RunID, "file:changed", absPath)
 		} else {
-			s.emitEvent("project:entry:created", map[string]any{
+			s.emitRunEvent(project, artifact.RunID, "project:entry:created", map[string]any{
 				"path":        absPath,
 				"isDirectory": false,
 			})
@@ -1522,7 +1637,7 @@ func (s *Service) emitAgentCapturedDiffAppliedEvents(project *ProjectSession, ar
 	if len(eventFiles) == 0 {
 		return
 	}
-	s.emitEvent("ai:patch:artifact-applied", map[string]any{
+	s.emitRunEvent(project, artifact.RunID, "ai:patch:artifact-applied", map[string]any{
 		"artifactId":       artifact.ID,
 		"runId":            artifact.RunID,
 		"sessionId":        artifact.SessionID,
@@ -1548,7 +1663,7 @@ func (s *Service) emitAgentCapturedDiffAppliedEvents(project *ProjectSession, ar
 }
 
 func (s *Service) recordBlockedCapturedDiff(project *ProjectSession, runID string, req AIChatRunRequest, diff string, baseline agentWorktreeBaseline, reason string) AIChatRunArtifact {
-	if project == nil {
+	if project == nil || !s.runCanUseProject(project, runID) {
 		return AIChatRunArtifact{}
 	}
 	payload := AIPatchArtifactPayload{

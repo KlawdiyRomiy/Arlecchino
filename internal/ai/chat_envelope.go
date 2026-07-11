@@ -17,7 +17,11 @@ func (s *Service) GetChatRunEnvelope(projectID string, runID string) (AIChatRunE
 	if err != nil {
 		return AIChatRunEnvelope{}, err
 	}
-	return s.buildChatRunEnvelope(project, run), nil
+	envelope := s.buildChatRunEnvelope(project, run)
+	if !s.projectIsCurrent(projectID, project) {
+		return AIChatRunEnvelope{}, fmt.Errorf("chat run %q was not found", runID)
+	}
+	return envelope, nil
 }
 
 func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope, error) {
@@ -41,8 +45,10 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 		}
 	}
 	s.mu.RLock()
-	for _, run := range s.runs {
-		if run.ProjectSessionID == project.ID {
+	for runID, run := range s.runs {
+		_, retired := s.retiredRuns[runID]
+		owner := s.runOwners[runID]
+		if run.ProjectSessionID == project.ID && (owner == project || owner == nil) && !retired {
 			runsByID[run.ID] = *run
 		}
 	}
@@ -77,20 +83,31 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 		egressRecords := egressByRun[run.ID]
 		envelopes = append(envelopes, s.buildChatRunEnvelopeWithTimelineAndEgress(project, run, &timeline, &egressRecords))
 	}
+	if !s.projectIsCurrent(projectID, project) {
+		return []AIChatRunEnvelope{}, nil
+	}
 	return envelopes, nil
 }
 
 func (s *Service) ClearChatRuns(projectID string) error {
+	s.projectRunsMu.Lock()
+	defer s.projectRunsMu.Unlock()
 	projectID = normalizeProjectID(projectID)
 	project := s.project(projectID)
-	s.waitForRuns(s.cancelRuns(projectID))
+	waiters := s.cancelRuns(projectID)
+	s.retireRuns(waiters)
+	s.waitForRuns(waiters)
 	s.clearToolApprovalsForProject(projectID)
 	s.mu.Lock()
 	for runID, run := range s.runs {
 		if run.ProjectSessionID == projectID {
 			delete(s.runs, runID)
+			delete(s.runOwners, runID)
+			delete(s.retiredRuns, runID)
 			delete(s.runCancels, runID)
 			delete(s.runDone, runID)
+			delete(s.agentInputs, runID)
+			delete(s.agentResizes, runID)
 		}
 	}
 	s.mu.Unlock()
@@ -128,6 +145,8 @@ func (s *Service) ClearChatRuns(projectID string) error {
 }
 
 func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
+	s.projectRunsMu.Lock()
+	defer s.projectRunsMu.Unlock()
 	projectID = normalizeProjectID(projectID)
 	sessionID = normalizeChatSessionID(sessionID)
 	project := s.project(projectID)
@@ -148,36 +167,34 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 
 	s.mu.Lock()
 	for runID, run := range s.runs {
-		if run.ProjectSessionID != projectID || normalizeChatSessionID(run.SessionID) != sessionID {
+		if run.ProjectSessionID != projectID || s.runOwners[runID] != project || normalizeChatSessionID(run.SessionID) != sessionID {
 			continue
 		}
 		runIDs[runID] = struct{}{}
-		if done := s.runDone[runID]; done != nil {
-			waiters = append(waiters, runWaiter{runID: runID, done: done})
-		}
+		waiter := runWaiter{runID: runID, owner: project, done: s.runDone[runID]}
 		if run.Status == "running" || run.Status == "queued" {
 			run.Status = "canceled"
 			run.CanCancel = false
+			run.Revision++
 			run.UpdatedAt = utcNow()
+			runCopy := *run
+			waiter.canceled = &runCopy
 		}
 		if cancel := s.runCancels[runID]; cancel != nil {
 			cancel()
 		}
 		delete(s.runCancels, runID)
+		waiters = append(waiters, waiter)
 	}
 	s.mu.Unlock()
-
-	s.waitForRuns(waiters)
-
-	s.mu.Lock()
-	for runID, run := range s.runs {
-		if run.ProjectSessionID == projectID && normalizeChatSessionID(run.SessionID) == sessionID {
-			delete(s.runs, runID)
-			delete(s.runCancels, runID)
-			delete(s.runDone, runID)
+	for _, waiter := range waiters {
+		if waiter.canceled != nil {
+			s.persistChatRun(project, *waiter.canceled)
 		}
 	}
-	s.mu.Unlock()
+
+	s.retireRuns(waiters)
+	s.waitForRuns(waiters)
 	s.deleteToolApprovalsForRuns(projectID, runIDs)
 
 	if project != nil && project.ChatHistory != nil {
@@ -463,7 +480,7 @@ func (s *Service) emitRunEnvelope(projectID string, runID string) {
 	if err != nil {
 		return
 	}
-	s.emitEvent("ai:chat:run-envelope-updated", envelope)
+	s.emitRunEvent(project, runID, "ai:chat:run-envelope-updated", envelope)
 }
 
 func (s *Service) providerEnvelopeForRun(run AIChatRun) *AIProviderEnvelope {

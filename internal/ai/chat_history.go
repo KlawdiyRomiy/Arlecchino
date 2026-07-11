@@ -38,6 +38,9 @@ func (l *ChatHistoryLedger) Upsert(run AIChatRun) error {
 	replaced := false
 	for i := range runs {
 		if runs[i].ID == run.ID {
+			if runs[i].Revision > run.Revision || (runs[i].Revision == run.Revision && chatRunPersistenceRichness(runs[i]) > chatRunPersistenceRichness(run)) {
+				return nil
+			}
 			runs[i] = run
 			replaced = true
 			break
@@ -48,6 +51,36 @@ func (l *ChatHistoryLedger) Upsert(run AIChatRun) error {
 	}
 	sortRunsNewestFirst(runs)
 	return l.writeAllLocked(runs)
+}
+
+func chatRunPersistenceRichness(run AIChatRun) int {
+	richness := 0
+	switch strings.TrimSpace(run.Status) {
+	case "completed":
+		richness += 400
+	case "error":
+		richness += 300
+	case "canceled":
+		richness += 200
+	case "running", "queued":
+		richness += 100
+	}
+	if strings.TrimSpace(run.Response) != "" {
+		richness += 20
+	}
+	if strings.TrimSpace(run.Error) != "" {
+		richness += 10
+	}
+	if strings.TrimSpace(run.EgressRecordID) != "" {
+		richness += 4
+	}
+	if run.ContextSummary != nil {
+		richness += 2
+	}
+	if run.AgentRuntime != nil {
+		richness++
+	}
+	return richness
 }
 
 func (l *ChatHistoryLedger) List(limit int) ([]AIChatRun, error) {

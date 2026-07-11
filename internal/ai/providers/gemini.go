@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -130,7 +131,7 @@ func (p *GeminiProvider) ListModels(ctx context.Context) ([]AIModelDescriptor, e
 			ID:               id,
 			DisplayName:      firstNonEmptyString(model.DisplayName, id),
 			ContextWindow:    model.InputTokenLimit,
-			Streaming:        false,
+			Streaming:        true,
 			ToolCalling:      true,
 			StructuredOutput: true,
 			PatchGeneration:  true,
@@ -192,14 +193,17 @@ type geminiPart struct {
 	Text             string                  `json:"text,omitempty"`
 	FunctionCall     *geminiFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
 }
 
 type geminiFunctionCall struct {
+	ID   string         `json:"id,omitempty"`
 	Name string         `json:"name,omitempty"`
 	Args map[string]any `json:"args,omitempty"`
 }
 
 type geminiFunctionResponse struct {
+	ID       string         `json:"id,omitempty"`
 	Name     string         `json:"name,omitempty"`
 	Response map[string]any `json:"response,omitempty"`
 }
@@ -216,7 +220,8 @@ type geminiFunctionDeclaration struct {
 
 type geminiGenerateResponse struct {
 	Candidates []struct {
-		Content geminiContent `json:"content"`
+		Content      geminiContent `json:"content"`
+		FinishReason string        `json:"finishReason,omitempty"`
 	} `json:"candidates"`
 	UsageMetadata struct {
 		PromptTokenCount     int `json:"promptTokenCount"`
@@ -248,6 +253,9 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerationRequest, si
 	if strings.TrimSpace(req.System) != "" {
 		request.SystemInstruction = &geminiContent{Parts: []geminiPart{{Text: strings.TrimSpace(req.System)}}}
 	}
+	if req.Stream && sink != nil {
+		return p.generateStreaming(ctx, model, request, sink)
+	}
 	var response geminiGenerateResponse
 	status, err := postJSON(ctx, p.client, p.generateEndpoint(model), p.headers(), request, &response)
 	if err != nil {
@@ -257,6 +265,9 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerationRequest, si
 		return GenerationResponse{RawStatus: status}, errors.New(response.Error.Message)
 	}
 	text, toolCalls := geminiResponseContent(response)
+	if err := validateGeminiToolCalls(model, toolCalls); err != nil {
+		return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString()}, err
+	}
 	if sink != nil && text != "" {
 		if err := sink(text); err != nil {
 			return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString()}, err
@@ -277,9 +288,172 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerationRequest, si
 	}, nil
 }
 
+func (p *GeminiProvider) generateStreaming(ctx context.Context, model string, request geminiGenerateRequest, sink TokenSink) (GenerationResponse, error) {
+	resp, err := postJSONRaw(ctx, p.client, p.streamingEndpoint(model), p.headers(), request)
+	if err != nil {
+		return GenerationResponse{}, err
+	}
+	defer resp.Body.Close()
+	status := resp.StatusCode
+	if status < 200 || status >= 300 {
+		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+		return GenerationResponse{RawStatus: status}, fmt.Errorf("provider returned HTTP %d: %s", status, strings.TrimSpace(string(limited)))
+	}
+
+	var text strings.Builder
+	streamToolCalls := []GenerationToolCall{}
+	var finalizedToolCalls []GenerationToolCall
+	usage := GenerationTokenUsage{Source: "provider"}
+	completed := false
+	finishReason := ""
+	result := func() GenerationResponse {
+		return GenerationResponse{
+			Text:       text.String(),
+			Model:      model,
+			RawStatus:  status,
+			FinishedAt: NowString(),
+			ToolCalls:  finalizedToolCalls,
+			Usage:      usage,
+		}
+	}
+	err = scanServerSentEvents(resp.Body, func(_ string, data []byte) error {
+		if len(data) == 0 {
+			return nil
+		}
+		if string(data) == "[DONE]" {
+			completed = true
+			return nil
+		}
+		var chunk geminiGenerateResponse
+		if decodeErr := json.Unmarshal(data, &chunk); decodeErr != nil {
+			return decodeErr
+		}
+		if chunk.Error != nil && strings.TrimSpace(chunk.Error.Message) != "" {
+			return errors.New(chunk.Error.Message)
+		}
+		for _, candidate := range chunk.Candidates {
+			if reason := strings.TrimSpace(candidate.FinishReason); reason != "" {
+				if finishReason != "" && finishReason != reason {
+					return fmt.Errorf("gemini stream changed finishReason from %q to %q", finishReason, reason)
+				}
+				finishReason = reason
+				completed = true
+				break
+			}
+		}
+		token, calls := geminiResponseContent(chunk)
+		if token != "" {
+			text.WriteString(token)
+			if sinkErr := sink(token); sinkErr != nil {
+				return sinkErr
+			}
+		}
+		streamToolCalls = mergeGeminiStreamToolCalls(streamToolCalls, calls)
+		if chunk.UsageMetadata.PromptTokenCount > 0 {
+			usage.InputTokens = chunk.UsageMetadata.PromptTokenCount
+		}
+		if chunk.UsageMetadata.CandidatesTokenCount > 0 {
+			usage.OutputTokens = chunk.UsageMetadata.CandidatesTokenCount
+		}
+		if chunk.UsageMetadata.TotalTokenCount > 0 {
+			usage.TotalTokens = chunk.UsageMetadata.TotalTokenCount
+		} else if usage.InputTokens > 0 || usage.OutputTokens > 0 {
+			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+		}
+		return nil
+	})
+	if err != nil {
+		return result(), err
+	}
+	if !completed {
+		return result(), errors.New("gemini stream ended before a finish reason")
+	}
+	if finishReason != "" && finishReason != "STOP" {
+		return result(), fmt.Errorf("gemini stream ended incompletely with finishReason %q", finishReason)
+	}
+	if err := validateGeminiToolCalls(model, streamToolCalls); err != nil {
+		return result(), err
+	}
+	finalizedToolCalls = streamToolCalls
+	return result(), nil
+}
+
 func (p *GeminiProvider) generateEndpoint(model string) string {
 	model = strings.TrimPrefix(strings.TrimSpace(model), "models/")
 	return p.endpoint + "/models/" + url.PathEscape(model) + ":generateContent"
+}
+
+func (p *GeminiProvider) streamingEndpoint(model string) string {
+	model = strings.TrimPrefix(strings.TrimSpace(model), "models/")
+	return p.endpoint + "/models/" + url.PathEscape(model) + ":streamGenerateContent?alt=sse"
+}
+
+func generationToolCallBatchKey(call GenerationToolCall) string {
+	if id := strings.TrimSpace(call.ID); id != "" {
+		return "id:" + id
+	}
+	if call.ProviderIndex != nil {
+		return fmt.Sprintf("index:%d:%s:%s:%s", *call.ProviderIndex, call.Name, call.ArgumentsJSON, call.ThoughtSignature)
+	}
+	return "value:" + call.Name + "\x00" + call.ArgumentsJSON + "\x00" + call.ThoughtSignature
+}
+
+func validateGeminiToolCalls(model string, calls []GenerationToolCall) error {
+	if err := validateGenerationToolCalls(calls); err != nil {
+		return err
+	}
+	if len(calls) > 0 && strings.Contains(strings.ToLower(model), "gemini-3") && strings.TrimSpace(calls[0].ThoughtSignature) == "" {
+		return errors.New("gemini 3 function call is missing its required thoughtSignature")
+	}
+	return nil
+}
+
+func appendUniqueGenerationToolCalls(existing []GenerationToolCall, incoming ...GenerationToolCall) []GenerationToolCall {
+	existingCounts := make(map[string]int, len(existing))
+	for _, call := range existing {
+		existingCounts[generationToolCallBatchKey(call)]++
+	}
+	incomingCounts := make(map[string]int, len(incoming))
+	for _, call := range incoming {
+		key := generationToolCallBatchKey(call)
+		incomingCounts[key]++
+		if incomingCounts[key] <= existingCounts[key] {
+			continue
+		}
+		existing = append(existing, call)
+	}
+	return existing
+}
+
+func mergeGeminiStreamToolCalls(existing []GenerationToolCall, incoming []GenerationToolCall) []GenerationToolCall {
+	unidentified := make([]GenerationToolCall, 0, len(incoming))
+	for _, call := range incoming {
+		match := -1
+		if id := strings.TrimSpace(call.ID); id != "" {
+			for index := range existing {
+				if strings.TrimSpace(existing[index].ID) == id {
+					match = index
+					break
+				}
+			}
+		} else if call.ProviderIndex != nil {
+			for index := range existing {
+				if strings.TrimSpace(existing[index].ID) == "" && existing[index].ProviderIndex != nil && *existing[index].ProviderIndex == *call.ProviderIndex {
+					match = index
+					break
+				}
+			}
+		} else {
+			unidentified = append(unidentified, call)
+			continue
+		}
+		if match >= 0 {
+			existing[match] = call
+		} else {
+			existing = append(existing, call)
+		}
+	}
+	return appendUniqueGenerationToolCalls(existing, unidentified...)
 }
 
 func geminiContentsFromGenerationRequest(req GenerationRequest) []geminiContent {
@@ -299,12 +473,18 @@ func geminiContentsFromGenerationRequest(req GenerationRequest) []geminiContent 
 			continue
 		}
 		if strings.TrimSpace(message.ToolCallID) != "" {
-			contents = append(contents, geminiContent{Role: "function", Parts: []geminiPart{{
+			responsePart := geminiPart{
 				FunctionResponse: &geminiFunctionResponse{
+					ID:       strings.TrimSpace(message.ToolCallID),
 					Name:     strings.TrimSpace(message.Name),
 					Response: geminiToolResponse(message.Content),
 				},
-			}}})
+			}
+			if len(contents) > 0 && geminiContentContainsOnlyFunctionResponses(contents[len(contents)-1]) {
+				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, responsePart)
+				continue
+			}
+			contents = append(contents, geminiContent{Role: "user", Parts: []geminiPart{responsePart}})
 			continue
 		}
 		content := strings.TrimSpace(message.Content)
@@ -320,6 +500,18 @@ func geminiContentsFromGenerationRequest(req GenerationRequest) []geminiContent 
 	return contents
 }
 
+func geminiContentContainsOnlyFunctionResponses(content geminiContent) bool {
+	if content.Role != "user" || len(content.Parts) == 0 {
+		return false
+	}
+	for _, part := range content.Parts {
+		if part.FunctionResponse == nil {
+			return false
+		}
+	}
+	return true
+}
+
 func geminiFunctionCallParts(calls []GenerationToolCall) []geminiPart {
 	parts := make([]geminiPart, 0, len(calls))
 	for _, call := range calls {
@@ -331,7 +523,14 @@ func geminiFunctionCallParts(calls []GenerationToolCall) []geminiPart {
 		if raw := strings.TrimSpace(call.ArgumentsJSON); raw != "" {
 			_ = json.Unmarshal([]byte(raw), &args)
 		}
-		parts = append(parts, geminiPart{FunctionCall: &geminiFunctionCall{Name: name, Args: args}})
+		parts = append(parts, geminiPart{
+			FunctionCall: &geminiFunctionCall{
+				ID:   strings.TrimSpace(call.ID),
+				Name: name,
+				Args: args,
+			},
+			ThoughtSignature: call.ThoughtSignature,
+		})
 	}
 	return parts
 }
@@ -393,7 +592,7 @@ func geminiResponseContent(response geminiGenerateResponse) (string, []Generatio
 	if len(response.Candidates) == 0 {
 		return "", nil
 	}
-	for _, part := range response.Candidates[0].Content.Parts {
+	for partIndex, part := range response.Candidates[0].Content.Parts {
 		if part.Text != "" {
 			text.WriteString(part.Text)
 		}
@@ -404,7 +603,14 @@ func geminiResponseContent(response geminiGenerateResponse) (string, []Generatio
 					arguments = string(encoded)
 				}
 			}
-			toolCalls = append(toolCalls, GenerationToolCall{Name: strings.TrimSpace(part.FunctionCall.Name), ArgumentsJSON: arguments})
+			index := partIndex
+			toolCalls = append(toolCalls, GenerationToolCall{
+				ID:               strings.TrimSpace(part.FunctionCall.ID),
+				Name:             strings.TrimSpace(part.FunctionCall.Name),
+				ArgumentsJSON:    arguments,
+				ProviderIndex:    &index,
+				ThoughtSignature: part.ThoughtSignature,
+			})
 		}
 	}
 	return text.String(), toolCalls

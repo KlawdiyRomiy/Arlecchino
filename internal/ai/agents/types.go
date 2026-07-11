@@ -357,6 +357,18 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// firstMessageFragment selects a protocol field without changing its bytes.
+// Streaming deltas may consist only of whitespace or carry meaningful leading
+// whitespace, so the metadata-oriented firstNonEmpty helper is unsafe here.
+func firstMessageFragment(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func UnsupportedResult(message string) Result {
 	return Result{
 		Status:     "error",

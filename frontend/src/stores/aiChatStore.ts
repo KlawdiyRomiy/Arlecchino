@@ -42,6 +42,7 @@ interface AIChatRuntimeState {
   runs: AIChatRunEnvelope[];
   hydratedRuns: Record<string, AIChatRun>;
   streamingTextByRunId: Record<string, string>;
+  streamResetRevisionByRunId: Record<string, number>;
   egressRecords: AIEgressRecord[];
   mnemonicEntries: AIMnemonicEntry[];
   pendingApprovals: AIPendingApproval[];
@@ -74,6 +75,7 @@ interface AIChatRuntimeState {
   upsertHydratedRun: (run: AIChatRun) => void;
   upsertHydratedRuns: (runs: AIChatRun[]) => void;
   appendRunToken: (runId: string, token: string) => void;
+  resetRunStream: (runId: string, revision?: number) => void;
   setActiveRunId: (runId: string | null) => void;
   setContextPreview: (preview: AIContextSnapshot | null) => void;
   setEgressRecords: (records: AIEgressRecord[]) => void;
@@ -83,6 +85,7 @@ interface AIChatRuntimeState {
   enqueueCommandIntent: (
     actionId: AICommandPaletteActionId,
     payload?: AICommandPalettePayload,
+    projectScopeKey?: string,
   ) => void;
   consumeCommandIntent: (id: string) => void;
   setApprovalPolicy: (policy: AIApprovalPolicy | null) => void;
@@ -120,7 +123,10 @@ const sortRuns = (runs: AIChatRunEnvelope[]): AIChatRunEnvelope[] =>
   });
 
 const isTerminalRunStatus = (status?: string): boolean =>
-  status === "completed" || status === "error" || status === "canceled";
+  status === "completed" ||
+  status === "error" ||
+  status === "canceled" ||
+  status === "blocked";
 
 const sessionIdOf = (run: { sessionId?: string | null }): string =>
   run.sessionId?.trim() || "default";
@@ -139,6 +145,16 @@ const matchesProjectSession = (
 
 const trimAIChatText = (text: string, maxChars: number): string =>
   text.length > maxChars ? text.slice(-maxChars) : text;
+
+const runRevision = (revision?: number | null): number =>
+  typeof revision === "number" && Number.isFinite(revision)
+    ? Math.max(0, revision)
+    : 0;
+
+const optionalRunRevision = (revision?: number | null): number | undefined =>
+  typeof revision === "number" && Number.isFinite(revision) && revision >= 0
+    ? revision
+    : undefined;
 
 const trimHydratedRunPayload = (run: AIChatRun): AIChatRun => {
   if (
@@ -278,17 +294,36 @@ const mergeEgressRecord = (
 };
 
 const mergeHydratedRunState = (
-  state: Pick<AIChatRuntimeState, "hydratedRuns" | "streamingTextByRunId">,
+  state: Pick<
+    AIChatRuntimeState,
+    | "hydratedRuns"
+    | "runs"
+    | "streamingTextByRunId"
+    | "streamResetRevisionByRunId"
+  >,
   runs: AIChatRun[],
 ) => {
   const hydratedRuns = { ...state.hydratedRuns };
   const streamingTextByRunId = { ...state.streamingTextByRunId };
   for (const run of runs) {
     if (!run?.id) continue;
+    const incomingRevision = runRevision(run.revision);
+    const hydratedRevision = runRevision(state.hydratedRuns[run.id]?.revision);
+    const envelopeRevision = runRevision(
+      state.runs.find((candidate) => candidate.id === run.id)?.revision,
+    );
+    const resetRevision = runRevision(state.streamResetRevisionByRunId[run.id]);
+    if (
+      incomingRevision < resetRevision ||
+      incomingRevision < Math.max(hydratedRevision, envelopeRevision)
+    ) {
+      continue;
+    }
     const existingStream = streamingTextByRunId[run.id] ?? "";
     const response = run.response ?? "";
-    const streamingText =
-      isTerminalRunStatus(run.status) || response.length > existingStream.length
+    const streamingText = isTerminalRunStatus(run.status)
+      ? response
+      : response.length >= existingStream.length
         ? response
         : existingStream;
     hydratedRuns[run.id] = trimHydratedRunPayload(run);
@@ -302,7 +337,11 @@ const mergeHydratedRunState = (
 
 type AIChatRetentionState = Pick<
   AIChatRuntimeState,
-  "activeRunId" | "hydratedRuns" | "runs" | "streamingTextByRunId"
+  | "activeRunId"
+  | "hydratedRuns"
+  | "runs"
+  | "streamingTextByRunId"
+  | "streamResetRevisionByRunId"
 >;
 
 const pruneAIChatRetention = <State extends AIChatRetentionState>(
@@ -365,11 +404,22 @@ const pruneAIChatRetention = <State extends AIChatRetentionState>(
     );
   }
 
+  const streamResetRevisionByRunId: Record<string, number> = {};
+  for (const [runId, revision] of Object.entries(
+    state.streamResetRevisionByRunId,
+  )) {
+    if (!retainedRunIds.has(runId) && !hydratedRunSet.has(runId)) {
+      continue;
+    }
+    streamResetRevisionByRunId[runId] = revision;
+  }
+
   return {
     ...state,
     runs,
     hydratedRuns,
     streamingTextByRunId,
+    streamResetRevisionByRunId,
     activeRunId:
       state.activeRunId &&
       (runs.some((run) => run.id === state.activeRunId) || activeRunHasPayload)
@@ -391,6 +441,7 @@ const initialRuntimeState = {
   runs: [],
   hydratedRuns: {},
   streamingTextByRunId: {},
+  streamResetRevisionByRunId: {},
   egressRecords: [],
   mnemonicEntries: [],
   pendingApprovals: [],
@@ -418,9 +469,13 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
         runs: [],
         hydratedRuns: {},
         streamingTextByRunId: {},
+        streamResetRevisionByRunId: {},
         egressRecords: [],
         mnemonicEntries: [],
         pendingApprovals: [],
+        commandIntents: state.commandIntents.filter(
+          (intent) => intent.projectScopeKey === nextScopeKey,
+        ),
         toolAudit: [],
         activeRunId: null,
         contextPreview: null,
@@ -524,9 +579,13 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       }
       const hydratedRuns = { ...state.hydratedRuns };
       const streamingTextByRunId = { ...state.streamingTextByRunId };
+      const streamResetRevisionByRunId = {
+        ...state.streamResetRevisionByRunId,
+      };
       for (const runId of removedRunIds) {
         delete hydratedRuns[runId];
         delete streamingTextByRunId[runId];
+        delete streamResetRevisionByRunId[runId];
       }
       return pruneAIChatRetention({
         ...state,
@@ -537,6 +596,7 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
         ),
         hydratedRuns,
         streamingTextByRunId,
+        streamResetRevisionByRunId,
         activeRunId:
           state.activeRunId && removedRunIds.has(state.activeRunId)
             ? null
@@ -548,6 +608,7 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       runs: [],
       hydratedRuns: {},
       streamingTextByRunId: {},
+      streamResetRevisionByRunId: {},
       egressRecords: [],
       mnemonicEntries: [],
       pendingApprovals: [],
@@ -588,8 +649,7 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       ) {
         return state;
       }
-      return pruneAIChatRetention({
-        ...state,
+      return {
         streamingTextByRunId: {
           ...state.streamingTextByRunId,
           [runId]: trimAIChatText(
@@ -597,7 +657,63 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
             AI_CHAT_MAX_STREAMING_TEXT_CHARS,
           ),
         },
-      });
+      };
+    }),
+  resetRunStream: (runId, revision) =>
+    set((state) => {
+      const envelope = state.runs.find((run) => run.id === runId);
+      const hydrated = state.hydratedRuns[runId];
+      const incomingRevision = optionalRunRevision(revision);
+      const knownRevision = Math.max(
+        runRevision(envelope?.revision),
+        runRevision(hydrated?.revision),
+        runRevision(state.streamResetRevisionByRunId[runId]),
+      );
+      if (incomingRevision !== undefined && incomingRevision < knownRevision) {
+        return state;
+      }
+      const terminalState =
+        isTerminalRunStatus(envelope?.status) ||
+        isTerminalRunStatus(hydrated?.status);
+      if (
+        terminalState &&
+        (incomingRevision === undefined || incomingRevision <= knownRevision)
+      ) {
+        return state;
+      }
+      const nextResetRevision = Math.max(
+        runRevision(state.streamResetRevisionByRunId[runId]),
+        incomingRevision ?? 0,
+      );
+      const markerUnchanged =
+        nextResetRevision ===
+        runRevision(state.streamResetRevisionByRunId[runId]);
+      if (
+        !state.streamingTextByRunId[runId] &&
+        !hydrated?.response &&
+        markerUnchanged
+      ) {
+        return state;
+      }
+      const streamingTextByRunId = {
+        ...state.streamingTextByRunId,
+        [runId]: "",
+      };
+      const streamResetRevisionByRunId = {
+        ...state.streamResetRevisionByRunId,
+        [runId]: nextResetRevision,
+      };
+      if (!hydrated?.response) {
+        return { streamingTextByRunId, streamResetRevisionByRunId };
+      }
+      return {
+        streamingTextByRunId,
+        streamResetRevisionByRunId,
+        hydratedRuns: {
+          ...state.hydratedRuns,
+          [runId]: { ...hydrated, response: "" },
+        },
+      };
     }),
   setActiveRunId: (activeRunId) =>
     set((state) => {
@@ -609,13 +725,18 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       }
       const hydratedRuns = { ...state.hydratedRuns };
       const streamingTextByRunId = { ...state.streamingTextByRunId };
+      const streamResetRevisionByRunId = {
+        ...state.streamResetRevisionByRunId,
+      };
       delete hydratedRuns[state.activeRunId];
       delete streamingTextByRunId[state.activeRunId];
+      delete streamResetRevisionByRunId[state.activeRunId];
       return pruneAIChatRetention({
         ...state,
         activeRunId,
         hydratedRuns,
         streamingTextByRunId,
+        streamResetRevisionByRunId,
       });
     }),
   setContextPreview: (contextPreview) => set({ contextPreview }),
@@ -626,11 +747,11 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
     })),
   setMnemonicEntries: (mnemonicEntries) => set({ mnemonicEntries }),
   setPendingApprovals: (pendingApprovals) => set({ pendingApprovals }),
-  enqueueCommandIntent: (actionId, payload = {}) =>
+  enqueueCommandIntent: (actionId, payload = {}, projectScopeKey = "") =>
     set((state) => ({
       commandIntents: [
         ...state.commandIntents,
-        createAIChatCommandIntent(actionId, payload),
+        createAIChatCommandIntent(actionId, payload, projectScopeKey),
       ].slice(-8),
     })),
   consumeCommandIntent: (id) =>

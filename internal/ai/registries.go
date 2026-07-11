@@ -297,6 +297,24 @@ func (s *Service) ListContextProviders() []AIContextProviderDescriptor {
 func (s *Service) ListTools() []AIToolDescriptor {
 	return []AIToolDescriptor{
 		{
+			ID:                     "agent.status.update",
+			Name:                   "Update Agent Runtime status",
+			Description:            "Record private structured progress for Agent Runtime without adding chat text.",
+			Kind:                   AIToolKindContextRead,
+			ExecutionAvailable:     true,
+			DefaultApprovalMode:    AIApprovalModeReadOnlyAllowed,
+			RequiresArtifactReview: false,
+		},
+		{
+			ID:                     "agent.commentary",
+			Name:                   "Publish agent commentary",
+			Description:            "Publish a concise intermediate assistant update separate from the final answer.",
+			Kind:                   AIToolKindContextRead,
+			ExecutionAvailable:     true,
+			DefaultApprovalMode:    AIApprovalModeReadOnlyAllowed,
+			RequiresArtifactReview: false,
+		},
+		{
 			ID:                     "context.read",
 			Name:                   "Read context",
 			Description:            "Read sanitized project context selected by the user.",

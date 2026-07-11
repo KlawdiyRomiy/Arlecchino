@@ -204,6 +204,9 @@ func (s *Service) recordRuntimeApprovalEvent(project *ProjectSession, runID stri
 	if project == nil || project.PendingApprovals == nil || strings.TrimSpace(runID) == "" {
 		return
 	}
+	if !s.runCanUseProject(project, runID) {
+		return
+	}
 	status := strings.TrimSpace(event.Status)
 	if !strings.Contains(status, "approval") && status != "server_request.blocked" {
 		return
@@ -424,6 +427,9 @@ func stringSliceFromAny(value any) []string {
 
 func (s *Service) updatePendingApprovalFromToolResult(project *ProjectSession, result AIToolCallResult, proposal AIToolProposal) {
 	if project == nil || project.PendingApprovals == nil || strings.TrimSpace(result.Audit.RunID) == "" {
+		return
+	}
+	if !s.runCanUseProject(project, result.Audit.RunID) {
 		return
 	}
 	switch strings.TrimSpace(result.Status) {

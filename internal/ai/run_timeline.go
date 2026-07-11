@@ -234,6 +234,9 @@ func (s *Service) recordRunTimeline(project *ProjectSession, event AIRunTimeline
 	if s == nil || project == nil || project.RunTimeline == nil {
 		return
 	}
+	if strings.TrimSpace(event.RunID) != "" && !s.runCanUseProject(project, event.RunID) {
+		return
+	}
 	if strings.TrimSpace(event.ProjectSessionID) == "" {
 		event.ProjectSessionID = project.ID
 	}
@@ -244,5 +247,9 @@ func (s *Service) recordRunTimeline(project *ProjectSession, event AIRunTimeline
 	if err != nil {
 		return
 	}
-	s.emitEvent("ai:run:timeline-event", stored)
+	if strings.TrimSpace(stored.RunID) != "" {
+		s.emitRunEvent(project, stored.RunID, "ai:run:timeline-event", stored)
+	} else {
+		s.emitEvent("ai:run:timeline-event", stored)
+	}
 }

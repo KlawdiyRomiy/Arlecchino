@@ -299,6 +299,9 @@ func (s *Service) recordChatRunArtifact(project *ProjectSession, runID string, k
 	if err != nil {
 		return
 	}
+	if !s.runCanUseProject(project, runID) {
+		return
+	}
 	payloadJSON := marshalChatArtifactPayload(payload)
 	now := utcNow()
 	artifact := AIChatRunArtifact{
@@ -317,6 +320,9 @@ func (s *Service) recordChatRunArtifact(project *ProjectSession, runID string, k
 	if artifact.Title == "" {
 		artifact.Title = string(kind)
 	}
+	if !s.runCanUseProject(project, runID) {
+		return
+	}
 	if err := project.ChatArtifacts.Upsert(artifact); err == nil {
 		eventName := ""
 		if kind == AIChatRunArtifactMemory {
@@ -330,6 +336,9 @@ func (s *Service) emitChatArtifactChanged(project *ProjectSession, artifact AICh
 	if s == nil || project == nil || strings.TrimSpace(artifact.ID) == "" {
 		return
 	}
+	if strings.TrimSpace(artifact.RunID) != "" && !s.runCanUseProject(project, artifact.RunID) {
+		return
+	}
 	s.recordRunTimeline(project, AIRunTimelineEvent{
 		RunID:            artifact.RunID,
 		SessionID:        normalizeChatSessionID(artifact.SessionID),
@@ -341,9 +350,9 @@ func (s *Service) emitChatArtifactChanged(project *ProjectSession, artifact AICh
 		ArtifactID:       artifact.ID,
 		Summary:          firstNonEmpty(artifact.Title, string(artifact.Kind)) + ": " + artifact.Summary,
 	})
-	s.emitEvent("ai:chat:artifact-updated", projectChatArtifactForList(artifact))
+	s.emitRunEvent(project, artifact.RunID, "ai:chat:artifact-updated", projectChatArtifactForList(artifact))
 	if strings.TrimSpace(eventName) != "" {
-		s.emitEvent(eventName, artifact)
+		s.emitRunEvent(project, artifact.RunID, eventName, artifact)
 	}
 	if strings.TrimSpace(artifact.RunID) != "" {
 		s.emitRunEnvelope(project.ID, artifact.RunID)

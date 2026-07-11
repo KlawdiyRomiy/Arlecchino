@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"arlecchino/internal/ai/agents"
@@ -36,33 +37,39 @@ type ServiceOptions struct {
 }
 
 type Service struct {
-	mu                sync.RWMutex
-	settings          Settings
-	settingsPath      string
-	secretStore       SecretStore
-	emit              EventEmitter
-	mcpContext        MCPContextProvider
-	diagnostics       DiagnosticsProvider
-	mcpExecutor       MCPToolExecutor
-	providers         map[string]providers.Provider
-	descriptors       map[string]providers.AIProviderDescriptor
-	projects          map[string]*ProjectSession
-	runs              map[string]*AIChatRun
-	runCancels        map[string]context.CancelFunc
-	runDone           map[string]chan struct{}
-	agentInputs       map[string]func([]byte) error
-	agentResizes      map[string]func(uint16, uint16) error
-	authSessions      map[string]*AIProviderAuthSession
-	toolApprovals     map[string]AIToolApprovalGrant
-	compactionLocksMu sync.Mutex
-	compactionLocks   map[string]*sync.Mutex
-	runtimes          *providerRuntimeManager
-	agents            *agents.Registry
-	predictionBudget  *predictionBudgetLedger
-	providerCacheMu   sync.Mutex
-	providerListCache providerDescriptorCacheEntry
-	runtimeListCache  providerRuntimeCacheEntry
-	started           bool
+	mu                   sync.RWMutex
+	projectRunsMu        sync.RWMutex
+	projectGeneration    uint64
+	settings             Settings
+	settingsPath         string
+	secretStore          SecretStore
+	emit                 EventEmitter
+	mcpContext           MCPContextProvider
+	diagnostics          DiagnosticsProvider
+	mcpExecutor          MCPToolExecutor
+	providers            map[string]providers.Provider
+	descriptors          map[string]providers.AIProviderDescriptor
+	projects             map[string]*ProjectSession
+	runs                 map[string]*AIChatRun
+	runOwners            map[string]*ProjectSession
+	retiredRuns          map[string]struct{}
+	runCancels           map[string]context.CancelFunc
+	runDone              map[string]chan struct{}
+	agentInputs          map[string]func([]byte) error
+	agentResizes         map[string]func(uint16, uint16) error
+	authSessions         map[string]*AIProviderAuthSession
+	toolApprovals        map[string]AIToolApprovalGrant
+	agentCommunicationMu sync.Mutex
+	agentCommunication   map[string]agentCommunicationRunState
+	compactionLocksMu    sync.Mutex
+	compactionLocks      map[string]*sync.Mutex
+	runtimes             *providerRuntimeManager
+	agents               *agents.Registry
+	predictionBudget     *predictionBudgetLedger
+	providerCacheMu      sync.Mutex
+	providerListCache    providerDescriptorCacheEntry
+	runtimeListCache     providerRuntimeCacheEntry
+	started              bool
 }
 
 const providerDescriptorCacheTTL = 30 * time.Second
@@ -78,6 +85,8 @@ type providerRuntimeCacheEntry struct {
 }
 
 type ProjectSession struct {
+	generation            uint64
+	eventGate             atomic.Uint64
 	ID                    string
 	ProjectRoot           string
 	Mnemonic              *mnemonic.Store
@@ -99,26 +108,29 @@ func NewService(options ServiceOptions) *Service {
 		secretStore = DefaultSecretStore()
 	}
 	return &Service{
-		settingsPath:     options.SettingsPath,
-		secretStore:      secretStore,
-		emit:             options.Emit,
-		mcpContext:       options.MCPContextProvider,
-		diagnostics:      options.Diagnostics,
-		mcpExecutor:      options.MCPExecutor,
-		providers:        map[string]providers.Provider{},
-		descriptors:      map[string]providers.AIProviderDescriptor{},
-		projects:         map[string]*ProjectSession{},
-		runs:             map[string]*AIChatRun{},
-		runCancels:       map[string]context.CancelFunc{},
-		runDone:          map[string]chan struct{}{},
-		agentInputs:      map[string]func([]byte) error{},
-		agentResizes:     map[string]func(uint16, uint16) error{},
-		authSessions:     map[string]*AIProviderAuthSession{},
-		toolApprovals:    map[string]AIToolApprovalGrant{},
-		compactionLocks:  map[string]*sync.Mutex{},
-		runtimes:         newProviderRuntimeManager(),
-		agents:           agents.NewRegistry(),
-		predictionBudget: newPredictionBudgetLedger(),
+		settingsPath:       options.SettingsPath,
+		secretStore:        secretStore,
+		emit:               options.Emit,
+		mcpContext:         options.MCPContextProvider,
+		diagnostics:        options.Diagnostics,
+		mcpExecutor:        options.MCPExecutor,
+		providers:          map[string]providers.Provider{},
+		descriptors:        map[string]providers.AIProviderDescriptor{},
+		projects:           map[string]*ProjectSession{},
+		runs:               map[string]*AIChatRun{},
+		runOwners:          map[string]*ProjectSession{},
+		retiredRuns:        map[string]struct{}{},
+		runCancels:         map[string]context.CancelFunc{},
+		runDone:            map[string]chan struct{}{},
+		agentInputs:        map[string]func([]byte) error{},
+		agentResizes:       map[string]func(uint16, uint16) error{},
+		authSessions:       map[string]*AIProviderAuthSession{},
+		toolApprovals:      map[string]AIToolApprovalGrant{},
+		agentCommunication: map[string]agentCommunicationRunState{},
+		compactionLocks:    map[string]*sync.Mutex{},
+		runtimes:           newProviderRuntimeManager(),
+		agents:             agents.NewRegistry(),
+		predictionBudget:   newPredictionBudgetLedger(),
 	}
 }
 
@@ -144,6 +156,8 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) Close() error {
+	s.projectRunsMu.Lock()
+	defer s.projectRunsMu.Unlock()
 	s.waitForRuns(s.cancelRuns(""))
 	if s.runtimes != nil {
 		s.runtimes.stopAll()
@@ -154,9 +168,15 @@ func (s *Service) Close() error {
 	s.agentInputs = map[string]func([]byte) error{}
 	s.agentResizes = map[string]func(uint16, uint16) error{}
 	s.runs = map[string]*AIChatRun{}
+	s.runOwners = map[string]*ProjectSession{}
+	s.retiredRuns = map[string]struct{}{}
 	s.toolApprovals = map[string]AIToolApprovalGrant{}
+	s.agentCommunicationMu.Lock()
+	s.agentCommunication = map[string]agentCommunicationRunState{}
+	s.agentCommunicationMu.Unlock()
 	projects := make([]*ProjectSession, 0, len(s.projects))
 	for _, project := range s.projects {
+		project.deactivateEvents()
 		projects = append(projects, project)
 	}
 	s.projects = map[string]*ProjectSession{}
@@ -187,7 +207,12 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 	if err != nil {
 		return nil, err
 	}
-	s.waitForRuns(s.cancelRuns(projectID))
+	s.projectRunsMu.Lock()
+	defer s.projectRunsMu.Unlock()
+	waiters := s.cancelRuns(projectID)
+	s.retireRuns(waiters)
+	s.waitForRuns(waiters)
+	s.clearToolApprovalsForProject(projectID)
 	defaultEnabled := s.currentSettings().MnemonicDefaultEnabled
 	store, err := mnemonic.Open(projectRoot, defaultEnabled)
 	if err != nil {
@@ -273,11 +298,19 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		ModelCapabilityProbes: modelCapabilityProbes,
 	}
 	s.mu.Lock()
-	if previous := s.projects[projectID]; previous != nil {
+	previous := s.projects[projectID]
+	if previous != nil {
+		previous.deactivateEvents()
+	}
+	s.projectGeneration++
+	project.generation = s.projectGeneration
+	project.activateEvents()
+	s.projects[projectID] = project
+	s.releaseRetiredRunsLocked(previous)
+	s.mu.Unlock()
+	if previous != nil {
 		_ = previous.Close()
 	}
-	s.projects[projectID] = project
-	s.mu.Unlock()
 	s.recoverProjectAIRuntime(project)
 	return project, nil
 }
@@ -287,10 +320,16 @@ func (s *Service) CloseProject(projectID string) error {
 	if projectID == "" {
 		projectID = "main"
 	}
+	s.projectRunsMu.Lock()
+	defer s.projectRunsMu.Unlock()
 	s.waitForRuns(s.cancelRuns(projectID))
 	s.mu.Lock()
 	project := s.projects[projectID]
+	if project != nil {
+		project.deactivateEvents()
+	}
 	delete(s.projects, projectID)
+	s.releaseRetiredRunsLocked(project)
 	s.mu.Unlock()
 	if project == nil {
 		return nil
@@ -785,8 +824,12 @@ func (s *Service) ClearMnemonic(projectID string) error {
 }
 
 func (s *Service) ClearState(projectID string) error {
+	s.projectRunsMu.Lock()
+	defer s.projectRunsMu.Unlock()
 	projectID = normalizeProjectID(projectID)
-	s.waitForRuns(s.cancelRuns(projectID))
+	waiters := s.cancelRuns(projectID)
+	s.retireRuns(waiters)
+	s.waitForRuns(waiters)
 	s.clearToolApprovalsForProject(projectID)
 	project := s.project(projectID)
 	if project != nil {
@@ -834,15 +877,6 @@ func (s *Service) ClearState(projectID string) error {
 			return err
 		}
 	}
-	s.mu.Lock()
-	for runID, run := range s.runs {
-		if run.ProjectSessionID == projectID {
-			delete(s.runs, runID)
-			delete(s.runCancels, runID)
-			delete(s.runDone, runID)
-		}
-	}
-	s.mu.Unlock()
 	return nil
 }
 
@@ -1578,6 +1612,213 @@ func (s *Service) projectIsCurrent(projectID string, project *ProjectSession) bo
 	return s.projects[projectID] == project
 }
 
+func (s *Service) runCanUseProject(project *ProjectSession, runID string) bool {
+	if s == nil || project == nil || strings.TrimSpace(runID) == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.runCanUseProjectLocked(project, runID)
+}
+
+func (s *Service) runCanUseProjectLocked(project *ProjectSession, runID string) bool {
+	if project == nil || s.projects[normalizeProjectID(project.ID)] != project {
+		return false
+	}
+	owner, tracked := s.runOwners[runID]
+	if !tracked {
+		// Durable runs are not retained in memory after a project is reopened.
+		return true
+	}
+	if owner != project {
+		return false
+	}
+	_, retired := s.retiredRuns[runID]
+	return !retired
+}
+
+// liveRunCanUseProject is the stricter runtime-callback gate. Durable run
+// actions may be restored from a project ledger without an in-memory owner,
+// but model/agent callbacks are valid only while their owned goroutine is
+// still registered.
+func (s *Service) liveRunCanUseProject(project *ProjectSession, runID string) bool {
+	if s == nil || project == nil || strings.TrimSpace(runID) == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.liveRunCanUseProjectLocked(project, runID)
+}
+
+// activeRunCanUseProject is the terminal-aware gate for provider and external
+// runtime callbacks. A run may still own a goroutine while cancellation or
+// completion cleanup is in progress, but it must not accept new runtime data.
+func (s *Service) activeRunCanUseProject(project *ProjectSession, runID string) bool {
+	if s == nil || project == nil || strings.TrimSpace(runID) == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeRunCanUseProjectLocked(project, runID)
+}
+
+func (s *Service) activeRunCanUseProjectLocked(project *ProjectSession, runID string) bool {
+	if project == nil || s.projects[normalizeProjectID(project.ID)] != project {
+		return false
+	}
+	run := s.runs[runID]
+	if run == nil || normalizeProjectID(run.ProjectSessionID) != normalizeProjectID(project.ID) {
+		return false
+	}
+	if owner, tracked := s.runOwners[runID]; tracked && owner != project {
+		return false
+	}
+	if _, retired := s.retiredRuns[runID]; retired {
+		return false
+	}
+	return run.Status == "running" || run.Status == "queued"
+}
+
+func (s *Service) updateActiveRun(runID string, update func(*AIChatRun)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.runs[runID]
+	project := s.currentRunOwnerLocked(runID)
+	if run == nil || project == nil || !s.activeRunCanUseProjectLocked(project, runID) {
+		return false
+	}
+	if update != nil {
+		update(run)
+	}
+	run.Revision++
+	run.UpdatedAt = utcNow()
+	return true
+}
+
+func (s *Service) liveRunCanUseProjectLocked(project *ProjectSession, runID string) bool {
+	if project == nil || s.projects[normalizeProjectID(project.ID)] != project {
+		return false
+	}
+	run := s.runs[runID]
+	if run == nil || normalizeProjectID(run.ProjectSessionID) != normalizeProjectID(project.ID) {
+		return false
+	}
+	if owner, tracked := s.runOwners[runID]; tracked && owner != project {
+		return false
+	}
+	_, retired := s.retiredRuns[runID]
+	if retired {
+		return false
+	}
+	if s.runDone[runID] != nil {
+		return true
+	}
+	return run.Status == "running" || run.Status == "queued"
+}
+
+func (s *Service) currentRunOwnerLocked(runID string) *ProjectSession {
+	owner := s.runOwners[runID]
+	if owner == nil {
+		run := s.runs[runID]
+		if run == nil {
+			return nil
+		}
+		owner = s.projects[normalizeProjectID(run.ProjectSessionID)]
+	}
+	if owner == nil || !s.runCanUseProjectLocked(owner, runID) {
+		return nil
+	}
+	return owner
+}
+
+func (s *Service) launchOwnedRun(project *ProjectSession, runID string, done chan struct{}, run func()) bool {
+	if s == nil || project == nil || done == nil || run == nil {
+		return false
+	}
+	s.projectRunsMu.RLock()
+	s.mu.Lock()
+	ownedRun := s.runs[runID]
+	if ownedRun == nil || ownedRun.Status != "running" || s.currentRunOwnerLocked(runID) != project {
+		s.mu.Unlock()
+		s.projectRunsMu.RUnlock()
+		return false
+	}
+	s.runDone[runID] = done
+	s.mu.Unlock()
+	s.projectRunsMu.RUnlock()
+	go func() {
+		defer s.markRunDone(runID, done)
+		run()
+	}()
+	return true
+}
+
+func (s *Service) emitRunEvent(project *ProjectSession, runID string, name string, payload any) {
+	if s == nil || project == nil || s.emit == nil {
+		return
+	}
+	s.mu.RLock()
+	if !s.runCanUseProjectLocked(project, runID) {
+		s.mu.RUnlock()
+		return
+	}
+	generation := project.generation
+	emit := s.emit
+	s.mu.RUnlock()
+	if !project.beginEvent(generation) {
+		return
+	}
+	defer project.endEvent()
+	s.mu.RLock()
+	current := project.generation == generation && s.runCanUseProjectLocked(project, runID)
+	s.mu.RUnlock()
+	if !current {
+		return
+	}
+	emit(name, payload)
+}
+
+const projectEventActiveBit uint64 = 1 << 63
+
+func (p *ProjectSession) activateEvents() {
+	if p != nil {
+		p.eventGate.Store(projectEventActiveBit)
+	}
+}
+
+func (p *ProjectSession) deactivateEvents() {
+	if p == nil {
+		return
+	}
+	for {
+		state := p.eventGate.Load()
+		if state&projectEventActiveBit == 0 || p.eventGate.CompareAndSwap(state, state&^projectEventActiveBit) {
+			return
+		}
+	}
+}
+
+func (p *ProjectSession) beginEvent(generation uint64) bool {
+	if p == nil || p.generation != generation {
+		return false
+	}
+	for {
+		state := p.eventGate.Load()
+		if state&projectEventActiveBit == 0 {
+			return false
+		}
+		if p.eventGate.CompareAndSwap(state, state+1) {
+			return true
+		}
+	}
+}
+
+func (p *ProjectSession) endEvent() {
+	if p != nil {
+		p.eventGate.Add(^uint64(0))
+	}
+}
+
 func normalizeProjectID(projectID string) string {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
@@ -2070,31 +2311,63 @@ func errorClass(err error) string {
 }
 
 type runWaiter struct {
-	runID string
-	done  <-chan struct{}
+	runID    string
+	owner    *ProjectSession
+	done     <-chan struct{}
+	canceled *AIChatRun
 }
 
 func (s *Service) cancelRuns(projectID string) []runWaiter {
 	projectID = strings.TrimSpace(projectID)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	waiters := []runWaiter{}
+	runIDs := map[string]struct{}{}
 	for runID, run := range s.runs {
 		if projectID != "" && run.ProjectSessionID != projectID {
 			continue
 		}
-		if done := s.runDone[runID]; done != nil {
-			waiters = append(waiters, runWaiter{runID: runID, done: done})
-		}
+		waiter := runWaiter{runID: runID, owner: s.runOwners[runID], done: s.runDone[runID]}
 		if run.Status == "running" {
 			run.Status = "canceled"
 			run.CanCancel = false
+			run.Revision++
 			run.UpdatedAt = utcNow()
+			runCopy := *run
+			waiter.canceled = &runCopy
 		}
 		if cancel := s.runCancels[runID]; cancel != nil {
 			cancel()
 		}
 		delete(s.runCancels, runID)
+		delete(s.agentInputs, runID)
+		delete(s.agentResizes, runID)
+		runIDs[runID] = struct{}{}
+		waiters = append(waiters, waiter)
+	}
+	for key, grant := range s.toolApprovals {
+		if _, remove := runIDs[grant.RunID]; remove {
+			delete(s.toolApprovals, key)
+		}
+	}
+	s.mu.Unlock()
+	runIDsByOwner := map[*ProjectSession][]string{}
+	for _, waiter := range waiters {
+		if waiter.owner != nil {
+			runIDsByOwner[waiter.owner] = append(runIDsByOwner[waiter.owner], waiter.runID)
+		}
+		if waiter.canceled != nil && waiter.owner != nil && waiter.owner.ChatHistory != nil {
+			run := *waiter.canceled
+			run.SessionID = normalizeChatSessionID(run.SessionID)
+			_ = waiter.owner.ChatHistory.Upsert(run)
+		}
+	}
+	for owner, ownerRunIDs := range runIDsByOwner {
+		if owner.ToolApprovalGrants != nil {
+			_ = owner.ToolApprovalGrants.DeleteRuns(ownerRunIDs)
+		}
+		if owner.PendingApprovals != nil {
+			_ = owner.PendingApprovals.DeleteRuns(ownerRunIDs)
+		}
 	}
 	return waiters
 }
@@ -2113,6 +2386,58 @@ func (s *Service) waitForRuns(waiters []runWaiter) {
 		case <-waiter.done:
 		case <-timeout.C:
 			return
+		}
+	}
+}
+
+func (s *Service) retireRuns(waiters []runWaiter) {
+	if len(waiters) == 0 {
+		return
+	}
+	runIDs := make(map[string]struct{}, len(waiters))
+	s.mu.Lock()
+	for _, waiter := range waiters {
+		if waiter.owner != nil && s.runOwners[waiter.runID] != waiter.owner {
+			continue
+		}
+		runIDs[waiter.runID] = struct{}{}
+		delete(s.runs, waiter.runID)
+		delete(s.runCancels, waiter.runID)
+		delete(s.runDone, waiter.runID)
+		delete(s.agentInputs, waiter.runID)
+		delete(s.agentResizes, waiter.runID)
+
+		finished := waiter.done == nil
+		if !finished {
+			select {
+			case <-waiter.done:
+				finished = true
+			default:
+			}
+		}
+		if waiter.owner != nil && !finished {
+			s.retiredRuns[waiter.runID] = struct{}{}
+		} else {
+			delete(s.runOwners, waiter.runID)
+			delete(s.retiredRuns, waiter.runID)
+		}
+	}
+	for key, grant := range s.toolApprovals {
+		if _, remove := runIDs[grant.RunID]; remove {
+			delete(s.toolApprovals, key)
+		}
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) releaseRetiredRunsLocked(owner *ProjectSession) {
+	if owner == nil {
+		return
+	}
+	for runID := range s.retiredRuns {
+		if s.runOwners[runID] == owner {
+			delete(s.runOwners, runID)
+			delete(s.retiredRuns, runID)
 		}
 	}
 }
