@@ -58,7 +58,10 @@ import { zIndex } from "../../styles/colors";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { usePerformanceStore } from "../../stores/performanceStore";
-import { useAIChatStore } from "../../stores/aiChatStore";
+import {
+  aiChatProjectScopeKey,
+  useAIChatStore,
+} from "../../stores/aiChatStore";
 import { usePluginModal } from "../../contexts/PluginModalContext";
 import {
   usePreviewWindowStore,
@@ -6361,9 +6364,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
       openAIChatFromPalette();
-      useAIChatStore.getState().enqueueCommandIntent(actionId, payload);
+      useAIChatStore
+        .getState()
+        .enqueueCommandIntent(
+          actionId,
+          payload,
+          aiChatProjectScopeKey(currentProjectSessionId, activeProjectPath),
+        );
     },
-    [aiPanelEnabled, openAIChatFromPalette],
+    [
+      activeProjectPath,
+      aiPanelEnabled,
+      currentProjectSessionId,
+      openAIChatFromPalette,
+    ],
   );
 
   const openProblemsFromStatusBar = () => {

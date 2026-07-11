@@ -6,7 +6,6 @@ export type AICommandPaletteActionId =
   | "ai.startFromInput"
   | "ai.pendingApprovals"
   | "ai.cancelActiveRun"
-  | "ai.runtimeStatus"
   | "ai.approvalSettings";
 
 export interface AICommandPalettePayload {
@@ -21,6 +20,7 @@ export interface AICommandPalettePayload {
 export interface AIChatCommandIntent {
   id: string;
   actionId: AICommandPaletteActionId;
+  projectScopeKey: string;
   action?: AIChatAction;
   prompt?: string;
   workflowId?: string;
@@ -163,6 +163,7 @@ export function parseAICommandInput(input: string): ParsedAICommandInput {
 export function createAIChatCommandIntent(
   actionId: AICommandPaletteActionId,
   payload: AICommandPalettePayload = {},
+  projectScopeKey = "",
 ): AIChatCommandIntent {
   const parsed =
     actionId === "ai.startFromInput" && payload.input
@@ -182,6 +183,7 @@ export function createAIChatCommandIntent(
   return {
     id: `ai-command-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     actionId,
+    projectScopeKey: projectScopeKey.trim(),
     action: startPayload.action,
     prompt: startPayload.prompt,
     workflowId: startPayload.workflowId,
