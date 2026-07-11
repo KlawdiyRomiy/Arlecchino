@@ -153,6 +153,9 @@ const App: React.FC = () => {
   const editorFontFamily = useEditorSettingsStore(
     (state) => state.editorFontFamily,
   );
+  const editorFontSize = useEditorSettingsStore(
+    (state) => state.editorFontSize,
+  );
   const terminalFontFamily = useEditorSettingsStore(
     (state) => state.terminalFontFamily,
   );
@@ -211,15 +214,20 @@ const App: React.FC = () => {
       editorFontFamily,
     );
     document.documentElement.style.setProperty(
+      "--editor-font-size",
+      `${editorFontSize}px`,
+    );
+    document.documentElement.style.setProperty(
       "--terminal-font-family",
       terminalFontFamily,
     );
     return () => {
       document.documentElement.style.removeProperty("--ui-font-family");
       document.documentElement.style.removeProperty("--editor-font-family");
+      document.documentElement.style.removeProperty("--editor-font-size");
       document.documentElement.style.removeProperty("--terminal-font-family");
     };
-  }, [editorFontFamily, terminalFontFamily, uiFontFamily]);
+  }, [editorFontFamily, editorFontSize, terminalFontFamily, uiFontFamily]);
 
   useEffect(() => {
     useTerminalStore.getState().setTerminalFontFamily(terminalFontFamily);

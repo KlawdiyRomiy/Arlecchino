@@ -1608,7 +1608,7 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 		"%h",
 		"%an",
 		"%ae",
-		"%ai",
+		"%aI",
 		"%s",
 		"%b",
 		"%P",

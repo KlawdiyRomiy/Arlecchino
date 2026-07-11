@@ -171,7 +171,7 @@
 
 .ai-chat-header__actions {
   flex: 0 0 auto;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .ai-chat-header__menu {
@@ -331,6 +331,94 @@
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   padding: 54px 8px 8px;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-conversation {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-transcript {
+  gap: 14px;
+  padding-inline: 6px;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-message-group--user {
+  width: fit-content;
+  max-width: min(88%, 520px);
+  grid-template-columns: minmax(0, 1fr);
+  margin-left: auto;
+}
+
+.ai-chat-workbench[data-presentation="panel"]
+  .ai-chat-message-group--user
+  .ai-chat-message-content {
+  justify-items: end;
+}
+
+.ai-chat-workbench[data-presentation="panel"]
+  .ai-chat-message-group--assistant {
+  align-self: flex-start;
+  margin-right: auto;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-message-avatar {
+  border-color: transparent;
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 54%,
+    transparent
+  );
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-message-bubble {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ai-chat-workbench[data-presentation="panel"]
+  .ai-chat-message-bubble--assistant {
+  background: transparent;
+  padding-inline: 6px;
+}
+
+.ai-chat-workbench[data-presentation="panel"]
+  .ai-chat-run-card.is-active
+  .ai-chat-message-bubble--assistant {
+  border-color: transparent;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-message-bubble--user {
+  width: auto;
+  max-width: 100%;
+  border-color: transparent;
+  background: var(--ai-chat-user-bubble-bg);
+  border-radius: 16px;
+  padding: 10px 12px;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-message-actions {
+  border-color: transparent;
+  background: transparent;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-commentary-message {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ai-chat-surface-soft) 44%, transparent);
+  box-shadow: none;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-composer {
+  border-top: 0;
+  background: transparent;
+}
+
+.ai-chat-workbench[data-presentation="panel"] .ai-chat-composer__box {
+  border-color: var(--ai-chat-border);
+  box-shadow: inset 0 1px 0
+    color-mix(in srgb, var(--shell-inner-highlight) 52%, transparent);
 }
 
 .ai-chat-conversation,
@@ -1903,7 +1991,7 @@
 }
 
 .ai-chat-git-diff-header > .ai-chat-file-select-group {
-  width: 100%;
+  width: min(100%, 520px);
   flex: 0 0 auto;
 }
 
@@ -2071,9 +2159,929 @@
   flex-wrap: nowrap;
 }
 
+.ai-chat-git-review[data-mode="drawer"]
+  .ai-chat-git-diff-header
+  > .ai-chat-file-select-group {
+  width: min(100%, 420px);
+}
+
 .ai-chat-git-review[data-mode="drawer"] .ai-chat-diff-search-field {
   min-width: 0;
   max-width: none;
+}
+
+.ai-chat-git-commandbar {
+  display: flex;
+  position: relative;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: 20px;
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 92%,
+    var(--surface-shell-soft)
+  );
+  box-shadow:
+    var(--shell-shadow),
+    inset 0 1px 0
+      color-mix(in srgb, var(--shell-inner-highlight) 72%, transparent);
+  padding: 8px 170px 8px 8px;
+  margin: 10px 10px 0;
+}
+
+.ai-chat-git-commandbar[data-ai-chat-drawer-header="true"] {
+  cursor: grab;
+}
+
+.ai-chat-git-commandbar[data-ai-chat-drawer-header="true"]:active {
+  cursor: grabbing;
+}
+
+.ai-chat-git-commandbar__summary,
+.ai-chat-git-commandbar__tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-chat-git-commandbar__summary {
+  flex: 1 1 auto;
+}
+
+.ai-chat-git-commandbar__tools {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--shell-border) 72%, transparent);
+  border-radius: var(--ai-chat-control-radius);
+  background: color-mix(in srgb, var(--surface-shell-soft) 74%, transparent);
+  padding: 3px;
+}
+
+.ai-chat-git-commandbar__tools > button,
+.ai-chat-git-files-section__header > button,
+.ai-chat-git-file-row__action,
+.ai-chat-git-files__pager button,
+.ai-chat-git-stash-compose button,
+.ai-chat-git-stash-row button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: var(--ai-chat-control-radius);
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 88%,
+    transparent
+  );
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ai-chat-git-commandbar__tools > button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.ai-chat-git-commandbar__tools > button:hover:not(:disabled),
+.ai-chat-git-commandbar__tools > button.is-active {
+  border-color: var(--ai-chat-border-strong);
+  background: color-mix(in srgb, var(--surface-active) 84%, transparent);
+  color: var(--ai-chat-text);
+}
+
+.ai-chat-git-commandbar > .ai-chat-git-window-actions {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  right: 8px;
+}
+
+.ai-chat-git-commandbar__tools > button:disabled,
+.ai-chat-git-files-section__header > button:disabled,
+.ai-chat-git-file-row__action:disabled,
+.ai-chat-git-files__pager button:disabled,
+.ai-chat-git-stash-compose button:disabled {
+  cursor: not-allowed;
+  opacity: 0.44;
+}
+
+.ai-chat-git-workspace {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns:
+    minmax(218px, 0.78fr) minmax(360px, 2fr)
+    minmax(220px, 0.8fr);
+  gap: 10px;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.ai-chat-git-compact-back,
+.ai-chat-git-compact-commit {
+  display: none;
+}
+
+.ai-chat-git-files,
+.ai-chat-git-detail,
+.ai-chat-git-inspector {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: 22px;
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 90%,
+    var(--surface-shell-soft)
+  );
+  box-shadow:
+    var(--shell-shadow),
+    inset 0 1px 0
+      color-mix(in srgb, var(--shell-inner-highlight) 68%, transparent);
+}
+
+.ai-chat-git-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.ai-chat-git-files__title {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  color: var(--ai-chat-text);
+  font-size: 12px;
+  font-weight: 760;
+  padding: 0 7px;
+}
+
+.ai-chat-git-files__title small,
+.ai-chat-git-files-section__header small {
+  display: inline-flex;
+  min-width: 24px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: 999px;
+  background: var(--ai-chat-surface-raised);
+  color: var(--ai-chat-muted);
+  font-size: 10px;
+  font-weight: 720;
+  padding: 0 6px;
+}
+
+.ai-chat-git-file-search {
+  width: 100%;
+  min-height: 34px;
+  max-width: none;
+  flex: 0 0 auto;
+}
+
+.ai-chat-git-files__scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.ai-chat-git-files-section {
+  overflow: hidden;
+  flex: 0 0 auto;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: 18px;
+  background: color-mix(
+    in srgb,
+    var(--surface-shell-soft) 70%,
+    var(--ai-chat-surface)
+  );
+}
+
+.ai-chat-git-files-section__header {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 7px 5px 10px;
+}
+
+.ai-chat-git-files-section__header > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: var(--ai-chat-text);
+  font-size: 11px;
+  font-weight: 730;
+}
+
+.ai-chat-git-files-section__header > button {
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.ai-chat-git-files-section__list {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid var(--ai-chat-border);
+  padding: 6px;
+}
+
+.ai-chat-git-file-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 82%,
+    transparent
+  );
+}
+
+.ai-chat-git-file-row:hover,
+.ai-chat-git-file-row.is-selected {
+  border-color: var(--ai-chat-border-strong);
+  background: color-mix(in srgb, var(--surface-active) 84%, transparent);
+}
+
+.ai-chat-git-file-row__select {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ai-chat-text);
+  cursor: pointer;
+  padding: 5px 2px 5px 7px;
+  text-align: left;
+}
+
+.ai-chat-git-file-row__select .ai-chat-git-file__badge {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border-radius: 11px;
+  font-size: 10px;
+}
+
+.ai-chat-git-file-row__action {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.ai-chat-git-files-empty {
+  color: var(--ai-chat-muted);
+  font-size: 11px;
+  padding: 10px;
+  text-align: center;
+}
+
+.ai-chat-git-files__pager {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: var(--ai-chat-control-radius);
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 88%,
+    transparent
+  );
+  padding: 3px;
+}
+
+.ai-chat-git-files__pager button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+}
+
+.ai-chat-git-files__pager span {
+  color: var(--ai-chat-muted);
+  font-size: 10px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.ai-chat-git-detail {
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-chat-git-detail__header {
+  display: flex;
+  min-width: 0;
+  min-height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--ai-chat-border);
+  padding: 6px 8px;
+}
+
+.ai-chat-git-detail__header .ai-chat-file-select-group {
+  min-width: 128px;
+  flex: 1 1 220px;
+}
+
+.ai-chat-git-view-title {
+  display: none;
+  min-width: 0;
+  flex: 1;
+  color: var(--ai-chat-text);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.ai-chat-git-detail__header:not([data-view="diff"])
+  > :not(.ai-chat-git-compact-back):not(.ai-chat-git-view-title) {
+  display: none;
+}
+
+.ai-chat-git-detail__header:not([data-view="diff"]) > .ai-chat-git-view-title {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ai-chat-git-detail__body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.ai-chat-git-history-view {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  align-self: stretch;
+  overflow: hidden;
+}
+
+.ai-chat-git-history-view > div {
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  background: transparent !important;
+  --git-bg: transparent !important;
+  --git-bg-secondary: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 76%,
+    transparent
+  ) !important;
+  --git-bg-tertiary: color-mix(
+    in srgb,
+    var(--surface-shell-soft) 78%,
+    transparent
+  ) !important;
+  --git-bg-hover: var(--surface-active) !important;
+  --git-border: var(--ai-chat-border) !important;
+  --git-text: var(--ai-chat-text) !important;
+  --git-text-secondary: var(--ai-chat-muted) !important;
+  --git-accent: var(--text-secondary) !important;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-panel__header {
+  background: color-mix(in srgb, var(--surface-shell-soft) 68%, transparent);
+  padding: 8px;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-panel__search {
+  min-height: 34px;
+  border-radius: var(--ai-chat-control-radius);
+  background: var(--ai-chat-surface-raised);
+  padding: 0 10px;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-panel__list {
+  background: transparent;
+  padding: 4px;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit {
+  grid-template-columns: 10px 28px minmax(0, 1fr) auto;
+  gap: 8px;
+  border-color: transparent;
+  border-radius: 14px;
+  background: color-mix(
+    in srgb,
+    var(--ai-chat-surface-raised) 76%,
+    transparent
+  );
+  padding: 8px;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit__dot {
+  width: 7px;
+  height: 7px;
+  background: var(--text-tertiary);
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit__avatar {
+  border: 1px solid var(--ai-chat-border);
+  color: var(--text-secondary);
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit__hash {
+  color: var(--ai-chat-muted);
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit__details {
+  border-radius: 16px;
+  background: color-mix(
+    in srgb,
+    var(--surface-shell-soft) 72%,
+    var(--ai-chat-surface)
+  );
+  margin-left: 38px !important;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-file {
+  border-radius: 12px;
+  background: var(--ai-chat-surface-raised) !important;
+  font: inherit;
+}
+
+.ai-chat-git-detail__body > .ai-chat-diff-shell {
+  padding: 8px;
+}
+
+.ai-chat-git-detail__body .ai-chat-diff-notice {
+  display: none;
+}
+
+.ai-chat-git-detail__body .ai-chat-diff-filebar {
+  min-height: 38px;
+  border-radius: 14px 14px 0 0;
+  padding: 0 10px;
+}
+
+.ai-chat-git-detail__body .ai-chat-diff-view {
+  border-radius: 0 0 14px 14px;
+}
+
+.ai-chat-git-stash-view {
+  display: flex;
+  min-height: 0;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.ai-chat-git-stash-compose {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.ai-chat-git-stash-compose input {
+  min-width: 0;
+  min-height: 36px;
+  flex: 1;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: var(--ai-chat-control-radius);
+  outline: none;
+  background: var(--ai-chat-surface-raised);
+  color: var(--ai-chat-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 11px;
+}
+
+.ai-chat-git-stash-compose button {
+  padding: 0 12px;
+}
+
+.ai-chat-git-stash-list {
+  display: grid;
+  min-height: 0;
+  gap: 6px;
+  overflow: auto;
+}
+
+.ai-chat-git-stash-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: 16px;
+  background: var(--ai-chat-surface-raised);
+  padding: 8px;
+}
+
+.ai-chat-git-stash-row > span {
+  display: grid;
+  min-width: 0;
+}
+
+.ai-chat-git-stash-row strong,
+.ai-chat-git-stash-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-chat-git-stash-row strong {
+  color: var(--ai-chat-text);
+  font-size: 12px;
+}
+
+.ai-chat-git-stash-row small {
+  color: var(--ai-chat-muted);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.ai-chat-git-stash-row button {
+  min-height: 30px;
+  padding: 0 9px;
+}
+
+.ai-chat-git-inspector {
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-chat-git-inspector__content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.ai-chat-git-inspector-card {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: 18px;
+  background: color-mix(
+    in srgb,
+    var(--surface-shell-soft) 72%,
+    var(--ai-chat-surface)
+  );
+  box-shadow: inset 0 1px 0
+    color-mix(in srgb, var(--shell-inner-highlight) 56%, transparent);
+  padding: 10px;
+}
+
+.ai-chat-git-inspector-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ai-chat-text);
+  font-size: 11px;
+  font-weight: 760;
+  margin: 0;
+}
+
+.ai-chat-git-commit {
+  display: grid;
+  border-top: 1px solid var(--ai-chat-border);
+  background: color-mix(
+    in srgb,
+    var(--surface-shell-soft) 72%,
+    var(--ai-chat-surface)
+  );
+  padding: 10px;
+}
+
+.ai-chat-git-commit textarea {
+  min-height: 82px;
+  max-height: 138px;
+  resize: vertical;
+}
+
+.ai-chat-git-commit > small {
+  color: var(--ai-chat-muted);
+  font-size: 10px;
+}
+
+.ai-chat-git-commit-primary {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid
+    color-mix(in srgb, var(--accent-brand) 48%, var(--ai-chat-border));
+  border-radius: var(--ai-chat-control-radius);
+  background: color-mix(
+    in srgb,
+    var(--accent-brand) 12%,
+    var(--ai-chat-surface-raised)
+  );
+  color: var(--accent-brand);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.ai-chat-git-commit-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.ai-chat-git-review {
+  container-type: inline-size;
+  --ai-chat-git-ui-size: 12px;
+  --ai-chat-git-meta-size: 11px;
+  font-family: var(--ui-font-family, system-ui, sans-serif);
+  font-size: var(--ai-chat-git-ui-size);
+  font-weight: 500;
+}
+
+.ai-chat-git-review button,
+.ai-chat-git-review input,
+.ai-chat-git-review select,
+.ai-chat-git-review textarea {
+  font-family: inherit;
+}
+
+.ai-chat-git-files__title,
+.ai-chat-git-files-section__header > span,
+.ai-chat-git-file__body span,
+.git-history-panel[data-variant="chat"] .git-history-commit__subject,
+.ai-chat-git-view-title,
+.ai-chat-git-inspector-card h3,
+.ai-chat-git-commit-primary {
+  font-size: var(--ai-chat-git-ui-size);
+  font-weight: 600;
+}
+
+.ai-chat-git-file__body small,
+.ai-chat-git-files-empty,
+.ai-chat-git-files__pager span,
+.ai-chat-git-commit > small,
+.ai-chat-git-compact-footer button {
+  font-size: var(--ai-chat-git-meta-size);
+  font-weight: 500;
+}
+
+.ai-chat-git-files__title small,
+.ai-chat-git-files-section__header small,
+.ai-chat-git-file-row__select .ai-chat-git-file__badge {
+  font-size: calc(var(--ai-chat-git-ui-size) * 0.84);
+  font-weight: 600;
+}
+
+.git-history-panel[data-variant="chat"] {
+  font-family: var(--ui-font-family, system-ui, sans-serif);
+  font-size: var(--ai-chat-git-ui-size);
+  font-weight: 500;
+}
+
+.git-history-panel[data-variant="chat"] button,
+.git-history-panel[data-variant="chat"] input {
+  font-family: inherit;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit,
+.git-history-panel[data-variant="chat"] .git-history-commit__details,
+.git-history-panel[data-variant="chat"] .git-history-file > div {
+  font-size: var(--ai-chat-git-ui-size);
+  font-weight: 500;
+}
+
+.git-history-panel[data-variant="chat"] .git-history-commit__hash {
+  font-family: var(--editor-font-family, ui-monospace, monospace);
+  font-size: calc(var(--editor-font-size, 14px) * 0.78);
+  font-weight: 500;
+}
+
+.git-history-panel[data-variant="chat"] [data-testid="git-diff-viewer"] {
+  font-family: var(--ui-font-family, system-ui, sans-serif);
+  font-size: var(--ai-chat-git-ui-size);
+}
+
+.git-history-panel[data-variant="chat"]
+  [data-testid="git-diff-viewer"]
+  .font-mono {
+  font-family: var(--editor-font-family, ui-monospace, monospace) !important;
+  font-size: calc(var(--editor-font-size, 14px) * 0.82) !important;
+  font-weight: 400;
+}
+
+.ai-chat-git-count-pill,
+.ai-chat-diff-stat {
+  font-size: var(--ai-chat-git-ui-size);
+  font-weight: 650;
+}
+
+.ai-chat-diff-filebar__name {
+  font-size: var(--ai-chat-git-ui-size);
+  font-weight: 650;
+}
+
+.ai-chat-diff-filebar__name small {
+  font-size: var(--ai-chat-git-meta-size);
+  font-weight: 500;
+}
+
+.ai-chat-diff-view {
+  font-family: var(--editor-font-family, ui-monospace, monospace);
+  font-size: calc(var(--editor-font-size, 14px) * 0.9);
+  font-weight: 400;
+}
+
+@container (max-width: 760px) {
+  .ai-chat-git-commandbar {
+    flex-wrap: wrap;
+    border-radius: 18px;
+    padding: 8px 126px 8px 8px;
+    margin: 8px 8px 0;
+  }
+
+  .ai-chat-git-commandbar__summary {
+    width: 100%;
+    min-height: 36px;
+    flex: 1 1 100%;
+  }
+
+  .ai-chat-git-commandbar__summary .ai-chat-drawer-grip {
+    display: none;
+  }
+
+  .ai-chat-git-commandbar__tools {
+    order: 3;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .ai-chat-git-commandbar__tools > button {
+    min-height: 36px;
+    padding: 0 4px;
+  }
+
+  .ai-chat-git-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .ai-chat-git-workspace[data-compact-pane="files"] .ai-chat-git-detail,
+  .ai-chat-git-workspace[data-compact-pane="detail"] .ai-chat-git-files,
+  .ai-chat-git-inspector {
+    display: none;
+  }
+
+  .ai-chat-git-files,
+  .ai-chat-git-detail {
+    min-height: 0;
+    flex: 1 1 auto;
+    border-radius: 18px;
+  }
+
+  .ai-chat-git-files-section__list {
+    gap: 7px;
+  }
+
+  .ai-chat-git-file-row__select {
+    min-height: 52px;
+  }
+
+  .ai-chat-git-detail__header {
+    min-height: auto;
+    flex-wrap: wrap;
+    padding: 7px;
+  }
+
+  .ai-chat-git-compact-back {
+    display: inline-flex;
+    order: -3;
+  }
+
+  .ai-chat-git-detail__header .ai-chat-file-select-group {
+    order: -2;
+    min-width: 0;
+    flex: 1 1 calc(100% - 42px);
+  }
+
+  .ai-chat-git-detail__header
+    .ai-chat-file-select-group
+    > .ai-chat-icon-button:first-child {
+    display: none;
+  }
+
+  .ai-chat-git-detail__header .ai-chat-diff-search-field {
+    min-width: 118px;
+    flex: 1 1 160px;
+  }
+
+  .ai-chat-git-context-action {
+    flex: 1 1 92px;
+  }
+
+  .ai-chat-git-detail__body {
+    min-height: 180px;
+  }
+
+  .ai-chat-git-compact-commit {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+    border: 1px solid var(--ai-chat-border);
+    border-radius: 18px;
+    background: color-mix(
+      in srgb,
+      var(--ai-chat-surface-raised) 92%,
+      var(--surface-shell-soft)
+    );
+    box-shadow: var(--shell-shadow);
+    padding: 5px;
+  }
+
+  .ai-chat-git-compact-commit__composer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 3px;
+  }
+
+  .ai-chat-git-compact-commit__composer textarea {
+    min-width: 0;
+    min-height: 56px;
+    resize: vertical;
+  }
+
+  .ai-chat-git-compact-commit__composer .ai-chat-git-commit-primary {
+    min-width: 92px;
+    padding: 0 12px;
+  }
+
+  .ai-chat-git-compact-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .ai-chat-git-compact-footer button {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 13px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 680;
+  }
+
+  .ai-chat-git-compact-footer button:hover {
+    background: var(--surface-active);
+    color: var(--ai-chat-text);
+  }
+
+  .ai-chat-git-diff-row__line {
+    width: 34px;
+    flex-basis: 34px;
+    padding: 0 5px;
+  }
+
+  .ai-chat-git-diff-row code {
+    padding: 0 8px;
+  }
 }
 
 .ai-chat-diff-filebar {
@@ -2100,8 +3108,8 @@
   gap: 8px;
   overflow: hidden;
   color: var(--ai-chat-text);
-  font-size: 13px;
-  font-weight: 740;
+  font-size: var(--ai-chat-git-ui-size, 12px);
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2111,16 +3119,16 @@
   overflow: hidden;
   color: var(--ai-chat-muted);
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 620;
+  font-size: var(--ai-chat-git-meta-size, 11px);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ai-chat-diff-stat {
   font-family: var(--editor-font-family, ui-monospace, monospace);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: var(--ai-chat-git-ui-size, 12px);
+  font-weight: 650;
 }
 
 .ai-chat-diff-stat.is-add {
@@ -2141,7 +3149,8 @@
   border-top: 0;
   border-radius: 0 0 18px 18px;
   font-family: var(--editor-font-family, ui-monospace, monospace);
-  font-size: 12.5px;
+  font-size: calc(var(--editor-font-size, 14px) * 0.9);
+  font-weight: 400;
   line-height: 1.6;
   background: color-mix(in srgb, var(--ai-chat-surface) 94%, transparent);
 }
@@ -2703,6 +3712,7 @@
   width: min(640px, 82%);
   min-width: 0;
   max-width: min(640px, 82%);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .ai-chat-message-group--assistant {
@@ -2765,6 +3775,7 @@
 }
 
 .ai-chat-message-meta--user {
+  justify-content: flex-end;
   margin-bottom: 4px;
 }
 

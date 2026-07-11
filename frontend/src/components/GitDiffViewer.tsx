@@ -267,7 +267,8 @@ const renderLineCell = (
   if (!line) {
     return (
       <div
-        className="grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
+        className="git-diff-code-row grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
+        data-ui-font-scale-exempt
         style={{ background: "transparent" }}
       >
         <div
@@ -291,7 +292,8 @@ const renderLineCell = (
 
   return (
     <div
-      className="grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
+      className="git-diff-code-row grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
+      data-ui-font-scale-exempt
       style={{
         background: lineAccent(isDark, line.type),
         borderLeft: `2px solid ${lineBorder(line.type)}`,
@@ -508,6 +510,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                 background: theme.bgTertiary,
               }}
               title="Previous file"
+              aria-label="Previous file"
             >
               <ChevronLeft size={14} />
             </button>
@@ -521,6 +524,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                 background: theme.bgTertiary,
               }}
               title="Next file"
+              aria-label="Next file"
             >
               <ChevronRight size={14} />
             </button>
@@ -578,6 +582,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
           className="inline-flex h-7 w-7 items-center justify-center rounded-[10px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
           title="Close diff"
+          aria-label="Close diff"
         >
           <X size={15} />
         </button>
@@ -618,7 +623,8 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                 {hunk.lines.map((line, index) => (
                   <div
                     key={`${hunk.header}:${index}:${line.type}:${line.oldLineNum ?? 0}:${line.newLineNum ?? 0}`}
-                    className="grid min-h-[20px] grid-cols-[42px_42px_minmax(0,1fr)]"
+                    className="git-diff-code-row grid min-h-[20px] grid-cols-[42px_42px_minmax(0,1fr)]"
+                    data-ui-font-scale-exempt
                     style={{
                       background: lineAccent(isDark, line.type),
                       borderLeft: `2px solid ${lineBorder(line.type)}`,

@@ -38,10 +38,24 @@ interface GitHistoryProps {
   loading: boolean;
   onRefresh: () => void;
   onViewDiff?: (hash: string) => void;
+  variant?: "default" | "chat";
 }
 
+const parseGitDate = (value: string): Date | null => {
+  const trimmed = value.trim();
+  const legacyGitDate = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([+-]\d{2})(\d{2})$/,
+  );
+  const normalized = legacyGitDate
+    ? `${legacyGitDate[1]}T${legacyGitDate[2]}${legacyGitDate[3]}:${legacyGitDate[4]}`
+    : trimmed;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 const formatDate = (dateStr: string): string => {
-  const date = new Date(dateStr);
+  const date = parseGitDate(dateStr);
+  if (!date) return dateStr.trim() || "Unknown date";
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -186,6 +200,7 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
   loading,
   onRefresh,
   onViewDiff,
+  variant = "default",
 }) => {
   const { isDark } = useTheme();
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
@@ -214,6 +229,7 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
         "--git-border": isDark ? "#2a2a2a" : "#e5e7eb",
         "--git-text": isDark ? "#ffffff" : "#111827",
         "--git-text-secondary": isDark ? "#888888" : "#6b7280",
+        "--git-accent": "#ef4444",
       }) as React.CSSProperties,
     [isDark],
   );
@@ -323,9 +339,10 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
   return (
     <div
       style={panelVars}
-      className="flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
+      className="git-history-panel flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
+      data-variant={variant}
     >
-      <div className="border-b border-[var(--git-border)] px-3 py-2">
+      <div className="git-history-panel__header border-b border-[var(--git-border)] px-3 py-2">
         <div className="flex items-center gap-2">
           <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
             <GitCommit size={13} />
@@ -340,12 +357,13 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
             disabled={loading}
             className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] text-[var(--git-text-secondary)] transition-colors hover:bg-[var(--git-bg-hover)] hover:text-[var(--git-text)] disabled:cursor-wait disabled:opacity-60"
             title="Refresh history"
+            aria-label="Refresh history"
           >
             <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
 
-        <div className="mt-2 flex items-center gap-2 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 py-2 text-[12px] text-[var(--git-text-secondary)]">
+        <div className="git-history-panel__search mt-2 flex items-center gap-2 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 py-2 text-[12px] text-[var(--git-text-secondary)]">
           <Search size={13} />
           <input
             value={search}
@@ -356,7 +374,7 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="git-history-panel__list min-h-0 flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex h-full items-center justify-center px-4 text-[12px] text-[var(--git-text-secondary)]">
             Loading history...
@@ -400,21 +418,22 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                       event.preventDefault();
                       void toggleExpand(commit.hash);
                     }}
-                    className="group grid w-full grid-cols-[18px_28px_1fr_auto] items-start gap-3 rounded-lg border border-transparent px-2 py-2 text-left transition-colors hover:border-[var(--git-border)] hover:bg-[var(--git-bg-hover)]"
+                    className="git-history-commit group grid w-full grid-cols-[18px_28px_1fr_auto] items-start gap-3 rounded-lg border border-transparent px-2 py-2 text-left transition-colors hover:border-[var(--git-border)] hover:bg-[var(--git-bg-hover)]"
                   >
                     <div className="flex h-full flex-col items-center pt-1">
-                      <div className="h-2.5 w-2.5 rounded-full bg-[#ef4444] ring-2 ring-[var(--git-bg)]/100" />
+                      <div className="git-history-commit__dot h-2.5 w-2.5 rounded-full bg-[var(--git-accent)] ring-2 ring-[var(--git-bg)]/100" />
                       {index < filteredCommits.length - 1 && (
                         <div className="mt-1 h-full w-px bg-[var(--git-border)]" />
                       )}
                     </div>
 
                     <div
-                      className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      className="git-history-commit__avatar mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold text-white"
                       style={{
-                        background: hashToColor(
-                          commit.authorEmail || commit.hash,
-                        ),
+                        background:
+                          variant === "chat"
+                            ? "var(--git-bg-tertiary)"
+                            : hashToColor(commit.authorEmail || commit.hash),
                       }}
                     >
                       {getInitials(commit.author || "?")}
@@ -433,13 +452,16 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                             className="text-[var(--git-text-secondary)]"
                           />
                         )}
-                        <div className="truncate text-[12px] font-medium text-[var(--git-text)]">
+                        <div className="git-history-commit__subject truncate text-[12px] font-medium text-[var(--git-text)]">
                           {commit.subject || "No subject"}
                         </div>
                       </div>
 
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--git-text-secondary)]">
-                        <span className="rounded-full border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2 py-0.5 font-mono text-[#ef4444]">
+                        <span
+                          className="git-history-commit__hash rounded-full border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2 py-0.5 font-mono text-[var(--git-accent)]"
+                          data-ui-font-scale-exempt
+                        >
                           {commit.shortHash}
                         </span>
                         <span className="inline-flex items-center gap-1">
@@ -460,8 +482,9 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                           event.stopPropagation();
                           onViewDiff?.(commit.hash);
                         }}
-                        className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-accent)] hover:text-[var(--git-accent)]"
                         title="View commit diff"
+                        aria-label={`View diff for ${commit.subject || commit.shortHash}`}
                       >
                         <FileSearch size={12} />
                       </button>
@@ -470,7 +493,7 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
 
                   {isExpanded && (
                     <div
-                      className="ml-11 rounded-lg border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-3 py-3 text-[12px]"
+                      className="git-history-commit__details ml-11 rounded-lg border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-3 py-3 text-[12px]"
                       style={{
                         marginTop: radius.sm,
                         position: "relative",
@@ -505,10 +528,10 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                                   type="button"
                                   onClick={() => selectCommitFile(fileIndex)}
                                   key={`${commit.hash}:${entry.path}`}
-                                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors hover:border-[#ef4444] hover:bg-[var(--git-bg-hover)]"
+                                  className="git-history-file grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors hover:border-[var(--git-accent)] hover:bg-[var(--git-bg-hover)]"
                                   style={{
                                     borderColor: fileSelected
-                                      ? "#ef4444"
+                                      ? "var(--git-accent)"
                                       : "var(--git-border)",
                                     background: fileSelected
                                       ? "var(--git-bg-hover)"
@@ -541,7 +564,7 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                             <button
                               type="button"
                               onClick={() => onViewDiff(commit.hash)}
-                              className="rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[11px] normal-case tracking-normal text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                              className="rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[11px] normal-case tracking-normal text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-accent)] hover:text-[var(--git-accent)]"
                             >
                               Open detail
                             </button>

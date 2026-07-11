@@ -883,7 +883,6 @@ export function RunCard({
   const backgroundLinkedReview = isBackgroundLinkedReviewRun(envelope);
   const prompt = backgroundLinkedReview ? "" : run?.userPrompt || "";
   const displayPrompt = compactText(prompt, compact ? 180 : 360);
-  const createdTime = formatRunTime(envelope.createdAt);
   const assistantTime = formatRunTime(
     run?.updatedAt || envelope.updatedAt || envelope.createdAt,
   );
@@ -1204,9 +1203,6 @@ export function RunCard({
       >
         {prompt ? (
           <div className="ai-chat-message-group ai-chat-message-group--user">
-            <span className="ai-chat-message-avatar ai-chat-message-avatar--user">
-              Y
-            </span>
             <div className="ai-chat-message-content">
               <ContextActionMenu
                 items={userMessageContextItems}
@@ -1215,20 +1211,6 @@ export function RunCard({
                 nativeTargetId={`${envelope.id}:prompt`}
               >
                 <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
-                  <div className="ai-chat-message-meta ai-chat-message-meta--user">
-                    <strong>You</strong>
-                    {createdTime ? (
-                      <time dateTime={envelope.createdAt}>{createdTime}</time>
-                    ) : null}
-                    <span
-                      className="ai-chat-run-card__mode-icon"
-                      role="img"
-                      aria-label={`${meta.label} mode`}
-                      title={`${meta.label} mode`}
-                    >
-                      {meta.icon}
-                    </span>
-                  </div>
                   <p className="ai-chat-run-card__prompt">
                     {renderHighlightedText(displayPrompt, searchQuery)}
                   </p>

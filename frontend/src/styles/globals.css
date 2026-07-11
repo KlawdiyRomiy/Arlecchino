@@ -30,6 +30,7 @@
   --editor-font-family:
     "Arlecchino Fira Code", ui-monospace, "SF Mono", Menlo, Monaco, Consolas,
     monospace;
+  --editor-font-size: 14px;
   --terminal-font-family:
     ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 
@@ -274,6 +275,17 @@ code *,
 .app-boot-error__stack {
   -webkit-user-select: text;
   user-select: text;
+}
+
+[data-testid="git-diff-viewer"] .git-diff-code-row,
+[data-testid="git-diff-viewer"] .git-diff-code-row > div {
+  font-family: var(--editor-font-family, ui-monospace, monospace);
+  font-size: calc(var(--editor-font-size, 14px) * 0.72);
+  font-weight: 400;
+}
+
+[data-testid="git-diff-viewer"] .git-diff-code-row > .font-mono {
+  font-size: calc(var(--editor-font-size, 14px) * 0.82) !important;
 }
 
 html.dark,

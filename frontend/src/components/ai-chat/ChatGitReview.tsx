@@ -8,29 +8,31 @@ import React, {
 } from "react";
 import {
   AlertTriangle,
-  ArrowDownToLine,
   CheckCheck,
   ChevronLeft,
   ChevronRight,
   Check,
   Copy,
-  Filter,
+  Eye,
   FileText,
   GitBranch,
   GitCommit,
   GitPullRequest,
   GripHorizontal,
+  History,
   Info,
   Maximize2,
   Minimize2,
   Minus,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
-  Send,
+  Sparkles,
   X,
 } from "lucide-react";
 import { m, useReducedMotion } from "framer-motion";
+import { GitHistory } from "../GitHistory";
 import { readGitDiffCoalesced, useGitStore } from "../../stores/gitStore";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
 import { toErrorMessage } from "../../utils/errorMessages";
@@ -199,6 +201,12 @@ const filterFiles = (files: GitFileEntry[], query: string): GitFileEntry[] => {
   );
 };
 
+const fileStatusLabel = (file: GitFileEntry): string => {
+  if (file.status === "conflicted") return "!";
+  if (file.status === "untracked") return "?";
+  return file.status.slice(0, 1).toUpperCase();
+};
+
 const parseDiffRows = (diff: string, query: string): DiffRow[] => {
   const normalizedQuery = query.trim().toLowerCase();
   let oldLine = 0;
@@ -306,7 +314,7 @@ function DiffView({
         <span className="ai-chat-diff-stat is-add">+{stats.additions}</span>
         <span className="ai-chat-diff-stat is-delete">-{stats.deletions}</span>
       </div>
-      <div className="ai-chat-diff-view">
+      <div className="ai-chat-diff-view" data-ui-font-scale-exempt>
         {rows.map((row) => (
           <div
             className={`ai-chat-diff-row is-${row.kind}${row.match ? " is-match" : ""}`}
@@ -350,18 +358,24 @@ export function ChatGitReview({
   const isRepositoryMissing = useGitStore((state) => state.isRepositoryMissing);
   const branch = useGitStore((state) => state.branch);
   const branches = useGitStore((state) => state.branches);
-  const remotes = useGitStore((state) => state.remotes);
   const selectedRemote = useGitStore((state) => state.selectedRemote);
-  const setSelectedRemote = useGitStore((state) => state.setSelectedRemote);
   const stagedFiles = useGitStore((state) => state.stagedFiles);
   const unstagedFiles = useGitStore((state) => state.unstagedFiles);
   const conflictedFiles = useGitStore((state) => state.conflictedFiles);
   const stageFile = useGitStore((state) => state.stageFile);
   const unstageFile = useGitStore((state) => state.unstageFile);
   const stageAll = useGitStore((state) => state.stageAll);
+  const unstageAll = useGitStore((state) => state.unstageAll);
   const commit = useGitStore((state) => state.commit);
-  const pullRemote = useGitStore((state) => state.pullRemote);
-  const pushRemote = useGitStore((state) => state.pushRemote);
+  const historyCommits = useGitStore((state) => state.historyCommits);
+  const historyLoading = useGitStore((state) => state.historyLoading);
+  const loadHistory = useGitStore((state) => state.loadHistory);
+  const stashEntries = useGitStore((state) => state.stashEntries);
+  const stashLoading = useGitStore((state) => state.stashLoading);
+  const loadStashes = useGitStore((state) => state.loadStashes);
+  const createStash = useGitStore((state) => state.createStash);
+  const popStash = useGitStore((state) => state.popStash);
+  const dropStash = useGitStore((state) => state.dropStash);
   const openPullRequest = useGitStore((state) => state.openPullRequest);
   const switchBranch = useGitStore((state) => state.switchBranch);
   const activeProjectPath = projectPath.trim();
@@ -377,7 +391,6 @@ export function ChatGitReview({
     : false;
   const visibleBranch = gitProjectReady ? branch : emptyChatGitBranch;
   const visibleBranches = gitProjectReady ? branches : [];
-  const visibleRemotes = gitProjectReady ? remotes : [];
   const visibleSelectedRemote = gitProjectReady ? selectedRemote : "";
   const visibleStagedFiles = gitProjectReady ? stagedFiles : [];
   const visibleUnstagedFiles = gitProjectReady ? unstagedFiles : [];
@@ -389,6 +402,13 @@ export function ChatGitReview({
   const [diffError, setDiffError] = useState<string | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"diff" | "history" | "stash">(
+    "diff",
+  );
+  const [stashMessage, setStashMessage] = useState("");
+  const [compactPane, setCompactPane] = useState<"files" | "detail">("files");
+  const [compactCommitOpen, setCompactCommitOpen] = useState(false);
   const diffRequestIDRef = useRef(0);
   const loadedDiffKeyRef = useRef("");
 
@@ -414,6 +434,10 @@ export function ChatGitReview({
     setDiffError(null);
     setDiffLoading(false);
     setActionError(null);
+    setActiveView("diff");
+    setStashMessage("");
+    setCompactPane("files");
+    setCompactCommitOpen(false);
   }, [activeProjectPath]);
 
   const allFiles = useMemo(
@@ -448,25 +472,12 @@ export function ChatGitReview({
   const selectedFileIndex = selectedFile
     ? filteredFiles.findIndex((file) => fileKey(file) === fileKey(selectedFile))
     : -1;
-  const largeDiff =
-    filteredFiles.length > 1 || displayedDiff.split("\n").length > 260;
+  const largeDiff = displayedDiff.split("\n").length > 260;
   const canCommit =
     commitMessage.trim().length > 0 &&
     visibleStagedFiles.length > 0 &&
     !visibleBusy &&
     canUseGitProject;
-  const canPush = Boolean(
-    visibleSelectedRemote &&
-    visibleBranch.current &&
-    !visibleBusy &&
-    canUseGitProject,
-  );
-  const canPull = Boolean(
-    visibleSelectedRemote &&
-    visibleBranch.current &&
-    !visibleBusy &&
-    canUseGitProject,
-  );
   const canOpenPR = Boolean(
     visibleSelectedRemote &&
     visibleBranch.current &&
@@ -486,6 +497,10 @@ export function ChatGitReview({
       .split("\n")
       .filter((line) => line.toLowerCase().includes(query)).length;
   }, [diffSearch, displayedDiff]);
+  const currentDiffStats = useMemo(
+    () => diffStats(parseDiffRows(displayedDiff, "")),
+    [displayedDiff],
+  );
 
   useEffect(() => {
     if (filteredFiles.length === 0) {
@@ -603,15 +618,48 @@ export function ChatGitReview({
     }
   }, [canCommit, commit, commitMessage, onCommitMessageChange, runGitAction]);
 
-  const handlePush = useCallback(async () => {
-    if (!canPush) return;
-    await runGitAction(() => pushRemote(false));
-  }, [canPush, pushRemote, runGitAction]);
+  const handleUnstageAll = useCallback(async () => {
+    if (visibleBusy || visibleStagedFiles.length === 0 || !canUseGitProject)
+      return;
+    await runGitAction(() => unstageAll());
+  }, [
+    canUseGitProject,
+    runGitAction,
+    unstageAll,
+    visibleBusy,
+    visibleStagedFiles.length,
+  ]);
 
-  const handlePull = useCallback(async () => {
-    if (!canPull) return;
-    await runGitAction(() => pullRemote());
-  }, [canPull, pullRemote, runGitAction]);
+  const handleViewChange = useCallback(
+    (view: "diff" | "history" | "stash") => {
+      setActiveView(view);
+      setCompactPane("detail");
+      if (view === "history" && canUseGitProject) {
+        void loadHistory();
+      }
+      if (view === "stash" && canUseGitProject) {
+        void loadStashes();
+      }
+    },
+    [canUseGitProject, loadHistory, loadStashes],
+  );
+
+  const handleCreateStash = useCallback(async () => {
+    if (visibleBusy || !canUseGitProject || allFiles.length === 0) return;
+    const created = await runGitAction(() => createStash(stashMessage));
+    if (created) {
+      setStashMessage("");
+      await loadStashes();
+    }
+  }, [
+    allFiles.length,
+    canUseGitProject,
+    createStash,
+    loadStashes,
+    runGitAction,
+    stashMessage,
+    visibleBusy,
+  ]);
 
   const handleOpenPullRequest = useCallback(async () => {
     if (!canOpenPR) return;
@@ -702,11 +750,83 @@ export function ChatGitReview({
   };
 
   const unavailable = renderUnavailable();
-  const branchTarget =
-    visibleBranch.upstream ||
-    (visibleSelectedRemote && visibleBranch.current
-      ? `${visibleSelectedRemote}/${visibleBranch.current}`
-      : "");
+  const renderFileSection = (
+    title: string,
+    files: GitFileEntry[],
+    bulkLabel: string,
+    onBulkAction: () => void,
+  ) => (
+    <section className="ai-chat-git-files-section">
+      <div className="ai-chat-git-files-section__header">
+        <span>
+          {title}
+          <small>{files.length}</small>
+        </span>
+        <button
+          type="button"
+          disabled={visibleBusy || files.length === 0 || !canUseGitProject}
+          onClick={onBulkAction}
+        >
+          {bulkLabel}
+        </button>
+      </div>
+      <div className="ai-chat-git-files-section__list">
+        {files.length === 0 ? (
+          <div className="ai-chat-git-files-empty">
+            No {title.toLowerCase()} changes
+          </div>
+        ) : (
+          files.map((file) => {
+            const path = displayPathParts(file.path);
+            const selected = selectedFile
+              ? fileKey(file) === fileKey(selectedFile)
+              : false;
+            return (
+              <div
+                className={`ai-chat-git-file-row${selected ? " is-selected" : ""}`}
+                key={fileKey(file)}
+              >
+                <button
+                  className="ai-chat-git-file-row__select"
+                  type="button"
+                  title={file.path}
+                  onClick={() => {
+                    setSelectedKey(fileKey(file));
+                    setActiveView("diff");
+                    setCompactPane("detail");
+                  }}
+                >
+                  <span className={`ai-chat-git-file__badge is-${file.status}`}>
+                    {fileStatusLabel(file)}
+                  </span>
+                  <span className="ai-chat-git-file__body">
+                    <span>{path.name}</span>
+                    <small>{path.directory || "Project root"}</small>
+                  </span>
+                </button>
+                <button
+                  className="ai-chat-git-file-row__action"
+                  type="button"
+                  title={file.staged ? "Unstage file" : "Stage file"}
+                  aria-label={file.staged ? "Unstage file" : "Stage file"}
+                  disabled={visibleBusy || !canUseGitProject}
+                  onClick={() =>
+                    void runGitAction(() =>
+                      file.staged
+                        ? unstageFile(file.path)
+                        : stageFile(file.path),
+                    )
+                  }
+                >
+                  {file.staged ? <Minus size={13} /> : <Plus size={13} />}
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <m.aside
@@ -721,177 +841,226 @@ export function ChatGitReview({
       }}
     >
       <div
-        className="ai-chat-git-diff-header"
+        className="ai-chat-git-commandbar"
         data-ai-chat-drawer-header={canMove ? "true" : undefined}
         role="group"
         aria-label="Git review drawer header"
         onMouseDown={canMove ? onDragStart : undefined}
       >
-        <div className="ai-chat-git-header-main">
-          <div className="ai-chat-git-branch-cluster">
-            <label className="ai-chat-branch-select">
-              <GitBranch size={14} />
-              <select
-                value={
-                  visibleBranches.includes(visibleBranch.current)
-                    ? visibleBranch.current
-                    : ""
-                }
-                disabled={visibleBusy || visibleBranches.length === 0}
-                onChange={(event) => handleBranchChange(event.target.value)}
-                title="Switch branch"
-              >
-                {visibleBranch.current &&
-                !visibleBranches.includes(visibleBranch.current) ? (
-                  <option value="">{visibleBranch.current}</option>
-                ) : null}
-                {visibleBranches.map((candidate) => (
-                  <option key={candidate} value={candidate}>
-                    {candidate}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {branchTarget ? (
-              <span
-                className="ai-chat-shell-pill is-muted"
-                title={branchTarget}
-              >
-                {branchTarget}
-              </span>
-            ) : null}
-            <span className="ai-chat-shell-pill">{changedCount} changed</span>
-            {canMove ? (
-              <span className="ai-chat-drawer-grip" title="Move review">
-                <GripHorizontal size={13} />
-              </span>
-            ) : null}
-          </div>
-          <div className="ai-chat-git-window-actions">
-            <button
-              className="ai-chat-icon-button"
-              type="button"
-              title="Refresh Git"
-              disabled={!canUseGitProject}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={() => {
-                if (canUseGitProject) {
-                  void refresh();
-                }
-              }}
+        <div className="ai-chat-git-commandbar__summary">
+          <label className="ai-chat-branch-select">
+            <GitBranch size={14} />
+            <select
+              aria-label="Git branch"
+              value={
+                visibleBranches.includes(visibleBranch.current)
+                  ? visibleBranch.current
+                  : ""
+              }
+              disabled={visibleBusy || visibleBranches.length === 0}
+              onChange={(event) => handleBranchChange(event.target.value)}
+              title="Switch branch"
             >
-              <RefreshCw size={14} className={visibleLoading ? "spin" : ""} />
-            </button>
-            <button
-              className="ai-chat-icon-button"
-              type="button"
-              title={mode === "overlay" ? "Collapse review" : "Expand review"}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={mode === "overlay" ? onCollapse : onExpand}
-            >
-              {mode === "overlay" ? (
-                <Minimize2 size={15} />
-              ) : (
-                <Maximize2 size={15} />
-              )}
-            </button>
-            <button
-              className="ai-chat-icon-button"
-              type="button"
-              title="Close review"
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={onClose}
-            >
-              <X size={15} />
-            </button>
-          </div>
+              {visibleBranch.current &&
+              !visibleBranches.includes(visibleBranch.current) ? (
+                <option value="">{visibleBranch.current}</option>
+              ) : null}
+              {visibleBranches.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {candidate}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="ai-chat-shell-pill">{changedCount} changed</span>
+          {canMove ? (
+            <span className="ai-chat-drawer-grip" title="Move review">
+              <GripHorizontal size={13} />
+            </span>
+          ) : null}
         </div>
-        <div className="ai-chat-git-action-strip" aria-label="Git file actions">
+        <div className="ai-chat-git-commandbar__tools" aria-label="Git views">
           <button
-            className="ai-chat-git-tool-button"
             type="button"
-            title={selectedFile?.staged ? "Unstage selected" : "Stage selected"}
-            disabled={!canStageSelected}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={() => void handleStageSelected()}
+            className={activeView === "history" ? "is-active" : ""}
+            aria-label="History"
+            onClick={() => handleViewChange("history")}
           >
-            {selectedFile?.staged ? <Minus size={14} /> : <Plus size={14} />}
-            <span>{selectedFile?.staged ? "Unstage" : "Stage selected"}</span>
+            <History size={13} />
+            <span>History</span>
           </button>
           <button
-            className="ai-chat-git-tool-button"
             type="button"
-            title="Stage all"
-            disabled={visibleBusy || allFiles.length === 0 || !canUseGitProject}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={() => void handleStageAll()}
+            aria-label="Open pull request"
+            disabled={!canOpenPR}
+            onClick={() => void handleOpenPullRequest()}
           >
-            <CheckCheck size={14} />
-            <span>Stage all</span>
+            <GitPullRequest size={13} />
+            <span>PR</span>
           </button>
           <button
-            className="ai-chat-git-tool-button"
             type="button"
-            title="Copy diff"
-            disabled={!displayedDiff}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={handleCopyDiff}
+            className={activeView === "stash" ? "is-active" : ""}
+            aria-label="Stash"
+            onClick={() => handleViewChange("stash")}
           >
-            <Copy size={14} />
-            <span>Copy diff</span>
+            <Sparkles size={13} />
+            <span>Stash</span>
           </button>
           <button
-            className="ai-chat-git-tool-button"
             type="button"
-            title="Pull"
-            disabled={!canPull}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={() => void handlePull()}
+            className={activeView === "diff" ? "is-active" : ""}
+            aria-label="Diff"
+            onClick={() => handleViewChange("diff")}
           >
-            <ArrowDownToLine size={14} />
-            <span>Pull</span>
+            <Eye size={13} />
+            <span>Diff</span>
+          </button>
+        </div>
+        <div className="ai-chat-git-window-actions">
+          <button
+            className="panel-control-button topbar-control-button"
+            type="button"
+            title="Refresh Git"
+            aria-label="Refresh Git"
+            disabled={!canUseGitProject}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={() => {
+              if (canUseGitProject) void refresh();
+            }}
+          >
+            <RefreshCw size={14} className={visibleLoading ? "spin" : ""} />
+          </button>
+          <div
+            className="ai-chat-git-more-menu"
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) {
+                setMoreOpen(false);
+              }
+            }}
+          >
+            <button
+              className="panel-control-button topbar-control-button"
+              type="button"
+              title="More Git actions"
+              aria-label="More Git actions"
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => setMoreOpen((open) => !open)}
+            >
+              <MoreHorizontal size={15} />
+            </button>
+            {moreOpen ? (
+              <div className="ai-chat-git-more-popover" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!canStageSelected}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void handleStageSelected();
+                  }}
+                >
+                  {selectedFile?.staged ? (
+                    <Minus size={14} />
+                  ) : (
+                    <Plus size={14} />
+                  )}
+                  {selectedFile?.staged ? "Unstage selected" : "Stage selected"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={
+                    visibleBusy || allFiles.length === 0 || !canUseGitProject
+                  }
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void handleStageAll();
+                  }}
+                >
+                  <CheckCheck size={14} />
+                  Stage all
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <button
+            className="panel-control-button topbar-control-button"
+            type="button"
+            title={mode === "overlay" ? "Collapse review" : "Expand review"}
+            aria-label={
+              mode === "overlay" ? "Collapse review" : "Expand review"
+            }
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={mode === "overlay" ? onCollapse : onExpand}
+          >
+            {mode === "overlay" ? (
+              <Minimize2 size={15} />
+            ) : (
+              <Maximize2 size={15} />
+            )}
+          </button>
+          <button
+            className="panel-control-button panel-control-button-danger topbar-control-button"
+            type="button"
+            title="Close review"
+            aria-label="Close review"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={onClose}
+          >
+            <X size={15} />
           </button>
         </div>
       </div>
 
-      <div className="ai-chat-review-overlay-body">
-        <div className="ai-chat-review-overlay-toolbar">
-          <label className="ai-chat-file-filter-field">
-            <Filter size={14} />
+      <div className="ai-chat-git-workspace" data-compact-pane={compactPane}>
+        <aside className="ai-chat-git-files" data-testid="ai-chat-git-files">
+          <div className="ai-chat-git-files__title">
+            <span>Changes</span>
+            <small>{changedCount}</small>
+          </div>
+          <label className="ai-chat-search-field ai-chat-search-field--inline ai-chat-git-file-search">
+            <Search size={13} />
             <input
-              aria-label="Filter files"
-              data-testid="ai-chat-review-search"
-              placeholder="Filter files"
+              placeholder="Filter changed files"
               value={searchQuery}
               onChange={(event) => onSearchChange(event.target.value)}
             />
           </label>
-          <div className="ai-chat-file-select-group">
+          <div className="ai-chat-git-files__scroll">
+            {renderFileSection(
+              "Staged",
+              visibleStagedFiles,
+              "Unstage all",
+              () => void handleUnstageAll(),
+            )}
+            {renderFileSection(
+              "Unstaged",
+              [...visibleConflictedFiles, ...visibleUnstagedFiles],
+              "Stage all",
+              () => void handleStageAll(),
+            )}
+          </div>
+          <div className="ai-chat-git-files__pager">
             <button
-              className="ai-chat-icon-button"
               type="button"
               title="Previous file"
+              aria-label="Previous file"
               disabled={selectedFileIndex <= 0}
               onClick={() => selectRelativeFile(-1)}
             >
               <ChevronLeft size={14} />
             </button>
-            <select
-              className="ai-chat-select"
-              value={selectedFile ? fileKey(selectedFile) : ""}
-              onChange={(event) => setSelectedKey(event.target.value)}
-              disabled={filteredFiles.length === 0}
-            >
-              {filteredFiles.map((file) => (
-                <option key={fileKey(file)} value={fileKey(file)}>
-                  {file.path}
-                </option>
-              ))}
-            </select>
+            <span>
+              {selectedFileIndex >= 0 ? selectedFileIndex + 1 : 0} of{" "}
+              {filteredFiles.length}
+            </span>
             <button
-              className="ai-chat-icon-button"
               type="button"
               title="Next file"
+              aria-label="Next file"
               disabled={
                 selectedFileIndex < 0 ||
                 selectedFileIndex >= filteredFiles.length - 1
@@ -901,112 +1070,285 @@ export function ChatGitReview({
               <ChevronRight size={14} />
             </button>
           </div>
-          <label className="ai-chat-search-field ai-chat-search-field--inline ai-chat-diff-search-field">
-            <Search size={14} />
-            <input
-              data-testid="ai-chat-diff-search"
-              placeholder="Search in diff"
-              value={diffSearch}
-              onChange={(event) => onDiffSearchChange(event.target.value)}
-            />
-          </label>
-          {diffSearch.trim() ? (
-            <span className="ai-chat-shell-pill">{diffMatchCount} hits</span>
-          ) : null}
-        </div>
-        {actionError ? (
-          <div className="ai-chat-git-action-error">
-            <AlertTriangle size={14} />
-            {actionError}
-          </div>
-        ) : null}
-        {unavailable ? (
-          unavailable
-        ) : diffLoading && !displayedDiff ? (
-          <div className="ai-chat-git-empty">
-            <RefreshCw size={14} className="spin" />
-            Loading diff
-          </div>
-        ) : diffError ? (
-          <div className="ai-chat-git-empty is-error">
-            <AlertTriangle size={14} />
-            {diffError}
-          </div>
-        ) : (
-          <DiffView
-            diff={displayedDiff}
-            file={selectedFile}
-            large={largeDiff}
-            search={diffSearch}
-          />
-        )}
-      </div>
+        </aside>
 
-      <div className="ai-chat-git-commit">
-        {visibleRemotes.length > 1 ? (
-          <select
-            className="ai-chat-select"
-            value={visibleSelectedRemote}
-            disabled={visibleBusy || !canUseGitProject}
-            onChange={(event) => setSelectedRemote(event.target.value)}
-            title="Remote"
-          >
-            {visibleRemotes.map((remote) => (
-              <option key={remote} value={remote}>
-                {remote}
-              </option>
-            ))}
-          </select>
-        ) : null}
-        <textarea
-          value={commitMessage}
-          placeholder="Commit message"
-          onChange={(event) => onCommitMessageChange(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              void handleCommit();
-            }
-          }}
-        />
-        <div className="ai-chat-git-commit__actions">
-          <button
-            className="ai-chat-secondary-button ai-chat-git-action-button"
-            type="button"
-            disabled={!canOpenPR}
-            onClick={() => void handleOpenPullRequest()}
-            title="Open pull request"
-          >
-            <GitPullRequest size={14} />
-            PR
-          </button>
-          <button
-            className="ai-chat-secondary-button ai-chat-git-action-button"
-            type="button"
-            disabled={!canCommit}
-            onClick={() => void handleCommit()}
-            title={
-              visibleStagedFiles.length === 0
-                ? "Stage files before commit"
-                : "Commit staged files"
-            }
-          >
-            <Check size={14} />
-            Commit
-          </button>
-          <button
-            className="ai-chat-secondary-button ai-chat-git-action-button is-primary"
-            type="button"
-            disabled={!canPush}
-            onClick={() => void handlePush()}
-            title={
-              visibleSelectedRemote
-                ? `Push to ${visibleSelectedRemote}`
-                : "No remote"
-            }
-          >
-            <Send size={14} />
-            Push
-          </button>
+        <section
+          className="ai-chat-git-detail"
+          data-testid="ai-chat-git-detail"
+        >
+          <div className="ai-chat-git-detail__header" data-view={activeView}>
+            <button
+              className="ai-chat-icon-button ai-chat-git-compact-back"
+              type="button"
+              title="Back to changed files"
+              aria-label="Back to changed files"
+              onClick={() => setCompactPane("files")}
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span className="ai-chat-git-view-title">
+              {activeView === "history" ? "Repository history" : "Stashes"}
+            </span>
+            <div className="ai-chat-file-select-group">
+              <button
+                className="ai-chat-icon-button"
+                type="button"
+                title="Previous file"
+                aria-label="Previous file"
+                disabled={selectedFileIndex <= 0}
+                onClick={() => selectRelativeFile(-1)}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <select
+                className="ai-chat-select"
+                aria-label="Changed file"
+                value={selectedFile ? fileKey(selectedFile) : ""}
+                onChange={(event) => {
+                  setSelectedKey(event.target.value);
+                  setActiveView("diff");
+                  setCompactPane("detail");
+                }}
+                disabled={filteredFiles.length === 0}
+              >
+                {filteredFiles.map((file) => (
+                  <option key={fileKey(file)} value={fileKey(file)}>
+                    {displayPathParts(file.path).name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="ai-chat-icon-button"
+                type="button"
+                title="Next file"
+                aria-label="Next file"
+                disabled={
+                  selectedFileIndex < 0 ||
+                  selectedFileIndex >= filteredFiles.length - 1
+                }
+                onClick={() => selectRelativeFile(1)}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+            <span className="ai-chat-git-count-pill is-add">
+              +{currentDiffStats.additions}
+            </span>
+            <span className="ai-chat-git-count-pill is-delete">
+              -{currentDiffStats.deletions}
+            </span>
+            <button
+              className="ai-chat-icon-button"
+              type="button"
+              title="Copy diff"
+              aria-label="Copy diff"
+              disabled={!displayedDiff}
+              onClick={handleCopyDiff}
+            >
+              <Copy size={14} />
+            </button>
+            <label className="ai-chat-search-field ai-chat-search-field--inline ai-chat-diff-search-field">
+              <Search size={14} />
+              <input
+                data-testid="ai-chat-diff-search"
+                placeholder="Search in diff"
+                value={diffSearch}
+                onChange={(event) => onDiffSearchChange(event.target.value)}
+              />
+            </label>
+            {diffSearch.trim() ? (
+              <span className="ai-chat-shell-pill">{diffMatchCount} hits</span>
+            ) : null}
+            <button
+              className="ai-chat-secondary-button ai-chat-git-context-action"
+              type="button"
+              title={
+                selectedFile?.staged ? "Unstage selected" : "Stage selected"
+              }
+              disabled={!canStageSelected}
+              onClick={() => void handleStageSelected()}
+            >
+              {selectedFile?.staged ? <Minus size={14} /> : <Plus size={14} />}
+              {selectedFile?.staged ? "Unstage" : "Stage"}
+            </button>
+          </div>
+          {actionError ? (
+            <div className="ai-chat-git-action-error">
+              <AlertTriangle size={14} />
+              {actionError}
+            </div>
+          ) : null}
+          <div className="ai-chat-git-detail__body">
+            {activeView === "history" ? (
+              <div className="ai-chat-git-history-view">
+                <GitHistory
+                  commits={historyCommits}
+                  loading={historyLoading}
+                  onRefresh={() => void loadHistory()}
+                  variant="chat"
+                />
+              </div>
+            ) : activeView === "stash" ? (
+              <div className="ai-chat-git-stash-view">
+                <div className="ai-chat-git-stash-compose">
+                  <input
+                    value={stashMessage}
+                    placeholder="Optional stash message"
+                    onChange={(event) => setStashMessage(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      stashLoading || visibleBusy || allFiles.length === 0
+                    }
+                    onClick={() => void handleCreateStash()}
+                  >
+                    <Plus size={13} />
+                    Stash changes
+                  </button>
+                </div>
+                <div className="ai-chat-git-stash-list">
+                  {stashLoading ? (
+                    <div className="ai-chat-git-empty">Loading stashes</div>
+                  ) : stashEntries.length === 0 ? (
+                    <div className="ai-chat-git-empty">No saved stashes.</div>
+                  ) : (
+                    stashEntries.map((entry) => (
+                      <div className="ai-chat-git-stash-row" key={entry.ref}>
+                        <span>
+                          <strong>{entry.message || entry.ref}</strong>
+                          <small>{entry.relativeDate}</small>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void runGitAction(() => popStash(entry.ref))
+                          }
+                        >
+                          Apply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void runGitAction(() => dropStash(entry.ref))
+                          }
+                        >
+                          Drop
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : unavailable ? (
+              unavailable
+            ) : diffLoading && !displayedDiff ? (
+              <div className="ai-chat-git-empty">
+                <RefreshCw size={14} className="spin" />
+                Loading diff
+              </div>
+            ) : diffError ? (
+              <div className="ai-chat-git-empty is-error">
+                <AlertTriangle size={14} />
+                {diffError}
+              </div>
+            ) : (
+              <DiffView
+                diff={displayedDiff}
+                file={selectedFile}
+                large={largeDiff}
+                search={diffSearch}
+              />
+            )}
+          </div>
+        </section>
+
+        <aside
+          className="ai-chat-git-inspector"
+          data-testid="ai-chat-git-inspector"
+        >
+          <div className="ai-chat-git-inspector__content">
+            <section className="ai-chat-git-inspector-card ai-chat-git-commit">
+              <h3>
+                <GitCommit size={14} />
+                Commit
+              </h3>
+              <textarea
+                value={commitMessage}
+                placeholder="Commit message"
+                onChange={(event) => onCommitMessageChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    event.key === "Enter"
+                  ) {
+                    void handleCommit();
+                  }
+                }}
+              />
+              <small>Ctrl/Cmd + Enter to commit</small>
+              <button
+                className="ai-chat-git-commit-primary"
+                type="button"
+                disabled={!canCommit}
+                onClick={() => void handleCommit()}
+              >
+                <Check size={14} />
+                Commit
+              </button>
+            </section>
+          </div>
+        </aside>
+        <div
+          className={`ai-chat-git-compact-commit${compactCommitOpen ? " is-open" : ""}`}
+        >
+          {compactCommitOpen ? (
+            <div className="ai-chat-git-compact-commit__composer">
+              <textarea
+                value={commitMessage}
+                placeholder="Commit message"
+                aria-label="Commit message"
+                onChange={(event) => onCommitMessageChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    event.key === "Enter"
+                  ) {
+                    void handleCommit();
+                  }
+                }}
+              />
+              <button
+                className="ai-chat-git-commit-primary"
+                type="button"
+                disabled={!canCommit}
+                onClick={() => void handleCommit()}
+              >
+                <Check size={14} />
+                Commit
+              </button>
+            </div>
+          ) : null}
+          <div className="ai-chat-git-compact-footer">
+            <button
+              type="button"
+              aria-expanded={compactCommitOpen}
+              onClick={() => setCompactCommitOpen((open) => !open)}
+            >
+              <GitCommit size={14} />
+              Commit...
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCompactPane("detail");
+                setActiveView("diff");
+              }}
+            >
+              <Eye size={14} />
+              Open details
+            </button>
+          </div>
         </div>
       </div>
     </m.aside>
