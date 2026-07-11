@@ -63,6 +63,7 @@ type App struct {
 	completionResolveRefs    map[string]editorCompletionResolveRef
 	mcpBridgeServer          *mcp.IDEBridgeServer
 	mcpBridgeMu              sync.Mutex
+	mcpApprovalMu            sync.Mutex
 	backgroundShell          *BackgroundShellStatusService
 	processGovernor          *processcontrol.Governor
 	backgroundCancelMu       sync.Mutex

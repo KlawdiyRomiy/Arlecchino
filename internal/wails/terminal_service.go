@@ -102,6 +102,9 @@ func (t *TerminalService) Write(id string, data string) error {
 
 // Resize resizes a terminal session
 func (t *TerminalService) Resize(id string, rows, cols int) error {
+	if err := terminal.ValidateSize(rows, cols); err != nil {
+		return err
+	}
 	session := t.manager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found: %s", id)

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"arlecchino/internal/terminal"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -110,8 +111,8 @@ func bridgeBackendToolDefinitions() []ToolDefinition {
 			Description: "Resize terminal session",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":   map[string]any{"type": "string"},
-				"rows": map[string]any{"type": "number"},
-				"cols": map[string]any{"type": "number"},
+				"rows": map[string]any{"type": "integer", "minimum": 1, "maximum": terminal.MaxRows},
+				"cols": map[string]any{"type": "integer", "minimum": 1, "maximum": terminal.MaxColumns},
 			}),
 		},
 		{
@@ -714,6 +715,9 @@ func (s *ToolService) bridgeTerminalWrite(id, data string) (any, error) {
 }
 
 func (s *ToolService) bridgeTerminalResize(id string, rows, cols int) (any, error) {
+	if err := terminal.ValidateSize(rows, cols); err != nil {
+		return nil, err
+	}
 	if err := s.requireUserApproval("ide_backend.terminal_resize"); err != nil {
 		return nil, err
 	}

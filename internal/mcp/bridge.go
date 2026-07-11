@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -24,6 +25,8 @@ const (
 	defaultBridgeRotateTTL           = 30 * time.Minute
 	metadataLockRetryDelay           = 25 * time.Millisecond
 	metadataLockMaxAttempts          = 20
+	defaultBridgeMaxConnections      = 32
+	defaultBridgeMaxRequestBytes     = 1 << 20
 	envBridgeMetadataPath            = "ARLECCHINO_MCP_BRIDGE_METADATA_PATH"
 )
 
@@ -61,6 +64,7 @@ type IDEBridgeServer struct {
 	started      bool
 	mu           sync.Mutex
 	wg           sync.WaitGroup
+	connections  chan struct{}
 }
 
 type bridgeMetadata struct {
@@ -244,6 +248,7 @@ func NewIDEBridgeServerWithMetadataPath(handler BridgeCallHandler, metadataPath 
 		token:        token,
 		tokenTTL:     defaultBridgeTokenTTL,
 		rotateTTL:    defaultBridgeRotateTTL,
+		connections:  make(chan struct{}, defaultBridgeMaxConnections),
 	}, nil
 }
 
@@ -411,8 +416,17 @@ func (s *IDEBridgeServer) acceptLoop() {
 			continue
 		}
 
-		s.wg.Add(1)
-		go s.handleConnection(connection)
+		select {
+		case s.connections <- struct{}{}:
+			s.wg.Add(1)
+			go func() {
+				defer func() { <-s.connections }()
+				s.handleConnection(connection)
+			}()
+		default:
+			s.writeBridgeResponse(connection, bridgeResponse{OK: false, Error: "bridge connection limit reached"})
+			_ = connection.Close()
+		}
 	}
 }
 
@@ -423,7 +437,7 @@ func (s *IDEBridgeServer) handleConnection(connection net.Conn) {
 	_ = connection.SetReadDeadline(time.Now().Add(defaultBridgeReadTimeout))
 
 	var request bridgeRequest
-	decoder := json.NewDecoder(bufio.NewReader(connection))
+	decoder := json.NewDecoder(bufio.NewReader(io.LimitReader(connection, defaultBridgeMaxRequestBytes)))
 	if err := decoder.Decode(&request); err != nil {
 		s.writeBridgeResponse(connection, bridgeResponse{OK: false, Error: err.Error()})
 		return

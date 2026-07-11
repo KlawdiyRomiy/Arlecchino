@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -87,16 +88,22 @@ func (a *App) stopMCPBridge() {
 }
 
 func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, error) {
-	a.mcpBridgeMu.Lock()
-	defer a.mcpBridgeMu.Unlock()
-
+	method = strings.TrimSpace(method)
 	if params == nil {
 		params = map[string]any{}
 	}
-
-	switch strings.TrimSpace(method) {
-	case "mcp.request_approval":
+	if method == "mcp.request_approval" {
+		if !a.mcpApprovalMu.TryLock() {
+			return nil, fmt.Errorf("an MCP approval request is already pending")
+		}
+		defer a.mcpApprovalMu.Unlock()
 		return a.requestMCPApproval(params)
+	}
+
+	a.mcpBridgeMu.Lock()
+	defer a.mcpBridgeMu.Unlock()
+
+	switch method {
 	case "project.open":
 		path, err := bridgeRequiredString(params, "path")
 		if err != nil {
@@ -544,40 +551,66 @@ func bridgeOptionalInt(params map[string]any, key string, defaultValue int) int 
 	if !ok {
 		return defaultValue
 	}
+	if parsed, ok := bridgeInt(value); ok {
+		return parsed
+	}
+	return defaultValue
+}
 
+func bridgeInt(value any) (int, bool) {
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
 	switch typed := value.(type) {
 	case int:
-		return typed
+		return typed, true
 	case int8:
-		return int(typed)
+		return int(typed), true
 	case int16:
-		return int(typed)
+		return int(typed), true
 	case int32:
-		return int(typed)
+		return int(typed), true
 	case int64:
-		return int(typed)
+		if typed < int64(minInt) || typed > int64(maxInt) {
+			return 0, false
+		}
+		return int(typed), true
 	case uint:
-		return int(typed)
+		if typed > uint(maxInt) {
+			return 0, false
+		}
+		return int(typed), true
 	case uint8:
-		return int(typed)
+		return int(typed), true
 	case uint16:
-		return int(typed)
+		return int(typed), true
 	case uint32:
-		return int(typed)
+		if uint64(typed) > uint64(maxInt) {
+			return 0, false
+		}
+		return int(typed), true
 	case uint64:
-		return int(typed)
+		if typed > uint64(maxInt) {
+			return 0, false
+		}
+		return int(typed), true
 	case float32:
-		return int(typed)
+		return bridgeFloatInt(float64(typed))
 	case float64:
-		return int(typed)
+		return bridgeFloatInt(typed)
 	case string:
 		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
-		if err == nil {
-			return parsed
-		}
+		return parsed, err == nil
+	default:
+		return 0, false
 	}
+}
 
-	return defaultValue
+func bridgeFloatInt(value float64) (int, bool) {
+	maxExclusive := math.Ldexp(1, strconv.IntSize-1)
+	if math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value || value < -maxExclusive || value >= maxExclusive {
+		return 0, false
+	}
+	return int(value), true
 }
 
 func bridgeOptionalBool(params map[string]any, key string, defaultValue bool) bool {
@@ -636,38 +669,9 @@ func bridgeMapInt(params map[string]interface{}, key string, defaultValue int) i
 		return defaultValue
 	}
 
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int8:
-		return int(typed)
-	case int16:
-		return int(typed)
-	case int32:
-		return int(typed)
-	case int64:
-		return int(typed)
-	case uint:
-		return int(typed)
-	case uint8:
-		return int(typed)
-	case uint16:
-		return int(typed)
-	case uint32:
-		return int(typed)
-	case uint64:
-		return int(typed)
-	case float32:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
-		if err == nil {
-			return parsed
-		}
+	if parsed, ok := bridgeInt(value); ok {
+		return parsed
 	}
-
 	return defaultValue
 }
 

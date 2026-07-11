@@ -237,6 +237,9 @@ func (a *App) WriteTerminal(id string, data string) error {
 }
 
 func (a *App) ResizeTerminal(id string, rows, cols int) error {
+	if err := terminal.ValidateSize(rows, cols); err != nil {
+		return err
+	}
 	termManager := a.activeTerminalManager()
 	if termManager == nil {
 		return fmt.Errorf("terminal manager not initialized")
