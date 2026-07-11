@@ -136,7 +136,7 @@ const parseProjectedReadableScale = (value: string): number => {
 
 const readInlineProjectedScale = (
   node: HTMLElement,
-): { x: number; y: number } => {
+): { x: number; y: number } | null => {
   const inlineScale = node.style.scale;
 
   if (inlineScale && inlineScale !== "none") {
@@ -151,12 +151,15 @@ const readInlineProjectedScale = (
   if (inlineTransform && inlineTransform !== "none") {
     try {
       const matrix = new DOMMatrixReadOnly(inlineTransform);
+      if (Math.abs(matrix.b) > 0.0001 || Math.abs(matrix.c) > 0.0001) {
+        return null;
+      }
       return {
         x: clampProjectedReadableScale(Math.hypot(matrix.a, matrix.b) || 1),
         y: clampProjectedReadableScale(Math.hypot(matrix.c, matrix.d) || 1),
       };
     } catch {
-      return { x: 1, y: 1 };
+      return null;
     }
   }
 
@@ -167,6 +170,37 @@ const readProjectedReadableScale = (
   node: HTMLElement,
   effectiveUiScale: number,
 ): { x: number; y: number } => {
+  let projectedAncestor: HTMLElement | null = node;
+  let inlineScaleX = 1;
+  let inlineScaleY = 1;
+  let hasInlineProjection = false;
+  while (projectedAncestor) {
+    const hasInlineScale =
+      Boolean(projectedAncestor.style.scale) &&
+      projectedAncestor.style.scale !== "none";
+    const hasInlineTransform =
+      Boolean(projectedAncestor.style.transform) &&
+      projectedAncestor.style.transform !== "none";
+    if (hasInlineScale || hasInlineTransform) {
+      const projectedScale = readInlineProjectedScale(projectedAncestor);
+      if (projectedScale === null) {
+        break;
+      }
+      inlineScaleX *= projectedScale.x;
+      inlineScaleY *= projectedScale.y;
+      hasInlineProjection = true;
+    }
+    if (projectedAncestor.matches('[data-testid="panel-workspace"]')) {
+      return hasInlineProjection
+        ? {
+            x: clampProjectedReadableScale(inlineScaleX),
+            y: clampProjectedReadableScale(inlineScaleY),
+          }
+        : (readInlineProjectedScale(node) ?? { x: 1, y: 1 });
+    }
+    projectedAncestor = projectedAncestor.parentElement;
+  }
+
   const rect = node.getBoundingClientRect();
   const layoutWidth = logicalToScreenPixels(node.offsetWidth, effectiveUiScale);
   const layoutHeight = logicalToScreenPixels(
@@ -181,7 +215,7 @@ const readProjectedReadableScale = (
     };
   }
 
-  return readInlineProjectedScale(node);
+  return readInlineProjectedScale(node) ?? { x: 1, y: 1 };
 };
 
 const writeProjectedReadableScale = (
