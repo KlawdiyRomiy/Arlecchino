@@ -67,12 +67,13 @@ interface GitStoreState {
   fileMarkers: Record<string, GitLineMarker[]>;
   markerUpdatedAt: Record<string, number>;
   markerLoading: Record<string, boolean>;
+  fileRevisions: Record<string, number>;
   setProjectPath: (projectPath: string) => void;
   attachConsumer: () => () => void;
   setExpanded: (expanded: boolean) => void;
   toggleExpanded: () => void;
   setSelectedRemote: (remote: string) => void;
-  refresh: () => Promise<void>;
+  refresh: (options?: { queueIfBusy?: boolean }) => Promise<void>;
   loadHistory: (filePath?: string) => Promise<void>;
   loadStashes: () => Promise<void>;
   stageFile: (path: string) => Promise<void>;
@@ -94,6 +95,7 @@ interface GitStoreState {
   getPullRequestUrl: (baseBranch?: string) => Promise<string | null>;
   refreshFileMarkers: (filePath: string, force?: boolean) => Promise<void>;
   clearFileMarkers: (filePath?: string) => void;
+  invalidateFile: (filePath: string) => void;
 }
 
 const emptyBranchInfo = (): GitBranchInfo => ({
@@ -119,6 +121,36 @@ const dedupeAndSortFiles = (files: GitFileEntry[]): GitFileEntry[] => {
 
   return Array.from(seen.values()).sort((a, b) => a.path.localeCompare(b.path));
 };
+
+const gitBranchEqual = (left: GitBranchInfo, right: GitBranchInfo): boolean =>
+  left.current === right.current &&
+  left.upstream === right.upstream &&
+  left.ahead === right.ahead &&
+  left.behind === right.behind &&
+  left.detached === right.detached &&
+  left.oid === right.oid;
+
+const gitFileEntriesEqual = (
+  left: GitFileEntry[],
+  right: GitFileEntry[],
+): boolean =>
+  left.length === right.length &&
+  left.every((entry, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      entry.path === candidate.path &&
+      entry.status === candidate.status &&
+      entry.staged === candidate.staged &&
+      entry.indexStatus === candidate.indexStatus &&
+      entry.workTreeStatus === candidate.workTreeStatus &&
+      entry.originalPath === candidate.originalPath
+    );
+  });
+
+const stringArraysEqual = (left: string[], right: string[]): boolean =>
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
 
 const parseStashEntries = (output: string): GitStashEntry[] =>
   output
@@ -156,6 +188,26 @@ let refreshInFlightID = 0;
 let refreshInFlightProjectPath = "";
 let refreshPending = false;
 let gitMetadataCache: GitMetadataCache | null = null;
+const gitDiffInFlight = new Map<string, Promise<string>>();
+
+export const readGitDiffCoalesced = (
+  projectPath: string,
+  filePath: string,
+  staged: boolean,
+): Promise<string> => {
+  const key = `${projectPath}\u0000${filePath}\u0000${staged ? "staged" : "unstaged"}`;
+  const existing = gitDiffInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+  const request = GetGitDiff(filePath, staged).finally(() => {
+    if (gitDiffInFlight.get(key) === request) {
+      gitDiffInFlight.delete(key);
+    }
+  });
+  gitDiffInFlight.set(key, request);
+  return request;
+};
 
 const invalidateGitMetadataCache = (): void => {
   gitMetadataCache = null;
@@ -242,6 +294,29 @@ const clearGitSync = (): void => {
   markerRefreshTimers.clear();
 };
 
+const syncFallbackPolling = (
+  projectPath: string,
+  get: () => GitStoreState,
+): void => {
+  if (fallbackPollTimer !== null) {
+    window.clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
+  }
+  if (!projectPath || get().activeConsumers <= 0) {
+    return;
+  }
+  fallbackPollTimer = window.setInterval(() => {
+    if (
+      get().projectPath === projectPath &&
+      get().activeConsumers > 0 &&
+      document.visibilityState !== "hidden" &&
+      refreshInFlight === null
+    ) {
+      void get().refresh();
+    }
+  }, fallbackPollIntervalMs);
+};
+
 const scheduleRefresh = (
   get: () => GitStoreState,
   delayMs = fileRefreshDebounceMs,
@@ -256,6 +331,10 @@ const scheduleRefresh = (
     refreshTimer = null;
     if (usePerformanceStore.getState().panelMotionActive) {
       scheduleRefresh(get);
+      return;
+    }
+    if (refreshInFlight && refreshInFlightProjectPath === get().projectPath) {
+      refreshPending = true;
       return;
     }
     void get().refresh();
@@ -324,6 +403,7 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
 
   const unsubscribeFileChanged = EventsOn("file:changed", (value) => {
     if (typeof value === "string" && shouldRefreshForPath(value)) {
+      get().invalidateFile(value);
       scheduleRefresh(get, contentFileRefreshDebounceMs);
       scheduleFileMarkerRefresh(get, value);
     }
@@ -331,6 +411,7 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
 
   const unsubscribeFileCreated = EventsOn("file:created", (value) => {
     if (typeof value === "string" && shouldRefreshForPath(value)) {
+      get().invalidateFile(value);
       scheduleRefresh(get);
       scheduleFileMarkerRefresh(get, value);
     }
@@ -340,6 +421,10 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
     "project:entry:created",
     (value) => {
       if (shouldRefreshForEvent(value)) {
+        if (value && typeof value === "object") {
+          const path = (value as { path?: unknown }).path;
+          if (typeof path === "string") get().invalidateFile(path);
+        }
         scheduleRefresh(get);
       }
     },
@@ -349,6 +434,15 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
     "project:entry:renamed",
     (value) => {
       if (shouldRefreshForEvent(value)) {
+        if (value && typeof value === "object") {
+          const payload = value as { oldPath?: unknown; newPath?: unknown };
+          if (typeof payload.oldPath === "string") {
+            get().invalidateFile(payload.oldPath);
+          }
+          if (typeof payload.newPath === "string") {
+            get().invalidateFile(payload.newPath);
+          }
+        }
         scheduleRefresh(get);
       }
     },
@@ -358,6 +452,10 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
     "project:entry:deleted",
     (value) => {
       if (shouldRefreshForEvent(value)) {
+        if (value && typeof value === "object") {
+          const path = (value as { path?: unknown }).path;
+          if (typeof path === "string") get().invalidateFile(path);
+        }
         scheduleRefresh(get);
       }
     },
@@ -367,11 +465,7 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
     scheduleRefresh(get);
   });
 
-  fallbackPollTimer = window.setInterval(() => {
-    if (get().projectPath === projectPath && get().activeConsumers > 0) {
-      void get().refresh();
-    }
-  }, fallbackPollIntervalMs);
+  syncFallbackPolling(projectPath, get);
 
   stopGitSync = () => {
     unsubscribeFileChanged();
@@ -442,6 +536,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   fileMarkers: {},
   markerUpdatedAt: {},
   markerLoading: {},
+  fileRevisions: {},
 
   setProjectPath: (projectPath) => {
     const nextProjectPath = projectPath.trim();
@@ -473,6 +568,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       fileMarkers: {},
       markerUpdatedAt: {},
       markerLoading: {},
+      fileRevisions: {},
     });
 
     if (!nextProjectPath) {
@@ -485,6 +581,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   attachConsumer: () => {
     let detached = false;
     set((state) => ({ activeConsumers: state.activeConsumers + 1 }));
+    syncFallbackPolling(get().projectPath, get);
 
     return () => {
       if (detached) {
@@ -494,6 +591,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       set((state) => ({
         activeConsumers: Math.max(0, state.activeConsumers - 1),
       }));
+      syncFallbackPolling(get().projectPath, get);
     };
   },
 
@@ -501,7 +599,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   toggleExpanded: () => set((state) => ({ expanded: !state.expanded })),
   setSelectedRemote: (remote) => set({ selectedRemote: remote }),
 
-  refresh: async () => {
+  refresh: async (options) => {
     const activeProjectPath = get().projectPath;
 
     const runRefreshOnce = async (): Promise<void> => {
@@ -520,7 +618,16 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         return;
       }
 
-      set({ loading: true, error: null });
+      const shouldShowInitialLoading =
+        !get().branch.current &&
+        get().stagedFiles.length === 0 &&
+        get().unstagedFiles.length === 0 &&
+        get().conflictedFiles.length === 0;
+      if (shouldShowInitialLoading) {
+        set({ loading: true, error: null });
+      } else if (get().error) {
+        set({ error: null });
+      }
 
       try {
         let porcelainStatus = "";
@@ -565,16 +672,59 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
             ? "origin"
             : metadata.remotes[0] || "";
 
-        set({
-          loading: false,
-          isRepositoryMissing: false,
-          branch: parsed.branch,
-          branches: metadata.branches,
-          remotes: metadata.remotes,
-          selectedRemote,
-          stagedFiles: dedupeAndSortFiles(parsed.staged),
-          unstagedFiles: dedupeAndSortFiles(parsed.unstaged),
-          conflictedFiles: dedupeAndSortFiles(parsed.conflicted),
+        const stagedFiles = dedupeAndSortFiles(parsed.staged);
+        const unstagedFiles = dedupeAndSortFiles(parsed.unstaged);
+        const conflictedFiles = dedupeAndSortFiles(parsed.conflicted);
+        set((state) => {
+          const branchUnchanged = gitBranchEqual(state.branch, parsed.branch);
+          const branchesUnchanged = stringArraysEqual(
+            state.branches,
+            metadata.branches,
+          );
+          const remotesUnchanged = stringArraysEqual(
+            state.remotes,
+            metadata.remotes,
+          );
+          const stagedUnchanged = gitFileEntriesEqual(
+            state.stagedFiles,
+            stagedFiles,
+          );
+          const unstagedUnchanged = gitFileEntriesEqual(
+            state.unstagedFiles,
+            unstagedFiles,
+          );
+          const conflictedUnchanged = gitFileEntriesEqual(
+            state.conflictedFiles,
+            conflictedFiles,
+          );
+          if (
+            !state.loading &&
+            !state.isRepositoryMissing &&
+            state.selectedRemote === selectedRemote &&
+            branchUnchanged &&
+            branchesUnchanged &&
+            remotesUnchanged &&
+            stagedUnchanged &&
+            unstagedUnchanged &&
+            conflictedUnchanged
+          ) {
+            return state;
+          }
+          return {
+            loading: false,
+            isRepositoryMissing: false,
+            branch: branchUnchanged ? state.branch : parsed.branch,
+            branches: branchesUnchanged ? state.branches : metadata.branches,
+            remotes: remotesUnchanged ? state.remotes : metadata.remotes,
+            selectedRemote,
+            stagedFiles: stagedUnchanged ? state.stagedFiles : stagedFiles,
+            unstagedFiles: unstagedUnchanged
+              ? state.unstagedFiles
+              : unstagedFiles,
+            conflictedFiles: conflictedUnchanged
+              ? state.conflictedFiles
+              : conflictedFiles,
+          };
         });
       } catch (error) {
         if (get().projectPath !== projectPath) {
@@ -595,7 +745,9 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     };
 
     if (refreshInFlight && refreshInFlightProjectPath === activeProjectPath) {
-      refreshPending = true;
+      if (options?.queueIfBusy !== false) {
+        refreshPending = true;
+      }
       return refreshInFlight;
     }
 
@@ -1012,8 +1164,8 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
     try {
       const [unstagedDiff, stagedDiff] = await Promise.all([
-        GetGitDiff(relativePath, false),
-        GetGitDiff(relativePath, true),
+        readGitDiffCoalesced(projectPath, relativePath, false),
+        readGitDiffCoalesced(projectPath, relativePath, true),
       ]);
 
       const unstagedMarkers = parseUnifiedDiffLineMarkers(
@@ -1087,5 +1239,24 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         markerLoading: nextLoading,
       };
     });
+  },
+
+  invalidateFile: (filePath) => {
+    const projectPath = get().projectPath;
+    if (!projectPath || !filePath) {
+      return;
+    }
+    const relativePath = normalizePathForGit(projectPath, filePath);
+    const markerKey = relativePath || filePath;
+    set((state) => ({
+      fileRevisions: {
+        ...state.fileRevisions,
+        [markerKey]: (state.fileRevisions[markerKey] ?? 0) + 1,
+      },
+      markerUpdatedAt: {
+        ...state.markerUpdatedAt,
+        [markerKey]: 0,
+      },
+    }));
   },
 }));

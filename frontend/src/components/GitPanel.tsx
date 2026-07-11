@@ -665,7 +665,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     if (!panelProjectPath || !gitProjectReady) {
       return;
     }
-    void Promise.all([refreshGit(), loadGitStashes()]);
+    void Promise.all([refreshGit({ queueIfBusy: false }), loadGitStashes()]);
   }, [gitProjectReady, loadGitStashes, panelProjectPath, refreshGit]);
 
   useEffect(() => {

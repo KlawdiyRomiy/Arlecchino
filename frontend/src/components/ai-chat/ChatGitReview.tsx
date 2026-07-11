@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -30,8 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { m, useReducedMotion } from "framer-motion";
-import { GetGitDiff } from "../../wails/app";
-import { useGitStore } from "../../stores/gitStore";
+import { readGitDiffCoalesced, useGitStore } from "../../stores/gitStore";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
 import { toErrorMessage } from "../../utils/errorMessages";
 import { projectPathsEqualByIdentity } from "../../utils/projectPaths";
@@ -385,9 +385,12 @@ export function ChatGitReview({
   const canUseGitProject = Boolean(activeProjectPath) && gitProjectReady;
   const [selectedKey, setSelectedKey] = useState("");
   const [diff, setDiff] = useState("");
+  const [loadedDiffKey, setLoadedDiffKey] = useState("");
   const [diffError, setDiffError] = useState<string | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const diffRequestIDRef = useRef(0);
+  const loadedDiffKeyRef = useRef("");
 
   useEffect(() => attachGitConsumer(), [attachGitConsumer]);
 
@@ -399,13 +402,15 @@ export function ChatGitReview({
 
   useEffect(() => {
     if (activeProjectPath && gitProjectReady) {
-      void refresh();
+      void refresh({ queueIfBusy: false });
     }
   }, [activeProjectPath, gitProjectReady, refresh]);
 
   useEffect(() => {
     setSelectedKey("");
     setDiff("");
+    setLoadedDiffKey("");
+    loadedDiffKeyRef.current = "";
     setDiffError(null);
     setDiffLoading(false);
     setActionError(null);
@@ -430,11 +435,21 @@ export function ChatGitReview({
       null,
     [filteredFiles, selectedKey],
   );
+  const selectedFilePath = selectedFile?.path ?? "";
+  const selectedFileStaged = selectedFile?.staged ?? false;
+  const selectedFileRevision = useGitStore(
+    (state) => state.fileRevisions[selectedFilePath] ?? 0,
+  );
+  const selectedDiffKey = selectedFilePath
+    ? `${selectedFilePath}:${selectedFileStaged}`
+    : "";
+  const displayedDiff = loadedDiffKey === selectedDiffKey ? diff : "";
   const changedCount = allFiles.length;
   const selectedFileIndex = selectedFile
     ? filteredFiles.findIndex((file) => fileKey(file) === fileKey(selectedFile))
     : -1;
-  const largeDiff = filteredFiles.length > 1 || diff.split("\n").length > 260;
+  const largeDiff =
+    filteredFiles.length > 1 || displayedDiff.split("\n").length > 260;
   const canCommit =
     commitMessage.trim().length > 0 &&
     visibleStagedFiles.length > 0 &&
@@ -467,9 +482,10 @@ export function ChatGitReview({
   const diffMatchCount = useMemo(() => {
     const query = diffSearch.trim().toLowerCase();
     if (!query) return 0;
-    return diff.split("\n").filter((line) => line.toLowerCase().includes(query))
-      .length;
-  }, [diff, diffSearch]);
+    return displayedDiff
+      .split("\n")
+      .filter((line) => line.toLowerCase().includes(query)).length;
+  }, [diffSearch, displayedDiff]);
 
   useEffect(() => {
     if (filteredFiles.length === 0) {
@@ -486,7 +502,7 @@ export function ChatGitReview({
   }, [filteredFiles, selectedKey]);
 
   useEffect(() => {
-    if (!selectedFile || !canUseGitProject) {
+    if (!selectedFilePath || !canUseGitProject) {
       setDiff("");
       setDiffError(null);
       setDiffLoading(false);
@@ -494,24 +510,38 @@ export function ChatGitReview({
     }
 
     let cancelled = false;
+    const requestID = diffRequestIDRef.current + 1;
+    diffRequestIDRef.current = requestID;
     const requestedProjectPath = activeProjectPath;
+    const requestedDiffKey = `${selectedFilePath}:${selectedFileStaged}`;
+    if (loadedDiffKeyRef.current !== requestedDiffKey) {
+      setDiff("");
+    }
     setDiffLoading(true);
     setDiffError(null);
-    GetGitDiff(selectedFile.path, selectedFile.staged)
+    readGitDiffCoalesced(
+      requestedProjectPath,
+      selectedFilePath,
+      selectedFileStaged,
+    )
       .then((value) => {
         if (
           !cancelled &&
+          diffRequestIDRef.current === requestID &&
           projectPathsEqualByIdentity(
             useGitStore.getState().projectPath,
             requestedProjectPath,
           )
         ) {
           setDiff(value || "");
+          loadedDiffKeyRef.current = requestedDiffKey;
+          setLoadedDiffKey(requestedDiffKey);
         }
       })
       .catch((nextError) => {
         if (
           !cancelled &&
+          diffRequestIDRef.current === requestID &&
           projectPathsEqualByIdentity(
             useGitStore.getState().projectPath,
             requestedProjectPath,
@@ -526,6 +556,7 @@ export function ChatGitReview({
       .finally(() => {
         if (
           !cancelled &&
+          diffRequestIDRef.current === requestID &&
           projectPathsEqualByIdentity(
             useGitStore.getState().projectPath,
             requestedProjectPath,
@@ -538,7 +569,13 @@ export function ChatGitReview({
     return () => {
       cancelled = true;
     };
-  }, [activeProjectPath, canUseGitProject, selectedFile]);
+  }, [
+    activeProjectPath,
+    canUseGitProject,
+    selectedFilePath,
+    selectedFileRevision,
+    selectedFileStaged,
+  ]);
 
   const runGitAction = useCallback(
     async (action: () => Promise<void>) => {
@@ -622,9 +659,9 @@ export function ChatGitReview({
   );
 
   const handleCopyDiff = useCallback(() => {
-    if (!diff) return;
-    void writeClipboardTextWithFallback(diff);
-  }, [diff]);
+    if (!displayedDiff) return;
+    void writeClipboardTextWithFallback(displayedDiff);
+  }, [displayedDiff]);
 
   const selectRelativeFile = useCallback(
     (direction: -1 | 1) => {
@@ -796,7 +833,7 @@ export function ChatGitReview({
             className="ai-chat-git-tool-button"
             type="button"
             title="Copy diff"
-            disabled={!diff}
+            disabled={!displayedDiff}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={handleCopyDiff}
           >
@@ -885,7 +922,7 @@ export function ChatGitReview({
         ) : null}
         {unavailable ? (
           unavailable
-        ) : diffLoading ? (
+        ) : diffLoading && !displayedDiff ? (
           <div className="ai-chat-git-empty">
             <RefreshCw size={14} className="spin" />
             Loading diff
@@ -897,7 +934,7 @@ export function ChatGitReview({
           </div>
         ) : (
           <DiffView
-            diff={diff}
+            diff={displayedDiff}
             file={selectedFile}
             large={largeDiff}
             search={diffSearch}
