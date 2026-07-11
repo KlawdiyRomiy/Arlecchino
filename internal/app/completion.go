@@ -426,6 +426,17 @@ func editorCompletionRequestScope(ctx EditorCompletionContext) string {
 	return session + "\x00" + surface
 }
 
+type fastPrefixExtractor interface {
+	ExtractPrefixFast(filePath string, content []byte, line, column int) predictive.PrefixInfo
+}
+
+func extractEditorCompletionPrefix(completionBrain completionBrain, filePath string, content []byte, line, column int) predictive.PrefixInfo {
+	if fast, ok := completionBrain.(fastPrefixExtractor); ok {
+		return fast.ExtractPrefixFast(filePath, content, line, column)
+	}
+	return completionBrain.ExtractPrefix(filePath, content, line, column)
+}
+
 func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletionResult {
 	completionBrain := a.activeCompletionBrain()
 	if completionBrain == nil {
@@ -445,7 +456,8 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	a.logDebugf("[Autocomplete][Backend] request file=%s lang=%s line=%d col=%d textBefore='%s'",
 		ctx.FilePath, ctx.Language, ctx.Line, ctx.Column, textBeforeShort)
 
-	prefixInfo := completionBrain.ExtractPrefix(ctx.FilePath, []byte(ctx.FullText), ctx.Line, ctx.Column)
+	fullContent := []byte(ctx.FullText)
+	prefixInfo := extractEditorCompletionPrefix(completionBrain, ctx.FilePath, fullContent, ctx.Line, ctx.Column)
 	prefix := prefixInfo.Prefix
 	if !prefixInfo.InImport && predictive.DetectImportContextFromText(ctx.TextBefore, ctx.Language) {
 		prefixInfo.InImport = true
@@ -497,7 +509,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	brainCtx := brain.CompletionContext{
 		FilePath:              ctx.FilePath,
 		Content:               []byte(contentWindow),
-		FullContent:           []byte(ctx.FullText),
+		FullContent:           fullContent,
 		Line:                  ctx.Line,
 		Column:                ctx.Column,
 		DocumentVersion:       ctx.Version,
@@ -1142,14 +1154,15 @@ func (a *App) GetInlineSuggestion(filePath, content string, line, column int, pr
 
 	language := detectLanguageFromPath(filePath)
 
-	prefixInfo := completionBrain.ExtractPrefix(filePath, []byte(content), line, column)
+	contentBytes := []byte(content)
+	prefixInfo := completionBrain.ExtractPrefix(filePath, contentBytes, line, column)
 	if prefixInfo.PositionContext == "function_argument" {
 		return ""
 	}
 
 	brainCtx := brain.CompletionContext{
 		FilePath: filePath,
-		Content:  []byte(content),
+		Content:  contentBytes,
 		Line:     line,
 		Column:   column,
 		Prefix:   prefix,

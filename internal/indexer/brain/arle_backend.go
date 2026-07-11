@@ -34,6 +34,14 @@ type ArleBackend interface {
 	Type() string
 }
 
+// arleBatchScorer is an optional backend capability. Backends that do not
+// implement it retain the existing one-suggestion-at-a-time scoring path.
+type arleBatchScorer interface {
+	ScoreSuggestions(contextTokens []int, suggestions []string) []float64
+}
+
+const onnxRankingBatchSize = 12
+
 func NewArleBackend(modelPath string) (ArleBackend, error) {
 	runtimePath, runtimeAvailable, runtimeCandidates := inspectONNXRuntimeForModel(modelPath)
 	log.Printf("[ARLE-BACKEND] NewArleBackend called, modelPath=%s onnxRuntimeConfigured=%v onnxRuntimeAvailable=%v onnxRuntimePath=%s onnxRuntimeCandidates=%d", modelPath, onnxRuntimeFound, runtimeAvailable, runtimePath, runtimeCandidates)
@@ -332,75 +340,129 @@ func (b *ONNXBackend) ScoreSuggestion(contextTokens []int, suggestion string) fl
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	scores := b.scoreSuggestionsLocked(contextTokens, []string{suggestion})
+	if len(scores) == 0 {
+		return 0.5
+	}
+	return scores[0]
+}
+
+// ScoreSuggestions scores ranking candidates in batches supported by the
+// model's dynamic batch_size dimension. The result index always corresponds to
+// the input index; candidates that cannot be tokenized retain the same neutral
+// score used by ScoreSuggestion.
+func (b *ONNXBackend) ScoreSuggestions(contextTokens []int, suggestions []string) []float64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.scoreSuggestionsLocked(contextTokens, suggestions)
+}
+
+func (b *ONNXBackend) scoreSuggestionsLocked(contextTokens []int, suggestions []string) []float64 {
+	scores := make([]float64, len(suggestions))
+	for i := range scores {
+		scores[i] = 0.5
+	}
+
 	if !b.loaded || b.session == nil {
-		return 0.5
+		return scores
 	}
 
-	// Ranking model: concatenate context + SEP + suggestion → single score
-	var suggestionTokens []int
-	if b.tokenizer != nil {
-		suggestionTokens = b.tokenizer.Tokenize(suggestion, 20)
-	}
-	if len(suggestionTokens) == 0 {
-		return 0.5
+	for batchStart := 0; batchStart < len(suggestions); batchStart += onnxRankingBatchSize {
+		batchEnd := minInt(batchStart+onnxRankingBatchSize, len(suggestions))
+		b.scoreSuggestionBatchLocked(contextTokens, suggestions, scores, batchStart, batchEnd)
 	}
 
-	// Build input: context + SEP + suggestion
+	return scores
+}
+
+func (b *ONNXBackend) scoreSuggestionBatchLocked(contextTokens []int, suggestions []string, scores []float64, start, end int) {
+	if start < 0 || end > len(suggestions) || start >= end || b.tokenizer == nil {
+		return
+	}
+
 	seqLen := int(b.seqLen)
-	inputData := make([]int64, seqLen)
+	if seqLen <= 0 {
+		return
+	}
 
-	// Calculate how much context we can fit
-	maxContextLen := seqLen - len(suggestionTokens) - 1 // -1 for SEP
+	validIndexes := make([]int, 0, end-start)
+	inputData := make([]int64, 0, (end-start)*seqLen)
+	for suggestionIndex := start; suggestionIndex < end; suggestionIndex++ {
+		if strings.TrimSpace(suggestions[suggestionIndex]) == "" {
+			continue
+		}
+		suggestionTokens := b.tokenizer.Tokenize(suggestions[suggestionIndex], 20)
+		if len(suggestionTokens) == 0 {
+			continue
+		}
+
+		rowStart := len(inputData)
+		inputData = inputData[:rowStart+seqLen]
+		b.fillRankingInput(inputData[rowStart:], contextTokens, suggestionTokens)
+		validIndexes = append(validIndexes, suggestionIndex)
+	}
+
+	batchSize := len(validIndexes)
+	if batchSize == 0 {
+		return
+	}
+
+	inputTensor, err := ort.NewTensor(ort.NewShape(int64(batchSize), b.seqLen), inputData)
+	if err != nil {
+		return
+	}
+	defer inputTensor.Destroy()
+
+	outputData := make([]float32, batchSize)
+	outputTensor, err := ort.NewTensor(ort.NewShape(int64(batchSize), 1), outputData)
+	if err != nil {
+		return
+	}
+	defer outputTensor.Destroy()
+
+	if err := b.session.Run([]ort.ArbitraryTensor{inputTensor}, []ort.ArbitraryTensor{outputTensor}); err != nil {
+		return
+	}
+
+	output := outputTensor.GetData()
+	for batchIndex, suggestionIndex := range validIndexes {
+		if batchIndex >= len(output) {
+			break
+		}
+		scores[suggestionIndex] = clamp(float64(output[batchIndex]), 0.1, 0.95)
+	}
+}
+
+func (b *ONNXBackend) fillRankingInput(inputData []int64, contextTokens, suggestionTokens []int) {
+	seqLen := len(inputData)
+	maxContextLen := seqLen - len(suggestionTokens) - 1
 	if maxContextLen < 0 {
 		maxContextLen = 0
 	}
 
-	pos := 0
-	// Add context (truncate from beginning if too long)
 	startIdx := 0
 	if len(contextTokens) > maxContextLen {
 		startIdx = len(contextTokens) - maxContextLen
 	}
+	pos := 0
 	for i := startIdx; i < len(contextTokens) && pos < seqLen-len(suggestionTokens)-1; i++ {
 		inputData[pos] = int64(contextTokens[i])
 		pos++
 	}
 
-	// Add SEP token
 	if pos < seqLen {
 		inputData[pos] = int64(b.sepTokenID)
 		pos++
 	}
 
-	// Add suggestion tokens
-	for _, t := range suggestionTokens {
+	for _, token := range suggestionTokens {
 		if pos >= seqLen {
 			break
 		}
-		inputData[pos] = int64(t)
+		inputData[pos] = int64(token)
 		pos++
 	}
-
-	inputTensor, err := ort.NewTensor(ort.NewShape(1, b.seqLen), inputData)
-	if err != nil {
-		return 0.5
-	}
-	defer inputTensor.Destroy()
-
-	// Output: single score
-	outputData := make([]float32, 1)
-	outputTensor, err := ort.NewTensor(ort.NewShape(1, 1), outputData)
-	if err != nil {
-		return 0.5
-	}
-	defer outputTensor.Destroy()
-
-	if err := b.session.Run([]ort.ArbitraryTensor{inputTensor}, []ort.ArbitraryTensor{outputTensor}); err != nil {
-		return 0.5
-	}
-
-	score := float64(outputTensor.GetData()[0])
-	return clamp(score, 0.1, 0.95)
 }
 
 func (b *ONNXBackend) Generate(contextTokens []int, maxTokens int) []int {
@@ -408,6 +470,9 @@ func (b *ONNXBackend) Generate(contextTokens []int, maxTokens int) []int {
 	defer b.mu.Unlock()
 
 	if !b.loaded || b.session == nil || maxTokens <= 0 {
+		return nil
+	}
+	if b.isRankingModel {
 		return nil
 	}
 
@@ -481,7 +546,10 @@ func (b *ONNXBackend) Close() {
 		b.session = nil
 	}
 	b.loaded = false
-	ort.DestroyEnvironment()
+	// The ONNX environment is process-global and is shared with LangDetector.
+	// Destroying it from one backend can invalidate another live session or a
+	// replacement ARLE load. Sessions are still released here; the process owns
+	// the shared environment lifetime.
 }
 
 func (b *ONNXBackend) Type() string {

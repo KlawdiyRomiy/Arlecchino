@@ -33,14 +33,15 @@ func (a *ContextAnalyzer) Analyze(filePath string, content []byte, line, column 
 	}
 
 	// Check if file is empty
-	trimmed := strings.TrimSpace(string(content))
+	contentText := string(content)
+	trimmed := strings.TrimSpace(contentText)
 	ctx.IsEmpty = len(trimmed) == 0 || a.isOnlyBoilerplate(trimmed, ctx.Language)
 
 	// Detect file type from path
 	ctx.FileType = a.detectFileType(filePath)
 
 	// Detect framework
-	ctx.Framework = a.detectFramework(filePath, string(content))
+	ctx.Framework = a.detectFramework(filePath, contentText)
 
 	// Use Tree-sitter AST analysis for precise context
 	if a.ast != nil {

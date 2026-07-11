@@ -277,9 +277,15 @@ type Arle struct {
 	backend        ArleBackend
 	projectLearn   *ProjectLearner
 	lastUsed       atomic.Int64
-	loadOnce       sync.Once
+	closed         atomic.Bool
+	loadCycle      *arleLoadCycle
 	unloadTimer    *time.Timer
 	cancelPrefetch context.CancelFunc
+}
+
+type arleLoadCycle struct {
+	done chan struct{}
+	err  error
 }
 
 func NewArle(config ArleConfig) *Arle {
@@ -310,10 +316,12 @@ func NewArle(config ArleConfig) *Arle {
 		ctx, cancel := context.WithCancel(context.Background())
 		a.cancelPrefetch = cancel
 		go func() {
+			timer := time.NewTimer(config.LazyLoadDelay)
+			defer timer.Stop()
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(config.LazyLoadDelay):
+			case <-timer.C:
 				a.EnsureLoaded()
 			}
 		}()
@@ -323,18 +331,43 @@ func NewArle(config ArleConfig) *Arle {
 }
 
 func (a *Arle) StartLoadingAsync() {
-	if a.config.Mode == ArleModeNone {
+	cycle, owner := a.beginLoad()
+	if !owner {
 		return
 	}
-	if a.State() != ArleUnloaded {
-		return
-	}
-	log.Printf("[ARLE] model state: phase=async-load-request mode=%s state=%s modelPath=%s", a.config.Mode, a.State(), a.config.ModelPath)
+	a.mu.RLock()
+	mode := a.config.Mode
+	modelPath := a.config.ModelPath
+	a.mu.RUnlock()
+	log.Printf("[ARLE] model state: phase=async-load-request mode=%s state=%s modelPath=%s", mode, a.State(), modelPath)
 	go func() {
-		if err := a.EnsureLoaded(); err != nil {
+		if err := a.load(cycle); err != nil {
 			log.Printf("[ARLE] async load failed: %v", err)
 		}
 	}()
+}
+
+func (a *Arle) beginLoad() (*arleLoadCycle, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.closed.Load() || a.config.Mode == ArleModeNone {
+		return nil, false
+	}
+
+	switch a.State() {
+	case ArleLoading:
+		return a.loadCycle, false
+	case ArleReady:
+		return nil, false
+	case ArleUnloaded, ArleFailed:
+		cycle := &arleLoadCycle{done: make(chan struct{})}
+		a.loadCycle = cycle
+		a.state.Store(int32(ArleLoading))
+		return cycle, true
+	default:
+		return nil, false
+	}
 }
 
 func (a *Arle) State() ArleState {
@@ -342,6 +375,8 @@ func (a *Arle) State() ArleState {
 }
 
 func (a *Arle) Mode() ArleMode {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.config.Mode
 }
 
@@ -362,71 +397,108 @@ func (a *Arle) SetMode(mode ArleMode) {
 }
 
 func (a *Arle) EnsureLoaded() error {
-	if a.config.Mode == ArleModeNone {
-		return nil
-	}
-
-	state := ArleState(a.state.Load())
-	if state == ArleReady {
-		a.touchLastUsed()
-		return nil
-	}
-	if state == ArleLoading {
-		for i := 0; i < 100; i++ {
-			time.Sleep(50 * time.Millisecond)
-			if ArleState(a.state.Load()) != ArleLoading {
-				break
-			}
+	cycle, owner := a.beginLoad()
+	if cycle == nil {
+		if a.State() == ArleReady {
+			a.touchLastUsed()
 		}
 		return nil
 	}
-
-	var loadErr error
-	a.loadOnce.Do(func() {
-		loadErr = a.load()
-	})
-
-	if loadErr != nil {
-		a.loadOnce = sync.Once{}
+	if !owner {
+		return a.waitForLoad(cycle)
 	}
 
-	return loadErr
+	return a.load(cycle)
 }
 
-func (a *Arle) load() error {
+func (a *Arle) waitForLoad(cycle *arleLoadCycle) error {
+	if cycle == nil {
+		return nil
+	}
+	<-cycle.done
+	if a.State() == ArleReady {
+		a.touchLastUsed()
+	}
+	return cycle.err
+}
+
+func (a *Arle) finishLoadLocked(cycle *arleLoadCycle, state ArleState, err error) bool {
+	if cycle == nil || a.loadCycle != cycle {
+		return false
+	}
+	cycle.err = err
+	a.loadCycle = nil
+	a.state.Store(int32(state))
+	close(cycle.done)
+	return true
+}
+
+func (a *Arle) load(cycle *arleLoadCycle) error {
 	started := time.Now()
-	log.Printf("[ARLE] load() starting, modelPath=%s vocabPath=%s", a.config.ModelPath, a.config.VocabPath)
-	a.state.Store(int32(ArleLoading))
 
 	a.mu.Lock()
-
-	var err error
-	a.tokenizer, err = NewArleTokenizer(a.config.VocabPath)
-	if err != nil || a.tokenizer == nil {
-		log.Printf("[ARLE] tokenizer load failed: %v, using default", err)
-		a.tokenizer, _ = NewArleTokenizer("")
-	} else {
-		log.Printf("[ARLE] tokenizer loaded, vocabSize=%d", a.tokenizer.VocabSize())
+	if a.loadCycle != cycle {
+		err := cycle.err
+		a.mu.Unlock()
+		return err
 	}
-
-	a.backend, err = NewArleBackend(a.config.ModelPath)
-	if err != nil || a.backend == nil {
-		log.Printf("[ARLE] backend load failed: %v, using PureGoBackend", err)
-		a.backend = NewPureGoBackend()
+	if a.closed.Load() || a.config.Mode == ArleModeNone {
+		a.finishLoadLocked(cycle, ArleUnloaded, nil)
+		a.mu.Unlock()
+		return nil
 	}
-	log.Printf("[ARLE] backend type=%s", a.backend.Type())
-
-	if a.config.EnableLearning {
-		a.projectLearn = NewProjectLearner(a.config.DataDir)
-	}
-
-	a.state.Store(int32(ArleReady))
-	a.touchLastUsed()
+	config := a.config
+	needsLearner := config.EnableLearning && a.projectLearn == nil
 	a.mu.Unlock()
 
-	a.scheduleIdleUnload()
+	mode := config.Mode
+	modelPath := config.ModelPath
+	vocabPath := config.VocabPath
+	log.Printf("[ARLE] load() starting, modelPath=%s vocabPath=%s", modelPath, vocabPath)
 
-	log.Printf("[ARLE] model state: phase=ready mode=%s state=%s backend=%s duration=%s modelPath=%s", a.config.Mode, ArleReady, a.backend.Type(), time.Since(started), a.config.ModelPath)
+	// Tokenizer, ONNX session creation, and learner hydration all perform file or
+	// runtime work. Keep them outside a.mu so completion requests can observe the
+	// Loading state and fall back immediately instead of waiting for model setup.
+	tokenizer, err := NewArleTokenizer(vocabPath)
+	if err != nil || tokenizer == nil {
+		log.Printf("[ARLE] tokenizer load failed: %v, using default", err)
+		tokenizer, _ = NewArleTokenizer("")
+	} else {
+		log.Printf("[ARLE] tokenizer loaded, vocabSize=%d", tokenizer.VocabSize())
+	}
+
+	backend, err := NewArleBackend(modelPath)
+	if err != nil || backend == nil {
+		log.Printf("[ARLE] backend load failed: %v, using PureGoBackend", err)
+		backend = NewPureGoBackend()
+	}
+	log.Printf("[ARLE] backend type=%s", backend.Type())
+
+	var learner *ProjectLearner
+	if needsLearner {
+		learner = NewProjectLearner(config.DataDir)
+	}
+
+	a.mu.Lock()
+	if a.loadCycle != cycle || a.closed.Load() || a.config.Mode == ArleModeNone {
+		cycleErr := cycle.err
+		a.mu.Unlock()
+		backend.Close()
+		return cycleErr
+	}
+
+	a.tokenizer = tokenizer
+	a.backend = backend
+	if a.projectLearn == nil && learner != nil {
+		a.projectLearn = learner
+	}
+	a.touchLastUsed()
+	backendType := backend.Type()
+	a.finishLoadLocked(cycle, ArleReady, nil)
+	a.scheduleIdleUnloadLocked(config.IdleUnloadTime)
+	a.mu.Unlock()
+
+	log.Printf("[ARLE] model state: phase=ready mode=%s state=%s backend=%s duration=%s modelPath=%s", mode, ArleReady, backendType, time.Since(started), modelPath)
 	return nil
 }
 
@@ -441,64 +513,58 @@ func (a *Arle) unloadLocked() {
 		a.unloadTimer = nil
 	}
 	a.state.Store(int32(ArleUnloaded))
-	a.loadOnce = sync.Once{}
+	if a.loadCycle != nil {
+		cycle := a.loadCycle
+		a.loadCycle = nil
+		cycle.err = nil
+		close(cycle.done)
+	}
 }
 
 func (a *Arle) touchLastUsed() {
 	a.lastUsed.Store(time.Now().UnixNano())
 }
 
-func (a *Arle) scheduleIdleUnload() {
-	if a.config.IdleUnloadTime <= 0 {
+func (a *Arle) scheduleIdleUnloadLocked(delay time.Duration) {
+	if delay <= 0 || a.closed.Load() || a.config.Mode == ArleModeNone || a.State() != ArleReady {
 		return
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.unloadTimer != nil {
 		a.unloadTimer.Stop()
 	}
 
-	a.unloadTimer = time.AfterFunc(a.config.IdleUnloadTime, func() {
+	a.unloadTimer = time.AfterFunc(delay, func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 
+		if a.closed.Load() || a.config.Mode == ArleModeNone || a.State() != ArleReady {
+			a.unloadTimer = nil
+			return
+		}
+
 		lastUsed := time.Unix(0, a.lastUsed.Load())
-		if time.Since(lastUsed) >= a.config.IdleUnloadTime {
+		idleFor := time.Since(lastUsed)
+		if idleFor >= a.config.IdleUnloadTime {
 			a.unloadLocked()
 		} else {
-			remaining := a.config.IdleUnloadTime - time.Since(lastUsed)
-			a.scheduleIdleUnloadWithDuration(remaining)
-		}
-	})
-}
-
-func (a *Arle) scheduleIdleUnloadWithDuration(d time.Duration) {
-	if a.unloadTimer != nil {
-		a.unloadTimer.Stop()
-	}
-	a.unloadTimer = time.AfterFunc(d, func() {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		lastUsed := time.Unix(0, a.lastUsed.Load())
-		if time.Since(lastUsed) >= a.config.IdleUnloadTime {
-			a.unloadLocked()
+			a.scheduleIdleUnloadLocked(a.config.IdleUnloadTime - idleFor)
 		}
 	})
 }
 
 func (a *Arle) Rerank(suggestions []Suggestion, ctx CompletionContext) []Suggestion {
-	if a.config.Mode == ArleModeNone || !a.config.EnableRerank {
+	a.mu.RLock()
+	if a.closed.Load() || a.config.Mode == ArleModeNone || !a.config.EnableRerank {
+		a.mu.RUnlock()
 		return suggestions
 	}
 
 	if a.State() != ArleReady {
+		a.mu.RUnlock()
 		a.StartLoadingAsync()
 		return suggestions
 	}
-
-	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	if a.backend == nil || a.tokenizer == nil {
@@ -513,12 +579,26 @@ func (a *Arle) Rerank(suggestions []Suggestion, ctx CompletionContext) []Suggest
 	}
 
 	rerankLimit := minInt(len(suggestions), a.config.MaxRerankItems)
-	for i := 0; i < rerankLimit; i++ {
-		if ctx.Ctx != nil && ctx.Ctx.Err() != nil {
+	if rerankLimit > 0 {
+		if batchScorer, ok := a.backend.(arleBatchScorer); ok {
+			if ctx.Ctx != nil && ctx.Ctx.Err() != nil {
+				return suggestions
+			}
+			texts := make([]string, rerankLimit)
+			for i := range texts {
+				texts[i] = suggestions[i].Text
+			}
+			scores := batchScorer.ScoreSuggestions(contextTokens, texts)
+			if len(scores) == rerankLimit {
+				for i, score := range scores {
+					suggestions[i].Score = suggestions[i].Score*0.6 + score*0.4
+				}
+			} else if !a.rerankIndividually(suggestions[:rerankLimit], contextTokens, ctx) {
+				return suggestions
+			}
+		} else if !a.rerankIndividually(suggestions[:rerankLimit], contextTokens, ctx) {
 			return suggestions
 		}
-		score := a.scoreMultiToken(contextTokens, suggestions[i].Text)
-		suggestions[i].Score = suggestions[i].Score*0.6 + score*0.4
 	}
 
 	if a.projectLearn != nil && a.config.EnableLearning {
@@ -532,6 +612,17 @@ func (a *Arle) Rerank(suggestions []Suggestion, ctx CompletionContext) []Suggest
 	stableSortSuggestions(suggestions)
 
 	return suggestions
+}
+
+func (a *Arle) rerankIndividually(suggestions []Suggestion, contextTokens []int, ctx CompletionContext) bool {
+	for i := range suggestions {
+		if ctx.Ctx != nil && ctx.Ctx.Err() != nil {
+			return false
+		}
+		score := a.scoreMultiToken(contextTokens, suggestions[i].Text)
+		suggestions[i].Score = suggestions[i].Score*0.6 + score*0.4
+	}
+	return true
 }
 
 func (a *Arle) scoreMultiToken(contextTokens []int, text string) float64 {
@@ -549,16 +640,17 @@ func geometricMean(product float64, n int) float64 {
 }
 
 func (a *Arle) GenerateGhostText(ctx CompletionContext) string {
-	if a.config.Mode == ArleModeNone || !a.config.EnableGhostText {
+	a.mu.RLock()
+	if a.closed.Load() || a.config.Mode == ArleModeNone || !a.config.EnableGhostText {
+		a.mu.RUnlock()
 		return ""
 	}
 
 	if a.State() != ArleReady {
+		a.mu.RUnlock()
 		a.StartLoadingAsync()
 		return ""
 	}
-
-	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	if a.backend == nil || a.tokenizer == nil {
@@ -632,7 +724,10 @@ func (a *Arle) getProjectID(filePath string) string {
 }
 
 func (a *Arle) RecordAccepted(suggestion *Suggestion, ctx CompletionContext) {
-	if a.config.Mode == ArleModeNone || !a.config.EnableLearning || a.projectLearn == nil {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if a.closed.Load() || a.config.Mode == ArleModeNone || !a.config.EnableLearning || a.projectLearn == nil {
 		return
 	}
 
@@ -657,6 +752,7 @@ func (a *Arle) HasLanguageToken(language string) bool {
 }
 
 func (a *Arle) Close() {
+	a.closed.Store(true)
 	if a.cancelPrefetch != nil {
 		a.cancelPrefetch()
 	}

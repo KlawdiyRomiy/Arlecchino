@@ -1612,10 +1612,10 @@ func (b *PredictionBrain) fromPredictive(ctx CompletionContext) []Suggestion {
 
 	// Get completions from predictive engine
 	line := contentLine(ctx)
-	results := b.predictive.GetCompletionsForLanguage(
+	results := b.predictive.GetCompletionsForLanguageBytes(
 		predictiveLanguage,
 		ctx.FilePath,
-		string(ctx.Content),
+		ctx.Content,
 		line,
 		ctx.Column,
 		20, // limit
@@ -4904,6 +4904,16 @@ func (b *PredictionBrain) ExtractPrefix(filePath string, content []byte, line, c
 		return predictive.PrefixInfo{}
 	}
 	return b.predictive.ExtractPrefix(filePath, content, line, column)
+}
+
+// ExtractPrefixFast omits the second AST analysis used only to populate
+// PositionContext. Editor popup completion does not consume that field; inline
+// suggestions continue to use ExtractPrefix and retain their context guard.
+func (b *PredictionBrain) ExtractPrefixFast(filePath string, content []byte, line, column int) predictive.PrefixInfo {
+	if b.predictive == nil {
+		return predictive.PrefixInfo{}
+	}
+	return b.predictive.ExtractPrefixFast(filePath, content, line, column)
 }
 
 func (b *PredictionBrain) Close() {

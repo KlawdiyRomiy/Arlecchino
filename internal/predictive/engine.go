@@ -51,15 +51,19 @@ func (e *Engine) syncRegistryToMatcher() {
 }
 
 func (e *Engine) Predict(filePath, content string, line, column int) []Suggestion {
-	return e.predict(filePath, content, line, column, "")
+	return e.predict(filePath, []byte(content), line, column, "")
 }
 
 func (e *Engine) PredictForLanguage(language, filePath, content string, line, column int) []Suggestion {
+	return e.predict(filePath, []byte(content), line, column, language)
+}
+
+func (e *Engine) PredictForLanguageBytes(language, filePath string, content []byte, line, column int) []Suggestion {
 	return e.predict(filePath, content, line, column, language)
 }
 
-func (e *Engine) predict(filePath, content string, line, column int, languageOverride string) []Suggestion {
-	ctx := e.analyzer.Analyze(filePath, []byte(content), line, column)
+func (e *Engine) predict(filePath string, content []byte, line, column int, languageOverride string) []Suggestion {
+	ctx := e.analyzer.Analyze(filePath, content, line, column)
 	if ctx == nil {
 		return nil
 	}
@@ -67,14 +71,14 @@ func (e *Engine) predict(filePath, content string, line, column int, languageOve
 		ctx.Language = languageOverride
 	}
 
-	prefixInfo := e.ExtractPrefix(filePath, []byte(content), line, column)
+	prefixInfo := e.ExtractPrefixFast(filePath, content, line, column)
 	ctx.TypedPrefix = prefixInfo.Prefix
 
 	if prefixInfo.InString || prefixInfo.InComment {
 		return nil
 	}
 
-	if e.NeedsScaffoldWithContent(ctx, content) {
+	if e.NeedsScaffoldWithContent(ctx, string(content)) {
 		log.Printf("[Predict] scaffold for %s (%s)", ctx.FileType, filepath.Base(filePath))
 		return e.generateScaffold(ctx)
 	}
@@ -455,7 +459,14 @@ func (e *Engine) GetCompletions(filePath, content string, line, column int, limi
 }
 
 func (e *Engine) GetCompletionsForLanguage(language, filePath, content string, line, column int, limit int) []CompletionResult {
-	suggestions := e.PredictForLanguage(language, filePath, content, line, column)
+	return e.getCompletionResults(e.PredictForLanguage(language, filePath, content, line, column), limit)
+}
+
+func (e *Engine) GetCompletionsForLanguageBytes(language, filePath string, content []byte, line, column int, limit int) []CompletionResult {
+	return e.getCompletionResults(e.PredictForLanguageBytes(language, filePath, content, line, column), limit)
+}
+
+func (e *Engine) getCompletionResults(suggestions []Suggestion, limit int) []CompletionResult {
 	if len(suggestions) == 0 {
 		return nil
 	}
@@ -504,16 +515,28 @@ type PrefixInfo struct {
 }
 
 func (e *Engine) ExtractPrefix(filePath string, content []byte, line, column int) PrefixInfo {
+	return e.extractPrefix(filePath, content, line, column, true)
+}
+
+// ExtractPrefixFast extracts the completion-relevant prefix flags with one
+// Tree-sitter parse. Callers that need PositionContext must use ExtractPrefix.
+func (e *Engine) ExtractPrefixFast(filePath string, content []byte, line, column int) PrefixInfo {
+	return e.extractPrefix(filePath, content, line, column, false)
+}
+
+func (e *Engine) extractPrefix(filePath string, content []byte, line, column int, includePositionContext bool) PrefixInfo {
 	language := e.analyzer.detectLanguage(filePath)
 
 	prefix, inString, stringContent, accessChain, inComment, inImport, stringCtxType := e.analyzer.ast.ExtractPrefixAtPosition(
 		language, content, line, column,
 	)
 
-	ctx := e.analyzer.Analyze(filePath, content, line, column)
 	posCtx := ""
-	if ctx != nil {
-		posCtx = string(ctx.Position.Context)
+	if includePositionContext {
+		ctx := e.analyzer.Analyze(filePath, content, line, column)
+		if ctx != nil {
+			posCtx = string(ctx.Position.Context)
+		}
 	}
 
 	return PrefixInfo{
