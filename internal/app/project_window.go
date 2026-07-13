@@ -272,7 +272,9 @@ func (a *App) GetCurrentProjectWindowSession(ctx context.Context) (ProjectWindow
 			if !session.IsDefault {
 				return projectWindowSessionPayload(session)
 			}
-			return ProjectWindowSessionPayload{}, fmt.Errorf("current window is not a project session")
+			// Looking up a detached-project session from the default window is
+			// expected during welcome-window startup.
+			return ProjectWindowSessionPayload{}, nil
 		}
 	}
 
@@ -281,7 +283,10 @@ func (a *App) GetCurrentProjectWindowSession(ctx context.Context) (ProjectWindow
 		if pending := registry.singlePendingProjectWindow(); pending != nil {
 			return projectWindowSessionPayload(pending)
 		}
-		return ProjectWindowSessionPayload{}, fmt.Errorf("current window is not a project session")
+		// The default window has no project-session identity. This is an
+		// expected lookup result during normal welcome-window startup, not a
+		// failed bridge invocation.
+		return ProjectWindowSessionPayload{}, nil
 	}
 	return projectWindowSessionPayload(session)
 }

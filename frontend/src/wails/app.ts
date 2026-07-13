@@ -1617,6 +1617,28 @@ const normalizeProjectWindowSessionPayload = (
   return { sessionId, projectPath, windowName };
 };
 
+const normalizeOptionalProjectWindowSessionPayload = (
+  payload: unknown,
+): ProjectWindowSessionPayload | null => {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Invalid project window session payload.");
+  }
+  const record = payload as Record<string, unknown>;
+  const sessionId =
+    typeof record.sessionId === "string" ? record.sessionId : "";
+  const projectPath =
+    typeof record.projectPath === "string" ? record.projectPath : "";
+  const windowName =
+    typeof record.windowName === "string" ? record.windowName : "";
+  if (!sessionId && !projectPath && !windowName) {
+    return null;
+  }
+  if (!sessionId || !projectPath) {
+    throw new Error("Invalid project window session payload.");
+  }
+  return { sessionId, projectPath, windowName };
+};
+
 const normalizeRecentProjectIndexStatus = (
   payload: unknown,
   fallbackPath = "",
@@ -1770,7 +1792,7 @@ export async function GetCurrentProjectWindowSession(): Promise<ProjectWindowSes
   const bridge = getProjectWindowBridge();
   if (bridge?.GetCurrentProjectWindowSession) {
     try {
-      return normalizeProjectWindowSessionPayload(
+      return normalizeOptionalProjectWindowSessionPayload(
         await Promise.resolve(bridge.GetCurrentProjectWindowSession()),
       );
     } catch {
@@ -1786,7 +1808,7 @@ export async function GetCurrentProjectWindowSession(): Promise<ProjectWindowSes
 
   if (currentProjectWindowSessionMethodName) {
     try {
-      return normalizeProjectWindowSessionPayload(
+      return normalizeOptionalProjectWindowSessionPayload(
         await callByName(currentProjectWindowSessionMethodName),
       );
     } catch {
@@ -1798,7 +1820,7 @@ export async function GetCurrentProjectWindowSession(): Promise<ProjectWindowSes
     try {
       const result = await callByName(methodName);
       currentProjectWindowSessionMethodName = methodName;
-      return normalizeProjectWindowSessionPayload(result);
+      return normalizeOptionalProjectWindowSessionPayload(result);
     } catch {
       // Try the next known Wails v3 service namespace.
     }
