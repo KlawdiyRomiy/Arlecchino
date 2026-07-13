@@ -474,6 +474,7 @@ const aiChatContextPreferenceRows: Array<{
 
 const remoteBYOKProviderKind = "openai-compatible";
 const defaultRemoteBYOKProviderID = "openai-compatible-byok";
+const showAIProviderSettings = false;
 
 type RemoteBYOKConsentPolicy = AIConsentPolicy & {
   remoteByokProvidersAccepted?: boolean;
@@ -920,8 +921,9 @@ const SettingHeader: React.FC<{
 const SettingSection: React.FC<{
   title: string;
   children: React.ReactNode;
-}> = ({ title, children }) => (
-  <section className="space-y-3">
+  hidden?: boolean;
+}> = ({ title, children, hidden = false }) => (
+  <section className={hidden ? "hidden" : "space-y-3"}>
     <div className="px-1">
       <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
         {title}
@@ -1335,7 +1337,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return settingsSearchEntries
       .filter(
         (entry) =>
-          privateUpdateAccessEnabled || entry.id !== "private-release-access",
+          (privateUpdateAccessEnabled ||
+            entry.id !== "private-release-access") &&
+          (showAIProviderSettings ||
+            (entry.id !== "ai-provider-launch" &&
+              entry.id !== "ai-remote-byok")),
       )
       .map((entry) => ({
         entry,
@@ -2605,7 +2611,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </SettingSection>
 
-        <SettingSection title="Providers">
+        <SettingSection title="Providers" hidden={!showAIProviderSettings}>
           <div
             data-setting-id="ai-remote-byok"
             className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
