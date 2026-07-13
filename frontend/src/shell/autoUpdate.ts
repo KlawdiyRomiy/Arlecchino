@@ -555,6 +555,9 @@ export async function checkForAutoUpdate(): Promise<AutoUpdateStatus> {
   return syncAutoUpdateStatusFromPayload(payload);
 }
 
+const isPrivateGitHubReleaseManifest = (manifestURL?: string): boolean =>
+  manifestURL?.trim().startsWith("github-release://") ?? false;
+
 export const shouldRunAutoUpdateStartupCheck = (
   candidate: AutoUpdateStatus,
   alreadyStarted = startupAutoUpdateCheckStarted,
@@ -563,7 +566,8 @@ export const shouldRunAutoUpdateStartupCheck = (
   candidate.loadedFromBackend &&
   candidate.state === "idle" &&
   candidate.current.packaged &&
-  Boolean(candidate.current.updateManifestUrl);
+  Boolean(candidate.current.updateManifestUrl) &&
+  !isPrivateGitHubReleaseManifest(candidate.current.updateManifestUrl);
 
 export async function runAutoUpdateStartupCheckIfNeeded(
   candidate: AutoUpdateStatus,
