@@ -49,6 +49,7 @@ export const useCodeMirrorAdaptiveExtensions = (
   const appliedExtensionsRef = useRef<Extension[] | null>(null);
   const appliedExtensionsKeyRef = useRef<unknown>(null);
   const reconfigureCountRef = useRef(0);
+  const reapplyFrameRef = useRef<number | null>(null);
 
   const applyExtensions = useCallback(
     (extensions: Extension[], force = false, key?: string) => {
@@ -160,7 +161,18 @@ export const useCodeMirrorAdaptiveExtensions = (
   );
 
   const reapplyAdaptiveExtensions = useCallback(() => {
-    window.requestAnimationFrame(() => {
+    const extensionsKey = latestExtensionsKeyRef.current;
+    if (
+      appliedExtensionsRef.current !== null &&
+      Object.is(appliedExtensionsKeyRef.current, extensionsKey)
+    ) {
+      return;
+    }
+    if (reapplyFrameRef.current !== null) {
+      return;
+    }
+    reapplyFrameRef.current = window.requestAnimationFrame(() => {
+      reapplyFrameRef.current = null;
       applyExtensions(
         latestExtensionsRef.current,
         true,
@@ -183,6 +195,10 @@ export const useCodeMirrorAdaptiveExtensions = (
       pendingForceRef.current = false;
       appliedExtensionsRef.current = null;
       appliedExtensionsKeyRef.current = null;
+      if (reapplyFrameRef.current !== null) {
+        window.cancelAnimationFrame(reapplyFrameRef.current);
+        reapplyFrameRef.current = null;
+      }
     },
     [],
   );

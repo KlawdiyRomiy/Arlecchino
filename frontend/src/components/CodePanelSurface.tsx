@@ -80,6 +80,7 @@ interface CodePanelSurfaceProps {
 const autoSaveDelayMs = 500;
 const diagnosticsSyncDelayMs = 150;
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
+const NOOP_AI_INLINE_PATCH_ACTION = () => undefined;
 
 const makeTabID = (path: string): string =>
   `tab-${path.replace(/[^a-zA-Z0-9]/g, "-")}`;
@@ -382,8 +383,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         filePath: path,
         projectPath,
         busy: aiInlinePatchBusy,
-        onAccept: onAcceptAIInlinePatch ?? (() => undefined),
-        onReject: onRejectAIInlinePatch ?? (() => undefined),
+        onAccept: onAcceptAIInlinePatch ?? NOOP_AI_INLINE_PATCH_ACTION,
+        onReject: onRejectAIInlinePatch ?? NOOP_AI_INLINE_PATCH_ACTION,
       }),
     [
       aiInlinePatchBusy,

@@ -31,6 +31,7 @@ import {
   Transaction,
   type ChangeDesc,
 } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import { EditorView, keymap, tooltips, type Rect } from "@codemirror/view";
 
 import type {
@@ -81,6 +82,7 @@ import { useStableReferenceKey } from "./useStableReferenceKey";
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
 const COMPLETION_FAST_BACKEND_GRACE_MS = 32;
+const COMPLETION_TYPING_DELAY_MS = 16;
 const COMPLETION_RESOLVE_TIMEOUT_MS = 1200;
 const COMPLETION_ACCEPT_RETRY_WINDOW_MS = 2400;
 const MAX_COMPLETION_TEXT_EDITS = 32;
@@ -1003,6 +1005,76 @@ function scriptCompletionLanguage(attributes: string): string | null {
   return null;
 }
 
+function syntaxTreeEmbeddedCompletionRegion(
+  state: EditorState,
+  pos: number,
+  language: string,
+): EmbeddedCompletionRegion | null | undefined {
+  // The HTML parser already maintains the nested script/style ranges
+  // incrementally. Reuse it for plain HTML instead of rescanning the entire
+  // document on every keystroke.
+  if (language !== "html") {
+    return undefined;
+  }
+
+  const tree = syntaxTree(state);
+  if (tree.length < state.doc.length) {
+    return undefined;
+  }
+
+  let node = tree.resolveInner(pos, -1);
+  let embeddedNode: typeof node | null = null;
+  let elementNode: typeof node | null = null;
+  for (
+    let current: typeof node | null = node;
+    current;
+    current = current.parent
+  ) {
+    if (current.name === "Script" || current.name === "StyleSheet") {
+      embeddedNode = current;
+    }
+    if (embeddedNode && current.name === "Element") {
+      elementNode = current;
+      break;
+    }
+  }
+
+  if (!embeddedNode || !elementNode) {
+    return null;
+  }
+
+  const openTag = elementNode.firstChild;
+  if (!openTag || openTag.name !== "OpenTag") {
+    return undefined;
+  }
+
+  const openTagText = state.doc.sliceString(openTag.from, openTag.to);
+  const tagMatch = openTagText.match(/^<\s*(script|style)\b([^>]*)>$/i);
+  if (!tagMatch) {
+    return undefined;
+  }
+
+  const tagName = tagMatch[1].toLowerCase();
+  const attributes = tagMatch[2] || "";
+  if (tagName === "script") {
+    const nestedLanguage = scriptCompletionLanguage(attributes);
+    if (!nestedLanguage) {
+      return null;
+    }
+    return {
+      language: nestedLanguage,
+      contentFrom: embeddedNode.from,
+      contentTo: embeddedNode.to,
+    };
+  }
+
+  return {
+    language: styleCompletionLanguage(attributes) ?? "css",
+    contentFrom: embeddedNode.from,
+    contentTo: embeddedNode.to,
+  };
+}
+
 function styleCompletionLanguage(attributes: string): string | null {
   const lang = htmlAttributeValue(attributes, "lang").toLowerCase();
   if (lang === "scss" || lang === "sass" || lang === "less") {
@@ -1027,6 +1099,10 @@ function embeddedCompletionLanguageAt(
 ): string {
   if (!HTML_LIKE_CONTAINER_LANGUAGES.has(language)) {
     return language;
+  }
+  const syntaxRegion = syntaxTreeEmbeddedCompletionRegion(state, pos, language);
+  if (syntaxRegion !== undefined) {
+    return syntaxRegion?.language ?? language;
   }
   const { region } = embeddedCompletionDocumentSnapshot(state, pos, language);
   return region?.language ?? language;
@@ -1097,6 +1173,17 @@ function embeddedBackendCompletionDocument(
   pos: number,
   language: string,
 ): { language: string; fullText: string } {
+  const syntaxRegion = syntaxTreeEmbeddedCompletionRegion(state, pos, language);
+  if (syntaxRegion !== undefined) {
+    const fullText = state.doc.toString();
+    if (!syntaxRegion) {
+      return { language, fullText };
+    }
+    return {
+      language: syntaxRegion.language,
+      fullText: paddedEmbeddedCompletionDocument(fullText, syntaxRegion),
+    };
+  }
   const { fullText, region } = embeddedCompletionDocumentSnapshot(
     state,
     pos,
@@ -4480,7 +4567,10 @@ export const useCodeMirrorCompletionProvider = ({
       autocompletion({
         override: [backendCompletionSource],
         activateOnTyping: true,
-        activateOnTypingDelay: 0,
+        // Let the document transaction paint before completion work starts.
+        // One 60 Hz frame keeps the popup responsive while avoiding layout and
+        // bridge work on the input event itself.
+        activateOnTypingDelay: COMPLETION_TYPING_DELAY_MS,
         updateSyncTime: COMPLETION_FAST_BACKEND_GRACE_MS,
         maxRenderedOptions: COMPLETION_MAX_RENDERED_OPTIONS,
         defaultKeymap: false,

@@ -118,6 +118,7 @@ import { formatCodeWithPrettier } from "../utils/formatCode";
 import { incrementalRainbowBrackets } from "../extensions/incrementalRainbowBrackets";
 
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
+const NOOP_AI_INLINE_PATCH_ACTION = () => undefined;
 const SIGNATURE_HIDE_MS = 2400;
 const MINIMAP_GUTTER_SELECTOR = ":scope > .cm-minimap-gutter";
 const MINIMAP_DOCK_OFFSET_PROPERTY = "--cm-minimap-dock-offset";
@@ -2018,8 +2019,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         filePath,
         projectPath,
         busy: aiInlinePatchBusy,
-        onAccept: onAcceptAIInlinePatch ?? (() => undefined),
-        onReject: onRejectAIInlinePatch ?? (() => undefined),
+        onAccept: onAcceptAIInlinePatch ?? NOOP_AI_INLINE_PATCH_ACTION,
+        onReject: onRejectAIInlinePatch ?? NOOP_AI_INLINE_PATCH_ACTION,
       }),
     [
       aiInlinePatchPreview,
