@@ -3600,7 +3600,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         });
       }
     },
-    [onFileOpenInPanel],
+    [handleTabClose, onFileOpenInPanel],
   );
 
   const buildTabContextMenuItems = useCallback(
