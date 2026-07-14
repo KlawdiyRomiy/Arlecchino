@@ -58,10 +58,7 @@ import type {
   AIProviderDescriptor,
   AIProviderSettings,
 } from "../../bindings/arlecchino/internal/ai/providers/models";
-import {
-  type MarkdownLinkOpenMode,
-  useBrowserPreviewStore,
-} from "../stores/browserPreviewStore";
+import { useBrowserPreviewStore } from "../stores/browserPreviewStore";
 import {
   clearPrivateUpdateToken,
   getPrivateUpdateAuthStatus,
@@ -356,14 +353,6 @@ const fileToDataUrl = (file: File): Promise<string> =>
     };
     reader.readAsDataURL(file);
   });
-
-const markdownLinkOpenModeOptions: Array<{
-  value: MarkdownLinkOpenMode;
-  label: string;
-}> = [
-  { value: "browser", label: "Browser" },
-  { value: "preview", label: "Preview" },
-];
 
 const mcpApprovalTtlOptions: Array<{
   value: number;
@@ -819,13 +808,6 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     keywords: ["mcp", "tools", "selective", "bridge", "agent"],
   },
   {
-    id: "markdown-links",
-    tab: "browser-preview",
-    label: "Markdown links",
-    description: "Choose how Markdown preview links open.",
-    keywords: ["browser", "preview", "links", "markdown"],
-  },
-  {
     id: "auto-open-preview",
     tab: "browser-preview",
     label: "Auto-open preview",
@@ -1241,11 +1223,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     autoOpenFromTerminal,
     reuseWindowPerSession,
     closeAutoOpenedOnTerminalExit,
-    markdownLinkOpenMode,
     setAutoOpenFromTerminal,
     setReuseWindowPerSession,
     setCloseAutoOpenedOnTerminalExit,
-    setMarkdownLinkOpenMode,
   } = useBrowserPreviewStore();
   const overrides = useKeybindingsStore((state) => state.overrides);
   const setShortcut = useKeybindingsStore((state) => state.setShortcut);
@@ -4301,59 +4281,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               title="Browser Preview"
                               description="Manage integrated browser preview behavior."
                             />
-
-                            <SettingSection title="Links">
-                              <div className={settingsPanelClass}>
-                                <div
-                                  data-setting-id="markdown-links"
-                                  className={`grid gap-4 px-4 py-4 transition-shadow lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center ${getSettingTargetClass(
-                                    "markdown-links",
-                                  )}`}
-                                >
-                                  <div className="min-w-0 pr-4">
-                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
-                                      Markdown links
-                                    </div>
-                                    <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                                      Choose whether Markdown preview links open
-                                      directly in the system browser or first
-                                      inside Browser Preview.
-                                    </div>
-                                  </div>
-                                  <div
-                                    role="group"
-                                    aria-label="Markdown links"
-                                    className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
-                                  >
-                                    {markdownLinkOpenModeOptions.map(
-                                      (option) => (
-                                        <button
-                                          key={option.value}
-                                          type="button"
-                                          aria-pressed={
-                                            markdownLinkOpenMode ===
-                                            option.value
-                                          }
-                                          onClick={() =>
-                                            setMarkdownLinkOpenMode(
-                                              option.value,
-                                            )
-                                          }
-                                          className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                                            markdownLinkOpenMode ===
-                                            option.value
-                                              ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                                              : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                                          }`}
-                                        >
-                                          {option.label}
-                                        </button>
-                                      ),
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </SettingSection>
 
                             <SettingSection title="Terminal automation">
                               <div className={settingsPanelClass}>

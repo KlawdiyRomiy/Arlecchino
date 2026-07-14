@@ -1228,46 +1228,16 @@ test("project session fallback ignores shared workspace storage when route is mi
   expect(storedSharedWorkspace).toEqual(["/workspace"]);
 });
 
-test("Browser Preview settings persist Markdown links mode", async ({
-  page,
-}) => {
+test("Browser Preview settings omit Markdown links mode", async ({ page }) => {
   await mountProjectUI(page);
   await openBrowserPreviewSettings(page);
 
-  const markdownLinksGroup = page.getByRole("group", {
-    name: "Markdown links",
-  });
-  const browserButton = markdownLinksGroup.getByRole("button", {
-    name: "Browser",
-  });
-  const previewButton = markdownLinksGroup.getByRole("button", {
-    name: "Preview",
-  });
-
-  await expect(browserButton).toHaveAttribute("aria-pressed", "true");
-  await expect(previewButton).toHaveAttribute("aria-pressed", "false");
-
-  await previewButton.click();
-  await expect(browserButton).toHaveAttribute("aria-pressed", "false");
-  await expect(previewButton).toHaveAttribute("aria-pressed", "true");
-  await expect
-    .poll(async () =>
-      page.evaluate(() => {
-        const rawSettings = localStorage.getItem("browser-preview-settings.v1");
-        if (!rawSettings) return null;
-        return JSON.parse(rawSettings).state.markdownLinkOpenMode;
-      }),
-    )
-    .toBe("preview");
-
-  await page.reload();
-  await mountProjectUI(page);
-  await openBrowserPreviewSettings(page);
-
-  const reloadedGroup = page.getByRole("group", { name: "Markdown links" });
-  await expect(
-    reloadedGroup.getByRole("button", { name: "Preview" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("group", { name: "Markdown links" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator('[data-setting-id="markdown-links"]')).toHaveCount(
+    0,
+  );
 });
 
 test("diagnostics tab shows autocomplete capability matrix and install action", async ({
