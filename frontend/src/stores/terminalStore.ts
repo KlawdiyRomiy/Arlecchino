@@ -873,17 +873,42 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
     },
 
     setActiveProject: (projectPath) => {
-      const previousSessionShellState = get().sessionShellState;
+      const previousState = get();
+      const previousSessionShellState = previousState.sessionShellState;
+      const closingProjectPath = normalizeProjectPathKey(
+        previousState.activeProjectPath,
+      );
+      const closingSessions =
+        projectPath === null && closingProjectPath
+          ? Array.from(previousState.sessions.values()).filter(
+              (session) =>
+                normalizeProjectPathKey(session.projectPath) ===
+                closingProjectPath,
+            )
+          : [];
+      const closingSessionIDs = new Set(
+        closingSessions.map((session) => session.id),
+      );
+
       set((state) => {
+        const nextSessions =
+          closingSessionIDs.size > 0 ? new Map(state.sessions) : state.sessions;
+        closingSessionIDs.forEach((id) => nextSessions.delete(id));
+
         const nextProjectLayouts = new Map(state.projectLayouts);
         const currentProjectKey = getProjectLayoutMapKey(
           state.activeProjectPath,
         );
-        nextProjectLayouts.set(currentProjectKey, captureProjectState(state));
+        const currentProjectState = sanitizeProjectState(
+          captureProjectState(state),
+          nextSessions,
+          state.activeProjectPath,
+        );
+        nextProjectLayouts.set(currentProjectKey, currentProjectState);
         persistLayoutSnapshot(
-          state.panes,
-          state.activePaneId,
-          state.splitDirection,
+          currentProjectState.panes,
+          currentProjectState.activePaneId,
+          currentProjectState.splitDirection,
           state.activeProjectPath,
         );
 
@@ -893,24 +918,28 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           createProjectState(projectPath);
         const nextProjectState = sanitizeProjectState(
           savedProjectState,
-          state.sessions,
+          nextSessions,
           projectPath,
         );
         const nextTuiSessionId = resolveProjectTUISessionId(
           nextProjectState.panes,
-          state.sessions,
+          nextSessions,
           nextProjectState.activePaneId,
         );
 
         const nextShellState = new Map(state.sessionShellState);
+        const nextSemanticEntries = new Map(state.sessionSemanticEntries);
+        closingSessionIDs.forEach((id) => {
+          nextShellState.delete(id);
+          nextSemanticEntries.delete(id);
+        });
+
         const normalizedProjectPath = normalizeProjectPathKey(projectPath);
         if (normalizedProjectPath) {
           const updatedAt = Date.now();
           for (const pane of nextProjectState.panes) {
             const sessionId = pane.activeTabId;
-            const session = sessionId
-              ? state.sessions.get(sessionId)
-              : undefined;
+            const session = sessionId ? nextSessions.get(sessionId) : undefined;
             if (
               !session ||
               normalizeProjectPathKey(session.projectPath) !==
@@ -938,6 +967,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
 
         return {
           activeProjectPath: projectPath,
+          sessions: nextSessions,
           panes: nextProjectState.panes,
           activePaneId: nextProjectState.activePaneId,
           splitDirection: nextProjectState.splitDirection,
@@ -946,8 +976,22 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           tuiActiveSessionId: nextTuiSessionId,
           tuiModeActive: nextTuiSessionId !== null,
           sessionShellState: nextShellState,
+          sessionSemanticEntries: nextSemanticEntries,
           projectLayouts: nextProjectLayouts,
         };
+      });
+
+      closingSessions.forEach((session) => {
+        cleanupSemanticSessionState(session.id);
+        clearTerminalOutputQueue(session.id);
+        try {
+          session.terminal.dispose();
+        } catch (error) {
+          console.debug(
+            "[TerminalStore] Failed to dispose closed project session",
+            error,
+          );
+        }
       });
 
       const state = get();
