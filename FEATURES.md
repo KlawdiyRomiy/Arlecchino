@@ -2,7 +2,9 @@
 
 Status: public feature map for the current beta.
 
-This page describes the public feature set and links to recorded demos.
+This page describes the public feature set and links to recorded demos. Demos
+open in the browser, where they play directly instead of downloading from the
+repository file viewer.
 
 Current release: macOS open beta, not GA, not stable, not Developer ID signed,
 and not notarized. Windows and Linux are planned targets, but they are not
@@ -22,9 +24,9 @@ development.
 
 Recorded demos:
 
-- [Panel shortcuts](demo-videos/desktop-workbench-panel-shortcuts.mp4) — open
+- [Panel shortcuts](https://klawdiyromiy.github.io/Arlecchino/#panel-shortcuts) — open
   and switch the main workbench panels from the top bar.
-- [Project switching and windows](demo-videos/desktop-workbench-project-switching.mp4)
+- [Project switching and windows](https://klawdiyromiy.github.io/Arlecchino/#project-switching-and-windows)
   — create, switch, and reopen project workspaces.
 
 ## Perspective Mode And Quick Navigation
@@ -37,7 +39,7 @@ opens a Quick Look Definition preview without leaving the current file.
 
 Recorded demo:
 
-- [Dependency Tree](demo-videos/perspective-dependency-tree.mp4) — inspect
+- [Dependency Tree](https://klawdiyromiy.github.io/Arlecchino/#dependency-tree) — inspect
   project references and jump between related files.
 
 ## Command Dispatcher
@@ -48,7 +50,7 @@ AI dispatch.
 
 Recorded demo:
 
-- [Global search and command dispatcher](demo-videos/command-dispatcher.mp4)
+- [Global search and command dispatcher](https://klawdiyromiy.github.io/Arlecchino/#command-dispatcher)
   — find code, then switch to the command namespace with `>`.
 
 ## Editor And Code Intelligence
@@ -59,9 +61,9 @@ completion, guarded apply/resolve paths, and ghost text where available.
 
 Recorded demos:
 
-- [Split views and code panels](demo-videos/editor-split-views.mp4) — keep
+- [Split views and code panels](https://klawdiyromiy.github.io/Arlecchino/#split-views-and-code-panels) — keep
   several files visible while navigating source code.
-- [Go to Definition and Quick Look](demo-videos/editor-go-to-definition-and-quick-look.mp4)
+- [Go to Definition and Quick Look](https://klawdiyromiy.github.io/Arlecchino/#go-to-definition-and-quick-look)
   — jump to a definition or inspect it without replacing the current editor.
 
 ## Built-In IDE Tools
@@ -75,11 +77,11 @@ review client.
 
 Recorded demos:
 
-- [Git and Problems](demo-videos/ide-tools-git-and-problems.mp4) — inspect
+- [Git and Problems](https://klawdiyromiy.github.io/Arlecchino/#git-and-problems) — inspect
   source-control state, diffs, and project diagnostics.
-- [Markdown and Browser Preview](demo-videos/ide-tools-markdown-and-browser-preview.mp4)
+- [Markdown and Browser Preview](https://klawdiyromiy.github.io/Arlecchino/#markdown-and-browser-preview)
   — preview a Markdown document and a web page inside the workbench.
-- [Settings](demo-videos/ide-tools-settings.mp4) — adjust appearance and
+- [Settings](https://klawdiyromiy.github.io/Arlecchino/#settings) — adjust appearance and
   inspect the available configuration surfaces.
 
 ## MCP Integration
@@ -100,7 +102,7 @@ The dispatcher also accepts `@ai` prompts and the visible modes `/chat`,
 
 Recorded demo:
 
-- [@t and @ai dispatcher prefixes](demo-videos/ai-chat-and-terminal-prefixes.mp4)
+- [@t and @ai dispatcher prefixes](https://klawdiyromiy.github.io/Arlecchino/#ai-chat-and-terminal-prefixes)
   — route a command to the terminal or start an AI Chat request.
 
 ## Deterministic Completion And Local Ranking

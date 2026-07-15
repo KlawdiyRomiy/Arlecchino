@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Recorded feature demos for Arlecchino." />
+    <title>Arlecchino Feature Demos</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        background: #0d1015;
+        color: #f2f5fb;
+      }
+
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top, #172032 0, #0d1015 42rem);
+      }
+
+      main {
+        width: min(1120px, calc(100% - 2rem));
+        margin: 0 auto;
+        padding: 4rem 0 5rem;
+      }
+
+      header {
+        margin-bottom: 3rem;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 5vw, 3.4rem);
+        letter-spacing: -0.04em;
+      }
+
+      header p,
+      .demo p {
+        color: #b8c1d1;
+        line-height: 1.6;
+      }
+
+      header p {
+        max-width: 46rem;
+        margin: 1rem 0 0;
+      }
+
+      .demo {
+        scroll-margin-top: 1.5rem;
+        margin: 0 0 3rem;
+        padding: 1.25rem;
+        border: 1px solid #2a3446;
+        border-radius: 1rem;
+        background: rgb(16 21 30 / 82%);
+        box-shadow: 0 1rem 3rem rgb(0 0 0 / 18%);
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 1.3rem;
+      }
+
+      .demo p {
+        margin: 0.5rem 0 1rem;
+      }
+
+      video {
+        display: block;
+        width: 100%;
+        max-height: 78vh;
+        border-radius: 0.65rem;
+        background: #050608;
+      }
+
+      a {
+        color: #8ab4ff;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Arlecchino Feature Demos</h1>
+        <p>
+          Recorded walkthroughs of the current public beta. Each video can be
+          played directly in the browser.
+        </p>
+      </header>
+
+      <section class="demo" id="panel-shortcuts">
+        <h2>Panel shortcuts</h2>
+        <p>Open and switch the main workbench panels from the top bar.</p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/desktop-workbench-panel-shortcuts.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+
+      <section class="demo" id="project-switching-and-windows">
+        <h2>Project switching and windows</h2>
+        <p>Create, switch, and reopen project workspaces.</p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/desktop-workbench-project-switching.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+
+      <section class="demo" id="dependency-tree">
+        <h2>Dependency Tree</h2>
+        <p>Inspect project references and jump between related files.</p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/perspective-dependency-tree.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+
+      <section class="demo" id="command-dispatcher">
+        <h2>Global search and command dispatcher</h2>
+        <p>
+          Find code, then switch to the command namespace with
+          <code>&gt;</code>.
+        </p>
+        <video controls preload="metadata" playsinline>
+          <source src="demo-videos/command-dispatcher.mp4" type="video/mp4" />
+        </video>
+      </section>
+
+      <section class="demo" id="split-views-and-code-panels">
+        <h2>Split views and code panels</h2>
+        <p>Keep several files visible while navigating source code.</p>
+        <video controls preload="metadata" playsinline>
+          <source src="demo-videos/editor-split-views.mp4" type="video/mp4" />
+        </video>
+      </section>
+
+      <section class="demo" id="go-to-definition-and-quick-look">
+        <h2>Go to Definition and Quick Look</h2>
+        <p>
+          Jump to a definition or inspect it without replacing the current
+          editor.
+        </p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/editor-go-to-definition-and-quick-look.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+
+      <section class="demo" id="git-and-problems">
+        <h2>Git and Problems</h2>
+        <p>Inspect source-control state, diffs, and project diagnostics.</p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/ide-tools-git-and-problems.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+
+      <section class="demo" id="markdown-and-browser-preview">
+        <h2>Markdown and Browser Preview</h2>
+        <p>Preview a Markdown document and a web page inside the workbench.</p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/ide-tools-markdown-and-browser-preview.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+
+      <section class="demo" id="settings">
+        <h2>Settings</h2>
+        <p>
+          Adjust appearance and inspect the available configuration surfaces.
+        </p>
+        <video controls preload="metadata" playsinline>
+          <source src="demo-videos/ide-tools-settings.mp4" type="video/mp4" />
+        </video>
+      </section>
+
+      <section class="demo" id="ai-chat-and-terminal-prefixes">
+        <h2>@t and @ai dispatcher prefixes</h2>
+        <p>Route a command to the terminal or start an AI Chat request.</p>
+        <video controls preload="metadata" playsinline>
+          <source
+            src="demo-videos/ai-chat-and-terminal-prefixes.mp4"
+            type="video/mp4"
+          />
+        </video>
+      </section>
+    </main>
+  </body>
+</html>
