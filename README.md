@@ -136,7 +136,7 @@ See [FEATURES.md](FEATURES.md) for the public feature and demo-video map.
 - [PRIVACY.md](PRIVACY.md) - beta privacy and provider/runtime disclosure.
 - [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) - bundled autocomplete model
   notice.
-- [release-notes/v0.2.23-beta.144.md](release-notes/v0.2.23-beta.144.md) -
+- [release-notes/v0.2.29-beta.150.md](release-notes/v0.2.29-beta.150.md) -
   latest checked-in beta release notes in this tree.
 - [CUSTOM_THEMES.md](CUSTOM_THEMES.md) - custom theme format and import guide.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices.
