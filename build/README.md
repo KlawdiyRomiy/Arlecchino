@@ -19,14 +19,11 @@ release artifacts are currently supported.
 
 ## macOS
 
-Tester validation should start from the DMG artifact, installation of
-`Arlecchino.app`, and launch of the installed app bundle. Public beta docs
-should not direct testers to non-DMG launch paths.
+Public macOS beta artifacts are distributed as a DMG containing
+`Arlecchino.app`.
 
-Ad-hoc tester beta artifacts remain a packaging-stage path for this beta line.
-Developer ID signing and notarization will be added soon, with no date
-committed yet. Gatekeeper warnings are expected for the unsigned,
-non-notarized artifacts used before that.
+The current beta artifacts are unsigned and not notarized. Gatekeeper warnings
+are expected when opening them.
 
 Important macOS files:
 
@@ -51,6 +48,5 @@ Important Windows files:
 
 ## Generated Output
 
-Do not commit generated build output from this directory. Keep packaged apps,
-release archives, smoke reports, and temporary packaging output outside git
-unless a release process explicitly says otherwise.
+Generated package output, release archives, and smoke reports are not tracked
+in this directory.

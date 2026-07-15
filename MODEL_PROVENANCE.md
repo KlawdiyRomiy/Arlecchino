@@ -18,8 +18,6 @@ without treating the model as a standalone product surface.
 - It is not a generative code model.
 - It is not an autonomous agent or AI Chat runtime.
 - It does not redistribute raw training dataset files.
-- It is not claimed to be risk-free or fully legally cleared beyond the
-  evidence recorded for this beta.
 
 ## Bundled Artifacts
 
@@ -45,12 +43,5 @@ code-completion examples derived from The Stack / BigCode material. Arlecchino
 does not redistribute raw dataset files, per-sample repository names, file
 paths, or original source snippets with the bundled artifacts.
 
-The Stack contains source files under many original licenses. Public binary
-release should continue to track dataset terms, citation requirements, and
-license obligations before broader distribution.
-
-## Remaining Release Gate
-
-Before a broader public binary release, refresh the evidence for the bundled
-artifacts and run a memorization/regurgitation check for uncommon snippets and
-secret-like strings.
+The Stack source material is covered by many original licenses. This notice
+does not change those upstream terms.

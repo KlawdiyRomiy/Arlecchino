@@ -2,14 +2,11 @@
 
 Status: public feature map for the current beta.
 
-This page is the public feature and future demo-video map. Keep video links,
-recording status, scenario IDs, and short caveats here so GitHub visitors can
-see what each feature is meant to demonstrate without reading internal notes.
+This page describes the public feature set and links to recorded demos.
 
 Current release: macOS open beta, not GA, not stable, not Developer ID signed,
 and not notarized. Windows and Linux are planned targets, but they are not
-current release platforms. Developer ID signing and notarization will be added
-soon; no date is committed yet.
+current release platforms.
 
 ## Desktop Workbench
 
@@ -18,22 +15,17 @@ project visible while panels move around it: Explorer, Terminal, Git, Problems,
 Preview, and Settings can be opened, snapped, floated, restored, and reused
 across a project session.
 
-The current public build also has macOS bridge work for menus, fullscreen,
-window controls, credential storage, single-instance routing, open intents, and
-Dock reopen behavior. Treat that as current macOS beta behavior, not as a
-finished cross-platform claim or a macOS-only product identity.
+The current public build also includes macOS integrations for menus,
+fullscreen, window controls, credential storage, single-instance routing, open
+intents, and Dock reopen behavior. Cross-platform support remains in
+development.
 
-Good demo material:
+Recorded demos:
 
-- Install and launch the app from the DMG.
-- Show the Gatekeeper warning if it appears.
-- Move a panel from snapped to floating and back.
-- Switch between Explorer, Terminal, Git, and Problems.
-- Reopen a project and show that the workbench state comes back.
-- Use a project/file open intent only on a packaged build where that path has
-  passed smoke.
-
-Demo scenarios: `DV-01`, `DV-02`, `DV-03`.
+- [Panel shortcuts](demo-videos/desktop-workbench-panel-shortcuts.mp4) — open
+  and switch the main workbench panels from the top bar.
+- [Project switching and windows](demo-videos/desktop-workbench-project-switching.mp4)
+  — create, switch, and reopen project workspaces.
 
 ## Perspective Mode And Quick Navigation
 
@@ -43,19 +35,10 @@ on a file opens the mini Quick Relations menu for a faster local view. In the
 editor, `Cmd+Click` / `Ctrl+Click` opens a definition, while `Option+Click`
 opens a Quick Look Definition preview without leaving the current file.
 
-Good demo material:
+Recorded demo:
 
-- `Cmd+Click` a source file in Explorer and show the Dependency Tree.
-- Click a file or symbol inside the Dependency Tree and jump back into code.
-- `Option+Click` a source file in Explorer and show the compact Quick Relations
-  menu.
-- Filter or choose a relation from the mini menu.
-- In the editor, `Option+Click` a definition candidate and show the Quick Look
-  preview.
-- Expand the Quick Look preview into a real editor tab only if the recording
-  build handles that path cleanly.
-
-Demo scenarios: `DV-03`, `DV-04`.
+- [Dependency Tree](demo-videos/perspective-dependency-tree.mp4) — inspect
+  project references and jump between related files.
 
 ## Command Dispatcher
 
@@ -63,19 +46,10 @@ Demo scenarios: `DV-03`, `DV-04`.
 search, IDE commands, file search, grep, symbol search, terminal dispatch, and
 AI dispatch.
 
-Good demo material:
+Recorded demo:
 
-- Search normally.
-- Run an IDE command with `>`.
-- Search files with `>>`.
-- Search text with a quoted query.
-- Search symbols with `#`.
-- Send a terminal command with `@t `.
-- Send an AI prompt with `@ai ` if AI is configured.
-- Show a TUI-aware terminal case only on a build where the pause behavior is
-  stable.
-
-Demo scenarios: `DV-05`, `DV-06`.
+- [Global search and command dispatcher](demo-videos/command-dispatcher.mp4)
+  — find code, then switch to the command namespace with `>`.
 
 ## Editor And Code Intelligence
 
@@ -83,61 +57,36 @@ The editor is CodeMirror 6 with language tooling around it: diagnostics, hover,
 signature help, split views, dependency views, navigation, deterministic
 completion, guarded apply/resolve paths, and ghost text where available.
 
-Good demo material:
+Recorded demos:
 
-- Open a real source file.
-- Trigger diagnostics, hover, signature help, and completion.
-- Navigate to a definition on a language server that is already installed.
-- Use `Option+Click` on a definition candidate to show Quick Look Definition
-  without replacing the current editor tab.
-- Show Explorer relations or a dependency tree on a fixture that actually has
-  relation data.
-- If you show several languages, verify those adapters in the demo project
-  first.
-
-Avoid calling this Monaco-based. Avoid implying JetBrains parity, universal
-refactoring, or universal code actions; those depend on the language server and
-project state.
-
-Demo scenarios: `DV-04`, `DV-11`.
+- [Split views and code panels](demo-videos/editor-split-views.mp4) — keep
+  several files visible while navigating source code.
+- [Go to Definition and Quick Look](demo-videos/editor-go-to-definition-and-quick-look.mp4)
+  — jump to a definition or inspect it without replacing the current editor.
 
 ## Built-In IDE Tools
 
 The beta includes the daily project tools: Explorer, Problems, Git, Browser
 Preview, Markdown Preview, terminal, Code panel, Settings, status, and
-multi-project switching.
-
-Good demo material:
-
-- Inspect Problems.
-- Review Git status, history, branches, stash actions, and diffs.
-- Split a terminal pane, search output, and accept a command prediction.
-- Open Browser Preview, Markdown Preview, Code panel, and Settings.
-- Search settings, record/reset a keybinding, and show Browser Preview link
-  mode.
+multi-project switching. Markdown links open in the system browser by default.
 
 Git PR behavior is currently a compare-URL/browser handoff, not a built-in PR
 review client.
 
-Demo scenarios: `DV-03`, `DV-06`, `DV-07`.
+Recorded demos:
+
+- [Git and Problems](demo-videos/ide-tools-git-and-problems.mp4) — inspect
+  source-control state, diffs, and project diagnostics.
+- [Markdown and Browser Preview](demo-videos/ide-tools-markdown-and-browser-preview.mp4)
+  — preview a Markdown document and a web page inside the workbench.
+- [Settings](demo-videos/ide-tools-settings.mp4) — adjust appearance and
+  inspect the available configuration surfaces.
 
 ## MCP Integration
 
 Arlecchino includes an MCP server so external coding agents can request IDE
 state and ask the app to open files or panels. Mutating and sensitive actions
 remain approval-based.
-
-Good demo material:
-
-- Let an external agent read IDE state.
-- Open a file or panel through the bridge.
-- Trigger a sensitive action and show the approval dialog.
-- If the clip needs proof, show the frontend ack after the event is accepted.
-
-Do not market MCP as frictionless automation. The point is approved access, not
-bypassing the user.
-
-Demo scenario: `DV-08`.
 
 ## AI Chat And Tool Review
 
@@ -149,20 +98,10 @@ external agent runtime path.
 The dispatcher also accepts `@ai` prompts and the visible modes `/chat`,
 `/plan`, `/debug`, `/build`, and `/review`.
 
-Good demo material:
+Recorded demo:
 
-- Pick a provider and model.
-- Preview context before a run.
-- Run Chat, Plan, Debug, Build, or Review.
-- Review a tool proposal.
-- Turn an accepted plan into a Build run.
-- Preview, apply, or reject a patch artifact on a safe fixture.
-- Show runtime/provider state instead of relying only on assistant prose.
-
-Do not imply every provider/model supports every mode. Remote BYOK is not a
-generic setup path for every AI task.
-
-Demo scenarios: `DV-09`, `DV-10`.
+- [@t and @ai dispatcher prefixes](demo-videos/ai-chat-and-terminal-prefixes.mp4)
+  — route a command to the terminal or start an AI Chat request.
 
 ## Deterministic Completion And Local Ranking
 
@@ -171,14 +110,4 @@ guarded apply/resolve behavior, and the bundled local ranker. Optional passive
 prediction is separate from normal completion and is guarded by provider,
 consent, budget, idle, and stale-response checks.
 
-Good demo material:
-
-- Trigger normal completion.
-- Type an access operator on a known object or module and show member
-  completion, typed narrowing, and safe acceptance on a small fixture.
-- Show ranking only where the source and language-server behavior are stable.
-- Show passive prediction only when the provider/runtime gates are visible.
-
 The bundled model ranks candidates. It is not a generative code model.
-
-Demo scenario: `DV-11`.

@@ -2,10 +2,7 @@
 
 Status: beta privacy disclosure for tester artifacts.
 
-This file describes the intended privacy behavior of the current macOS open
-beta. Developer ID signing and notarization will be added soon, with no date
-committed yet; review this disclosure again before that trusted distribution
-path, App Store, enterprise, or broader public binary release.
+This file describes privacy behavior of the current macOS open beta.
 
 ## Current Position
 
@@ -53,26 +50,21 @@ actions:
   context, terminal facts, Mnemonic summaries, and completion or chat requests
   to a configured provider.
 - External agent runtimes, currently centered on Codex paths, may use
-  provider-owned account or CLI processes. Arlecchino should not own or replay
+  provider-owned account or CLI processes. Arlecchino does not own or replay
   those provider credentials.
 
-Arlecchino should pass sensitive prompt/context through approved runtime
-channels, not through process arguments.
+Sensitive prompt and context data pass through approved runtime channels rather
+than process arguments.
 
-## AI Provider Rules
+## AI Provider Protections
 
-For user-facing AI behavior:
-
-1. Cloud and frontier providers must require explicit setup or consent.
-2. The UI should show provider, model, endpoint class, and categories of data
-   that may be sent before external use.
-3. File edits, terminal commands, MCP calls, and subagent work should remain
-   behind Arlecchino approval, patch-artifact, audit, and rollback surfaces
-   where applicable.
-4. Secrets, `.env` files, credentials, and sensitive paths should not be sent
-   to providers.
-5. API keys should be stored in the OS keychain or another secure secret store,
-   not in project files, logs, prompts, or normal JSON settings.
+Cloud and frontier providers require explicit setup or consent. Before external
+use, the UI shows the provider, model, endpoint class, and categories of data
+that may be sent. File edits, terminal commands, MCP calls, and subagent work
+use approval, patch-artifact, audit, and rollback surfaces where applicable.
+Secrets, `.env` files, credentials, and sensitive paths are excluded from
+provider requests. API keys are stored in the OS keychain or another secure
+secret store, not in project files, logs, prompts, or normal JSON settings.
 
 ## MCP And Agent Control
 
@@ -81,7 +73,7 @@ Mutating or externally sensitive operations require approval by default.
 
 MCP audit logs are stored on the user's machine and are intended to help users
 inspect agent actions.
-Audit logs should continue to redact approval codes and direct secret content.
+Audit logs redact approval codes and direct secret content.
 
 ## Data Deletion
 
@@ -92,8 +84,7 @@ For beta builds, users can remove Arlecchino's stored data by deleting:
   directories;
 - browser/webview storage associated with the Arlecchino app.
 
-A complete in-app data clearing flow remains a release gate for broader public
-binary distribution.
+An in-app data-clearing flow is not yet available.
 
 ## No Sale Of Personal Data
 

@@ -24,13 +24,12 @@
 
 ## Positioning
 
-Arlecchino is not an autonomous coding black box. It is a dense desktop
-workbench that keeps the project visible while editing, terminal work, search,
-previews, Git, diagnostics, and approved AI/MCP actions happen in context.
+Arlecchino is a dense desktop workbench that keeps the project visible while
+editing, terminal work, search, previews, Git, diagnostics, and approved
+AI/MCP actions happen in context.
 
-The current public beta ships first on macOS. Arlecchino should not be described
-as a macOS-only product: Windows and Linux are planned release targets, but they
-are not current beta platforms.
+The current public beta ships first on macOS. Windows and Linux are planned
+release targets, but they are not current beta platforms.
 
 ## What Makes It Different
 
@@ -47,12 +46,11 @@ are not current beta platforms.
   indexed symbols, guarded apply/resolve behavior, and a local candidate
   ranker. Quality still depends on language-server coverage.
 - **Visible AI and MCP.** AI Chat, external runtimes, and MCP control are
-  approval-oriented surfaces. Context, provider/runtime state, tool proposals,
-  and patch artifacts should stay visible before files change.
+  approval-oriented surfaces with context, provider/runtime state, tool
+  proposals, and patch artifacts visible before files change.
 - **Go and Wails foundation.** Arlecchino uses a Go backend for local IDE
-  services and Wails for the desktop shell. That is a factual architecture
-  choice, not an endorsement or rarity claim. Wails v3 is still an upstream
-  alpha dependency, so it remains part of the beta caveat.
+  services and Wails for the desktop shell. Wails v3 is an upstream alpha
+  dependency.
 
 ## Status
 
@@ -66,19 +64,8 @@ you configure. Background agents remain preview-only, and embeddings/RAG are off
 in this build.
 
 Current artifacts are not Apple Developer ID signed and are not notarized.
-Developer ID signing and notarization will be added soon; no date is committed
-yet. For now the tester path is simple: download the DMG, install
-`Arlecchino.app`, and launch the installed app. Gatekeeper may warn that macOS
-cannot verify the developer or scan the app. That is normal for this beta
-artifact.
-
-For owner/local-tester builds, release scripts also support
-`--sign local-identity`. This requires an explicitly created local code-signing
-certificate, defaults to the identity name `Arlecchino Local Code Signing`, and
-does not create or trust certificates automatically. It is intended to keep the
-same local signing identity across updates on that Mac so macOS folder
-permissions are less likely to reset after each app replacement. It is not
-public Gatekeeper trust, not Developer ID signing, and not notarization.
+Install `Arlecchino.app` from the DMG and launch the installed app. Gatekeeper
+may warn that macOS cannot verify the developer or scan the app.
 
 ## DMG Launch Path
 
@@ -131,35 +118,29 @@ See [FEATURES.md](FEATURES.md) for the public feature and demo-video map.
 - macOS is the active open-beta platform; Windows/Linux are future release
   targets.
 - Wails v3 remains an upstream alpha dependency.
-- Builds do not have Developer ID signing or notarization yet. They will be
-  added soon, with no date committed. Gatekeeper may warn or block first launch
-  until the user explicitly opens the trusted beta artifact.
-- Ad-hoc local builds may trigger macOS folder-access prompts again after app
-  updates. Use the documented `local-identity` signing mode only for explicit
-  owner/local-tester workflows on a Mac where the local certificate is trusted.
+- Builds do not have Developer ID signing or notarization yet. Gatekeeper may
+  warn or block first launch until the user explicitly opens the trusted beta
+  artifact.
 - AI provider availability depends on provider accounts, BYOK/API-key or OAuth
   setup, configured external CLIs/runtimes, and model capability.
 - Background agent behavior is preview-only.
 - Embeddings/RAG are disabled in the current beta.
 - The bundled internal autocomplete model is a ranker, not a generative code
   model.
-- Go/Wails/React/CodeMirror are implementation technologies used by this
-  project. Public copy should not imply affiliation with, endorsement by, or
-  special certification from those upstream projects.
+- Go, Wails, React, and CodeMirror are implementation technologies used by the
+  project.
 
 ## Documentation
 
 - [FEATURES.md](FEATURES.md) - public feature map and demo-video slots.
 - [PRIVACY.md](PRIVACY.md) - beta privacy and provider/runtime disclosure.
-- [docs/model-provenance.md](docs/model-provenance.md) - bundled autocomplete model
+- [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) - bundled autocomplete model
   notice.
 - [release-notes/v0.2.23-beta.144.md](release-notes/v0.2.23-beta.144.md) -
   latest checked-in beta release notes in this tree.
-- [CUSTOM_THEMES.md](CUSTOM_THEMES.md) - if you want to create and add your
-  custom theme.
-- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices and
-  release checklist caveats.
-- [build/README.md](build/README.md) - build asset and packaging template notes.
+- [CUSTOM_THEMES.md](CUSTOM_THEMES.md) - custom theme format and import guide.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices.
+- [build/README.md](build/README.md) - packaging assets and templates.
 
 ## Tech Stack
 

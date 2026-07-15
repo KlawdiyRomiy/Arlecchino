@@ -9,8 +9,7 @@ files. They are persisted in browser local storage and can be replaced by
 importing another JSON file with the same normalized id.
 
 If you adapt an existing theme, keep its attribution and license with your
-theme file. Keep examples and shared theme files repo-safe: do not use
-machine-specific absolute paths in public docs or checked-in theme examples.
+theme file.
 
 ## File Shape
 
