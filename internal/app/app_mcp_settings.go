@@ -28,13 +28,9 @@ func (a *App) SaveMCPSettings(settings mcp.Settings) (MCPSettingsStatus, error) 
 
 	if normalized.Enabled {
 		a.startMCPBridge()
-		a.ensureMCPConfigs()
 	} else {
 		a.stopMCPBridge()
 		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobCanceled, "MCP disabled in settings.")
-		if _, err := mcp.DisableUniversalUserMCPBootstrap("", a.currentProjectPath()); err != nil {
-			return MCPSettingsStatus{}, err
-		}
 	}
 
 	return a.mcpSettingsStatus()

@@ -508,11 +508,16 @@ func AllToolDefinitions() []ToolDefinition {
 }
 
 func (s *ToolService) ToolDefinitions() []ToolDefinition {
-	if s == nil || !s.settings.Enabled {
+	if s == nil {
 		return []ToolDefinition{}
 	}
 
-	disabled := s.settings.disabledToolSet()
+	settings, err := s.currentSettings()
+	if err != nil || !settings.Enabled {
+		return []ToolDefinition{}
+	}
+
+	disabled := settings.disabledToolSet()
 	definitions := AllToolDefinitions()
 	filtered := make([]ToolDefinition, 0, len(definitions))
 	for _, definition := range definitions {
@@ -725,13 +730,28 @@ func (s *ToolService) requireToolEnabled(name string) error {
 	if normalizedName == "" {
 		return nil
 	}
-	if !s.settings.Enabled {
+	settings, err := s.currentSettings()
+	if err != nil {
+		return fmt.Errorf("Arlecchino MCP settings are unavailable: %w", err)
+	}
+	if !settings.Enabled {
 		return fmt.Errorf("Arlecchino MCP is disabled by settings")
 	}
-	if !s.settings.ToolEnabled(normalizedName) {
+	if !settings.ToolEnabled(normalizedName) {
 		return fmt.Errorf("%s is disabled by Arlecchino MCP settings", normalizedName)
 	}
 	return nil
+}
+
+func (s *ToolService) currentSettings() (Settings, error) {
+	if s == nil {
+		return Settings{}, fmt.Errorf("MCP tool service is unavailable")
+	}
+	settings, _, err := LoadSettings(s.settingsPath)
+	if err != nil {
+		return Settings{}, err
+	}
+	return settings, nil
 }
 
 func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, error) {

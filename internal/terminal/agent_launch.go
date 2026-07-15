@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-var agentLaunchBinaries = map[string]struct{}{
-	"codex": {},
-}
-
 var previewCandidateScripts = map[string]struct{}{
 	"dev":     {},
 	"preview": {},
@@ -17,6 +13,24 @@ var previewCandidateScripts = map[string]struct{}{
 }
 
 func IsAgentLaunchCommand(input string) bool {
+	return IsAgentLaunchCommandWithBinaries(input, nil)
+}
+
+func CommandBinary(input string) string {
+	trimmedInput := strings.TrimSpace(input)
+	if trimmedInput == "" {
+		return ""
+	}
+
+	parsed, err := ParseShellInput(trimmedInput)
+	if err != nil || parsed == nil || parsed.IsIncomplete {
+		return ""
+	}
+
+	return resolveAgentLaunchBinary(parsed)
+}
+
+func IsAgentLaunchCommandWithBinaries(input string, binaries map[string]struct{}) bool {
 	trimmedInput := strings.TrimSpace(input)
 	if trimmedInput == "" {
 		return false
@@ -32,7 +46,7 @@ func IsAgentLaunchCommand(input string) bool {
 		return false
 	}
 
-	_, exists := agentLaunchBinaries[binary]
+	_, exists := binaries[binary]
 	return exists
 }
 

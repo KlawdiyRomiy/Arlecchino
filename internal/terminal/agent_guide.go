@@ -408,9 +408,13 @@ func shouldResetAgentGuideInjection(event TUIModeEvent) bool {
 }
 
 func shouldInjectAgentGuideForCommand(commandLine string, alreadyInjected bool) bool {
+	return shouldInjectAgentGuideForCommandWithBinaries(commandLine, alreadyInjected, nil)
+}
+
+func shouldInjectAgentGuideForCommandWithBinaries(commandLine string, alreadyInjected bool, binaries map[string]struct{}) bool {
 	if alreadyInjected {
 		return false
 	}
 
-	return IsAgentLaunchCommand(strings.TrimSpace(commandLine))
+	return IsAgentLaunchCommandWithBinaries(strings.TrimSpace(commandLine), binaries)
 }

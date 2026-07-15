@@ -505,8 +505,11 @@ func (s *ToolService) AgentMemoryContext(maxChars int) string {
 }
 
 func (s *ToolService) InitializeInstructions() string {
-	if s != nil && !s.settings.Enabled {
-		return "Arlecchino MCP is disabled by Settings > MCP. The server will not expose tools until it is re-enabled."
+	if s != nil {
+		settings, err := s.currentSettings()
+		if err != nil || !settings.Enabled {
+			return "Arlecchino MCP is disabled by Settings > MCP. The server will not expose tools until it is re-enabled."
+		}
 	}
 
 	parts := []string{

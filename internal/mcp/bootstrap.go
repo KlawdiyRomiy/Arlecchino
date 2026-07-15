@@ -1,55 +1,22 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
-	"time"
 )
 
 const (
-	arlecchinoMCPServerName = "arlecchino"
+	arlecchinoMCPServerName         = "arlecchino"
+	maxMCPConfigInspectionFileBytes = 256 << 10
 )
-
-type UniversalUserBootstrapResult struct {
-	Paths         []string                   `json:"paths"`
-	Registrations []UniversalCLIRegistration `json:"registrations"`
-}
-
-type UniversalCLIRegistration struct {
-	Client string `json:"client"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-}
 
 type BootstrapServerCommand struct {
 	Executable string   `json:"executable"`
 	PrefixArgs []string `json:"prefixArgs,omitempty"`
-}
-
-type commandRunner interface {
-	LookPath(name string) (string, error)
-	Run(name string, args ...string) error
-}
-
-type systemCommandRunner struct{}
-
-func (r systemCommandRunner) LookPath(name string) (string, error) {
-	return exec.LookPath(name)
-}
-
-func (r systemCommandRunner) Run(name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
 }
 
 func EnsureProjectMCPBootstrap(projectRoot, executablePath string) ([]string, error) {
@@ -109,223 +76,6 @@ func EnsureUserMCPBootstrapWithCommand(homeDir string, command BootstrapServerCo
 	return "", nil
 }
 
-func disableLegacyOpenCodeMCPEntries(homeDir, projectRoot string) ([]string, error) {
-	paths := make([]string, 0, 2)
-
-	userPath, changed, err := disableLegacyUserOpenCodeMCPEntry(homeDir)
-	if err != nil {
-		return paths, err
-	}
-	if changed {
-		paths = append(paths, userPath)
-	}
-
-	if strings.TrimSpace(projectRoot) != "" {
-		projectPath, projectChanged, projectErr := disableLegacyProjectOpenCodeMCPEntry(projectRoot)
-		if projectErr != nil {
-			return paths, projectErr
-		}
-		if projectChanged {
-			paths = append(paths, projectPath)
-		}
-	}
-
-	return paths, nil
-}
-
-func DisableUniversalUserMCPBootstrap(homeDir, projectRoot string) (UniversalUserBootstrapResult, error) {
-	return disableUniversalUserMCPBootstrapWithRunner(homeDir, projectRoot, systemCommandRunner{})
-}
-
-func disableUniversalUserMCPBootstrapWithRunner(homeDir, projectRoot string, runner commandRunner) (UniversalUserBootstrapResult, error) {
-	result := UniversalUserBootstrapResult{
-		Paths:         make([]string, 0, 4),
-		Registrations: make([]UniversalCLIRegistration, 0, 3),
-	}
-
-	openCodePaths, err := disableLegacyOpenCodeMCPEntries(homeDir, projectRoot)
-	if err != nil {
-		return result, err
-	}
-	result.Paths = append(result.Paths, openCodePaths...)
-
-	copilotPath, changed, err := removeCopilotUserMCPBootstrap(homeDir)
-	if err != nil {
-		return result, err
-	}
-	if changed {
-		result.Paths = append(result.Paths, copilotPath)
-	}
-
-	if strings.TrimSpace(projectRoot) != "" {
-		projectPath, projectChanged, projectErr := removeProjectMCPJSONConfig(projectRoot)
-		if projectErr != nil {
-			return result, projectErr
-		}
-		if projectChanged {
-			result.Paths = append(result.Paths, projectPath)
-		}
-	}
-
-	plans := []struct {
-		client     string
-		binary     string
-		removeArgs []string
-	}{
-		{
-			client:     "qwen",
-			binary:     "qwen",
-			removeArgs: []string{"mcp", "remove", arlecchinoMCPServerName},
-		},
-		{
-			client:     "codex",
-			binary:     "codex",
-			removeArgs: []string{"mcp", "remove", arlecchinoMCPServerName},
-		},
-		{
-			client:     "claude",
-			binary:     "claude",
-			removeArgs: []string{"mcp", "remove", arlecchinoMCPServerName},
-		},
-	}
-
-	for _, plan := range plans {
-		if _, lookErr := runner.LookPath(plan.binary); lookErr != nil {
-			result.Registrations = append(result.Registrations, UniversalCLIRegistration{
-				Client: plan.client,
-				Status: "skipped",
-				Detail: "CLI not found in PATH",
-			})
-			continue
-		}
-
-		if removeErr := runner.Run(plan.binary, plan.removeArgs...); removeErr != nil {
-			result.Registrations = append(result.Registrations, UniversalCLIRegistration{
-				Client: plan.client,
-				Status: "failed",
-				Detail: removeErr.Error(),
-			})
-			continue
-		}
-
-		result.Registrations = append(result.Registrations, UniversalCLIRegistration{
-			Client: plan.client,
-			Status: "removed",
-			Detail: "removed from user scope",
-		})
-	}
-
-	return result, nil
-}
-
-func disableLegacyUserOpenCodeMCPEntry(homeDir string) (string, bool, error) {
-	trimmedHomeDir := strings.TrimSpace(homeDir)
-	if trimmedHomeDir == "" {
-		home, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			return "", false, homeErr
-		}
-		trimmedHomeDir = home
-	}
-
-	homeAbs, err := filepath.Abs(trimmedHomeDir)
-	if err != nil {
-		return "", false, err
-	}
-
-	return disableLegacyOpenCodeMCPEntryAtPath(filepath.Join(homeAbs, ".config", "opencode", "opencode.json"))
-}
-
-func disableLegacyProjectOpenCodeMCPEntry(projectRoot string) (string, bool, error) {
-	projectAbs, err := filepath.Abs(strings.TrimSpace(projectRoot))
-	if err != nil {
-		return "", false, err
-	}
-	return disableLegacyOpenCodeMCPEntryAtPath(filepath.Join(projectAbs, "opencode.json"))
-}
-
-func EnsureUniversalUserMCPBootstrap(homeDir, executablePath string) (UniversalUserBootstrapResult, error) {
-	command, err := normalizedBootstrapServerCommand(BootstrapServerCommand{Executable: executablePath})
-	if err != nil {
-		return UniversalUserBootstrapResult{}, err
-	}
-
-	return EnsureUniversalUserMCPBootstrapWithCommand(homeDir, command)
-}
-
-func EnsureUniversalUserMCPBootstrapWithCommand(homeDir string, command BootstrapServerCommand) (UniversalUserBootstrapResult, error) {
-	return ensureUniversalUserMCPBootstrapWithCommandAndRunner(homeDir, command, systemCommandRunner{})
-}
-
-func ensureUniversalUserMCPBootstrapWithRunner(homeDir, executablePath string, runner commandRunner) (UniversalUserBootstrapResult, error) {
-	command, err := normalizedBootstrapServerCommand(BootstrapServerCommand{Executable: executablePath})
-	if err != nil {
-		return UniversalUserBootstrapResult{}, err
-	}
-
-	return ensureUniversalUserMCPBootstrapWithCommandAndRunner(homeDir, command, runner)
-}
-
-func ensureUniversalUserMCPBootstrapWithCommandAndRunner(homeDir string, command BootstrapServerCommand, runner commandRunner) (UniversalUserBootstrapResult, error) {
-	normalizedCommand, err := normalizedBootstrapServerCommand(command)
-	if err != nil {
-		return UniversalUserBootstrapResult{}, err
-	}
-
-	result := UniversalUserBootstrapResult{
-		Paths:         []string{},
-		Registrations: make([]UniversalCLIRegistration, 0, 1),
-	}
-
-	globalArgs := bootstrapServerArgs("", normalizedCommand)
-
-	plans := []struct {
-		client     string
-		binary     string
-		removeArgs []string
-		addArgs    []string
-	}{
-		{
-			client:     "codex",
-			binary:     "codex",
-			removeArgs: []string{"mcp", "remove", arlecchinoMCPServerName},
-			addArgs: append(
-				[]string{"mcp", "add", arlecchinoMCPServerName, "--", normalizedCommand.Executable},
-				globalArgs...,
-			),
-		},
-	}
-
-	for _, plan := range plans {
-		if _, lookErr := runner.LookPath(plan.binary); lookErr != nil {
-			result.Registrations = append(result.Registrations, UniversalCLIRegistration{
-				Client: plan.client,
-				Status: "skipped",
-				Detail: "CLI not found in PATH",
-			})
-			continue
-		}
-
-		_ = runner.Run(plan.binary, plan.removeArgs...)
-		if addErr := runner.Run(plan.binary, plan.addArgs...); addErr != nil {
-			result.Registrations = append(result.Registrations, UniversalCLIRegistration{
-				Client: plan.client,
-				Status: "failed",
-				Detail: addErr.Error(),
-			})
-			continue
-		}
-
-		result.Registrations = append(result.Registrations, UniversalCLIRegistration{
-			Client: plan.client,
-			Status: "configured",
-			Detail: "registered at user scope",
-		})
-	}
-
-	return result, nil
-}
-
 func normalizedBootstrapServerCommand(command BootstrapServerCommand) (BootstrapServerCommand, error) {
 	executable := strings.TrimSpace(command.Executable)
 	if executable == "" {
@@ -367,10 +117,14 @@ func ensureMCPJSONConfig(projectRoot string, command BootstrapServerCommand) (st
 		return "", err
 	}
 
-	mcpServers[arlecchinoMCPServerName] = map[string]any{
+	server := map[string]any{
 		"command": command.Executable,
 		"args":    toAnySlice(bootstrapServerArgs(projectRoot, command)),
 	}
+	if existing, exists := mcpServers[arlecchinoMCPServerName]; exists && reflect.DeepEqual(existing, server) {
+		return configPath, nil
+	}
+	mcpServers[arlecchinoMCPServerName] = server
 
 	if err := writeJSONObject(configPath, configObject); err != nil {
 		return "", err
@@ -379,117 +133,34 @@ func ensureMCPJSONConfig(projectRoot string, command BootstrapServerCommand) (st
 	return configPath, nil
 }
 
-func disableLegacyOpenCodeMCPEntryAtPath(configPath string) (string, bool, error) {
-	trimmedPath := strings.TrimSpace(configPath)
-	if trimmedPath == "" {
-		return "", false, fmt.Errorf("opencode config path is empty")
-	}
-
-	if _, err := os.Stat(trimmedPath); err != nil {
-		if os.IsNotExist(err) {
-			return trimmedPath, false, nil
+func IsArlecchinoMCPProjectConfig(filePath string) bool {
+	name := filepath.Base(filePath)
+	if name != ".mcp.json" {
+		extension := strings.ToLower(filepath.Ext(name))
+		if extension != ".json" && extension != ".jsonc" {
+			return false
 		}
-		return trimmedPath, false, err
 	}
 
-	configObject, err := readJSONObject(trimmedPath)
+	info, err := os.Stat(filePath)
+	if err != nil || info.IsDir() || info.Size() > maxMCPConfigInspectionFileBytes {
+		return false
+	}
+
+	config, err := readJSONObject(filePath)
 	if err != nil {
-		return trimmedPath, false, err
+		return false
 	}
-
-	rawMCPSection, ok := configObject["mcp"]
-	if !ok {
-		return trimmedPath, false, nil
-	}
-	mcpSection, ok := rawMCPSection.(map[string]any)
-	if !ok {
-		return trimmedPath, false, fmt.Errorf("%s: key %q must be object", filepath.Base(trimmedPath), "mcp")
-	}
-
-	rawServer, ok := mcpSection[arlecchinoMCPServerName]
-	if !ok {
-		return trimmedPath, false, nil
-	}
-	server, ok := rawServer.(map[string]any)
-	if !ok {
-		return trimmedPath, false, fmt.Errorf("%s: mcp.%s must be object", filepath.Base(trimmedPath), arlecchinoMCPServerName)
-	}
-
-	if current, ok := server["enabled"].(bool); ok && !current {
-		return trimmedPath, false, nil
-	}
-
-	server["enabled"] = false
-	if err := writeJSONObject(trimmedPath, configObject); err != nil {
-		return trimmedPath, false, err
-	}
-
-	return trimmedPath, true, nil
-}
-
-func removeProjectMCPJSONConfig(projectRoot string) (string, bool, error) {
-	projectAbs, err := filepath.Abs(strings.TrimSpace(projectRoot))
-	if err != nil {
-		return "", false, err
-	}
-	return removeJSONChildAtPath(filepath.Join(projectAbs, ".mcp.json"), "mcpServers", arlecchinoMCPServerName)
-}
-
-func removeCopilotUserMCPBootstrap(homeDir string) (string, bool, error) {
-	trimmedHomeDir := strings.TrimSpace(homeDir)
-	if trimmedHomeDir == "" {
-		home, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			return "", false, homeErr
+	for _, parentKey := range []string{"mcp", "mcpServers"} {
+		parent, ok := config[parentKey].(map[string]any)
+		if !ok {
+			continue
 		}
-		trimmedHomeDir = home
-	}
-
-	homeAbs, err := filepath.Abs(trimmedHomeDir)
-	if err != nil {
-		return "", false, err
-	}
-
-	return removeJSONChildAtPath(filepath.Join(homeAbs, ".copilot", "mcp-config.json"), "mcpServers", arlecchinoMCPServerName)
-}
-
-func removeJSONChildAtPath(configPath, parentKey, childKey string) (string, bool, error) {
-	trimmedPath := strings.TrimSpace(configPath)
-	if trimmedPath == "" {
-		return "", false, fmt.Errorf("config path is empty")
-	}
-
-	if _, err := os.Stat(trimmedPath); err != nil {
-		if os.IsNotExist(err) {
-			return trimmedPath, false, nil
+		if _, configured := parent[arlecchinoMCPServerName]; configured {
+			return true
 		}
-		return trimmedPath, false, err
 	}
-
-	configObject, err := readJSONObject(trimmedPath)
-	if err != nil {
-		return trimmedPath, false, err
-	}
-
-	rawParent, ok := configObject[parentKey]
-	if !ok {
-		return trimmedPath, false, nil
-	}
-	parent, ok := rawParent.(map[string]any)
-	if !ok {
-		return trimmedPath, false, fmt.Errorf("%s: key %q must be object", filepath.Base(trimmedPath), parentKey)
-	}
-
-	if _, ok := parent[childKey]; !ok {
-		return trimmedPath, false, nil
-	}
-
-	delete(parent, childKey)
-	if err := writeJSONObject(trimmedPath, configObject); err != nil {
-		return trimmedPath, false, err
-	}
-
-	return trimmedPath, true, nil
+	return false
 }
 
 func bootstrapServerArgs(projectRoot string, command BootstrapServerCommand) []string {

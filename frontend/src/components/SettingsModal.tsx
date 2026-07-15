@@ -2708,7 +2708,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const renderMCPSettings = () => {
     const settings = mcpStatus?.settings ?? null;
     const enabledToolCount =
-      mcpStatus?.tools.filter((tool) => tool.enabled).length ?? 0;
+      mcpStatus?.tools.filter((tool) => tool.effectiveEnabled).length ?? 0;
     const totalToolCount = mcpStatus?.tools.length ?? 0;
 
     return (

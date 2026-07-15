@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"arlecchino/internal/mcp"
 	"arlecchino/internal/workspace"
 )
 
@@ -294,10 +295,10 @@ func (a *App) readDirectoryForSession(session *ProjectRuntimeSession, dirPath st
 
 	result := make([]FileEntry, 0, len(entries))
 	for _, entry := range entries {
-		if shouldHideProjectExplorerEntry(entry.Name()) {
+		fullPath := filepath.Join(dirPath, entry.Name())
+		if shouldHideProjectExplorerEntry(entry.Name(), fullPath) {
 			continue
 		}
-		fullPath := filepath.Join(dirPath, entry.Name())
 		result = append(result, FileEntry{
 			Name:        entry.Name(),
 			Path:        fullPath,
@@ -308,8 +309,8 @@ func (a *App) readDirectoryForSession(session *ProjectRuntimeSession, dirPath st
 	return result, nil
 }
 
-func shouldHideProjectExplorerEntry(name string) bool {
-	return name == ".arlecchino"
+func shouldHideProjectExplorerEntry(name, fullPath string) bool {
+	return name == ".arlecchino" || mcp.IsArlecchinoMCPProjectConfig(fullPath)
 }
 
 func (a *App) InspectEditorFile(filePath string) (EditorFileInspection, error) {

@@ -32,15 +32,18 @@ type Session struct {
 	mode                  *TUIModeDetector
 	semanticParser        *semanticParser
 	workingDir            string
+	agentLaunchBinaries   map[string]struct{}
 	agentInputBuffer      string
+	lastSubmittedCommand  string
 	agentGuideInjected    bool
 	previewCandidateUntil time.Time
 }
 
 type Manager struct {
-	sessions map[string]*Session
-	mu       sync.RWMutex
-	shell    string
+	sessions            map[string]*Session
+	mu                  sync.RWMutex
+	shell               string
+	agentLaunchBinaries map[string]struct{}
 }
 
 func NewManager() *Manager {
@@ -49,8 +52,25 @@ func NewManager() *Manager {
 		shell = "/bin/zsh"
 	}
 	return &Manager{
-		sessions: make(map[string]*Session),
-		shell:    shell,
+		sessions:            make(map[string]*Session),
+		shell:               shell,
+		agentLaunchBinaries: make(map[string]struct{}),
+	}
+}
+
+func (m *Manager) SetAgentLaunchBinaries(binaries []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	knownBinaries := make(map[string]struct{}, len(binaries))
+	for _, binary := range binaries {
+		normalizedBinary := normalizeBinaryName(binary)
+		if normalizedBinary != "" {
+			knownBinaries[normalizedBinary] = struct{}{}
+		}
+	}
+	m.agentLaunchBinaries = knownBinaries
+	for _, session := range m.sessions {
+		session.setAgentLaunchBinaries(knownBinaries)
 	}
 }
 
@@ -78,14 +98,15 @@ func (m *Manager) Create(id, name, workingDir string) (*Session, error) {
 	}
 
 	session := &Session{
-		ID:             id,
-		Name:           name,
-		cmd:            cmd,
-		pty:            ptmx,
-		ctx:            ctx,
-		cancel:         cancel,
-		semanticParser: newSemanticParser(),
-		workingDir:     workingDir,
+		ID:                  id,
+		Name:                name,
+		cmd:                 cmd,
+		pty:                 ptmx,
+		ctx:                 ctx,
+		cancel:              cancel,
+		semanticParser:      newSemanticParser(),
+		workingDir:          workingDir,
+		agentLaunchBinaries: cloneAgentLaunchBinaries(m.agentLaunchBinaries),
 	}
 
 	session.mode = NewTUIModeDetector(func(event TUIModeEvent) {
@@ -160,6 +181,26 @@ func (s *Session) Write(data []byte) error {
 	defer s.mu.Unlock()
 	_, err := s.pty.Write(data)
 	return err
+}
+
+func (s *Session) WorkingDir() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.workingDir
+}
+
+func (s *Session) setAgentLaunchBinaries(binaries map[string]struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agentLaunchBinaries = cloneAgentLaunchBinaries(binaries)
+}
+
+func cloneAgentLaunchBinaries(binaries map[string]struct{}) map[string]struct{} {
+	result := make(map[string]struct{}, len(binaries))
+	for binary := range binaries {
+		result[binary] = struct{}{}
+	}
+	return result
 }
 
 func (s *Session) Resize(rows, cols uint16) error {
@@ -289,6 +330,12 @@ func (s *Session) TrackAgentLaunchForInput(data []byte, reserveGuideInjection bo
 	return s.trackAgentLaunchForInputLocked(data, reserveGuideInjection)
 }
 
+func (s *Session) LastSubmittedCommand() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSubmittedCommand
+}
+
 func (s *Session) trackAgentLaunchForInputLocked(data []byte, reserveGuideInjection bool) (bool, bool) {
 	shouldReserve := false
 	shouldActivateTUI := false
@@ -297,15 +344,16 @@ func (s *Session) trackAgentLaunchForInputLocked(data []byte, reserveGuideInject
 		switch b {
 		case '\r', '\n':
 			commandLine := s.agentInputBuffer
+			s.lastSubmittedCommand = commandLine
 
-			if IsAgentLaunchCommand(commandLine) {
+			if IsAgentLaunchCommandWithBinaries(commandLine, s.agentLaunchBinaries) {
 				shouldActivateTUI = true
 			}
 			if IsPreviewCandidateCommand(commandLine) {
 				s.previewCandidateUntil = time.Now().Add(previewCandidateTTL)
 			}
 
-			if reserveGuideInjection && shouldInjectAgentGuideForCommand(commandLine, s.agentGuideInjected) {
+			if reserveGuideInjection && shouldInjectAgentGuideForCommandWithBinaries(commandLine, s.agentGuideInjected, s.agentLaunchBinaries) {
 				s.agentGuideInjected = true
 				shouldReserve = true
 			}

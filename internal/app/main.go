@@ -214,22 +214,19 @@ func maybeRunMCPBootstrapMode(args []string) (bool, error) {
 		return true, err
 	}
 
-	if bootstrapOptions.global {
-		globalResult, globalErr := mcp.EnsureUniversalUserMCPBootstrapWithCommand("", serverCommand)
-		if globalErr != nil {
-			return true, globalErr
+	adapterResults, err := mcp.EnsureDiscoveredAgentMCPAttachments(bootstrapOptions.projectRoot, serverCommand, bootstrapOptions.global)
+	if err != nil {
+		return true, err
+	}
+	inferredResults, err := mcp.EnsureInferredProjectMCPAttachments(bootstrapOptions.projectRoot, serverCommand)
+	if err != nil {
+		return true, err
+	}
+	adapterResults = append(adapterResults, inferredResults...)
+	for _, result := range adapterResults {
+		if result.Status == "configured" && strings.TrimSpace(result.Path) != "" {
+			paths = append(paths, result.Path)
 		}
-		paths = append(paths, globalResult.Paths...)
-
-		fmt.Fprintln(os.Stdout, "CLI registration status:")
-		for _, registration := range globalResult.Registrations {
-			fmt.Fprintf(os.Stdout, "- %s: %s", registration.Client, registration.Status)
-			if strings.TrimSpace(registration.Detail) != "" {
-				fmt.Fprintf(os.Stdout, " (%s)", registration.Detail)
-			}
-			fmt.Fprintln(os.Stdout)
-		}
-		fmt.Fprintln(os.Stdout, "")
 	}
 
 	projectAbs, err := filepath.Abs(bootstrapOptions.projectRoot)
@@ -243,13 +240,20 @@ func maybeRunMCPBootstrapMode(args []string) (bool, error) {
 		fmt.Fprintf(os.Stdout, "- %s\n", path)
 	}
 	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "Next steps:")
-	if bootstrapOptions.global {
-		fmt.Fprintln(os.Stdout, "- Codex: if status shows configured, restart session; otherwise run `codex mcp add` manually.")
-	} else {
-		fmt.Fprintf(os.Stdout, "- Codex CLI: codex mcp add arlecchino -- %s\n", renderBootstrapServerCommand(serverCommand, projectAbs))
-		fmt.Fprintln(os.Stdout, "- Want all directories? rerun with --global.")
+	if len(adapterResults) > 0 {
+		fmt.Fprintln(os.Stdout, "Agent MCP integration status:")
+		for _, result := range adapterResults {
+			fmt.Fprintf(os.Stdout, "- %s: %s", result.AdapterID, result.Status)
+			if strings.TrimSpace(result.Detail) != "" {
+				fmt.Fprintf(os.Stdout, " (%s)", result.Detail)
+			}
+			fmt.Fprintln(os.Stdout)
+		}
+		fmt.Fprintln(os.Stdout, "")
 	}
+	fmt.Fprintln(os.Stdout, "Next steps:")
+	fmt.Fprintf(os.Stdout, "- Start an MCP-capable agent from %s.\n", projectAbs)
+	fmt.Fprintln(os.Stdout, "- Add an adapter declaration only when the project's MCP configuration shape cannot be inferred.")
 
 	return true, nil
 }
@@ -377,6 +381,21 @@ func resolveMCPBootstrapServerCommand(options mcpBootstrapOptions) (mcp.Bootstra
 	return mcp.BootstrapServerCommand{Executable: options.executablePath}, nil
 }
 
+func resolveRuntimeMCPBootstrapServerCommand() (mcp.BootstrapServerCommand, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return mcp.BootstrapServerCommand{}, err
+	}
+	executablePath, err := os.Executable()
+	if err != nil {
+		return mcp.BootstrapServerCommand{}, err
+	}
+	return resolveMCPBootstrapServerCommand(mcpBootstrapOptions{
+		executablePath: executablePath,
+		invocationRoot: cwd,
+	})
+}
+
 func shouldUseAutoDevBootstrapCommand(options mcpBootstrapOptions) bool {
 	if options.executableExplicit {
 		return false
@@ -387,7 +406,7 @@ func shouldUseAutoDevBootstrapCommand(options mcpBootstrapOptions) bool {
 		return false
 	}
 
-	if !isLikelyGoRunExecutable(executablePath) {
+	if !isLikelyTransientDevelopmentExecutable(executablePath) {
 		return false
 	}
 
@@ -399,7 +418,7 @@ func shouldUseAutoDevBootstrapCommand(options mcpBootstrapOptions) bool {
 	return looksLikeArlecchinoRepoRoot(repoRoot)
 }
 
-func isLikelyGoRunExecutable(executablePath string) bool {
+func isLikelyTransientDevelopmentExecutable(executablePath string) bool {
 	trimmedPath := strings.TrimSpace(executablePath)
 	if trimmedPath == "" {
 		return false
@@ -411,11 +430,22 @@ func isLikelyGoRunExecutable(executablePath string) bool {
 	}
 
 	tempDir := os.TempDir()
-	if !strings.HasPrefix(absPath, tempDir+string(os.PathSeparator)) {
+	if strings.HasPrefix(absPath, tempDir+string(os.PathSeparator)) {
+		return true
+	}
+	resolvedTempDir, err := filepath.EvalSymlinks(tempDir)
+	if err != nil {
 		return false
 	}
-
-	return strings.Contains(absPath, string(os.PathSeparator)+"go-build")
+	resolvedExecutableDir, err := filepath.EvalSymlinks(filepath.Dir(absPath))
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(resolvedTempDir, resolvedExecutableDir)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) && !filepath.IsAbs(relative))
 }
 
 func looksLikeArlecchinoRepoRoot(repoRoot string) bool {
@@ -456,14 +486,14 @@ func renderBootstrapServerCommand(command mcp.BootstrapServerCommand, projectRoo
 func printMCPBootstrapUsage() {
 	fmt.Fprintln(os.Stdout, "Usage: arlecchino mcp-bootstrap [--project <path>] [--executable <path>] [--global] [--dev] [--dev-repo <path>]")
 	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "Creates project MCP config files for Arlecchino server:")
+	fmt.Fprintln(os.Stdout, "Creates project MCP configuration for the Arlecchino server:")
 	fmt.Fprintln(os.Stdout, "- .mcp.json")
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Default behavior:")
-	fmt.Fprintln(os.Stdout, "- Also registers Arlecchino MCP in Codex CLI when codex is available")
+	fmt.Fprintln(os.Stdout, "- Applies project adapter declarations")
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Optional:")
-	fmt.Fprintln(os.Stdout, "- --project-only skips Codex CLI registration")
+	fmt.Fprintln(os.Stdout, "- --project-only skips user adapter declarations")
 	fmt.Fprintln(os.Stdout, "- Auto-dev: when running from go run in arlecchino repo, bootstrap writes go-run MCP command automatically")
 	fmt.Fprintln(os.Stdout, "- --dev writes MCP command for `go -C <repo> run . mcp-server`")
 	fmt.Fprintln(os.Stdout, "- --dev-repo sets repo root for --dev (default: current directory)")

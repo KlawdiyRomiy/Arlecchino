@@ -228,7 +228,6 @@ func (a *App) startup(ctx context.Context) {
 		a.logWarning(fmt.Sprintf("AI service startup failed: %v", err))
 	}
 	a.startMCPBridge()
-	a.ensureMCPConfigs()
 
 	installer, err := lspinstaller.NewInstaller(func(progress lspinstaller.InstallProgress) {
 		a.recordBackgroundLSPInstallProgress(progress)
@@ -269,28 +268,6 @@ func logShutdownStage(stage string, started time.Time, details string) {
 		return
 	}
 	log.Printf("[shutdown] stage=%s duration=%s %s", stage, elapsed, details)
-}
-
-func (a *App) ensureMCPConfigs() {
-	if envFlagEnabled(envDisableMCPBootstrap) {
-		return
-	}
-	settings, _, err := mcp.LoadSettings("")
-	if err != nil || !settings.Enabled {
-		return
-	}
-
-	go func() {
-		exe, err := os.Executable()
-		if err != nil {
-			return
-		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return
-		}
-		mcp.EnsureUniversalUserMCPBootstrap(home, exe)
-	}()
 }
 
 func envFlagEnabled(name string) bool {

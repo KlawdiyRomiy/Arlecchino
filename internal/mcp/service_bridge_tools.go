@@ -433,12 +433,18 @@ func (s *ToolService) Capabilities() map[string]any {
 		bridgeAvailable = s.bridge.Available()
 	}
 
+	settings, err := s.currentSettings()
+	if err != nil {
+		settings = DefaultSettings()
+		settings.Enabled = false
+	}
+
 	return map[string]any{
 		"mode":                   s.modeName(),
 		"tools":                  toolNames,
-		"settings":               s.settings,
+		"settings":               settings,
 		"settingsDiskPath":       s.settingsPath,
-		"toolSettings":           BuildToolSettingsEntries(s.settings),
+		"toolSettings":           BuildToolSettingsEntries(settings),
 		"permission":             s.PermissionStatus(),
 		"layoutProfiles":         layoutNames,
 		"bridgeMode":             bridgeMode,

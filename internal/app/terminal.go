@@ -55,6 +55,7 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 			return fmt.Errorf("terminal working directory is not a directory: %s", resolved)
 		}
 		workingDir = resolved
+		a.ensureTerminalMCPAttachments(workingDir)
 	}
 
 	session, err := termManager.Create(id, name, workingDir)
@@ -214,9 +215,12 @@ func (a *App) WriteTerminal(id string, data string) error {
 	if decoded, err := base64.StdEncoding.DecodeString(data); err == nil {
 		payload = decoded
 	}
-
 	legacyBootstrapEnabled := legacyPTYBootstrapEnabled()
 	reservedForInput, shouldForceAgentMode := session.TrackAgentLaunchForInput(payload, legacyBootstrapEnabled)
+	if terminalInputSubmitsCommand(payload) {
+		a.ensureTerminalMCPAttachments(session.WorkingDir())
+		a.ensureTerminalMCPCLIAttachment(session.WorkingDir(), terminal.CommandBinary(session.LastSubmittedCommand()))
+	}
 
 	if err := session.Write(payload); err != nil {
 		if reservedForInput {
@@ -234,6 +238,72 @@ func (a *App) WriteTerminal(id string, data string) error {
 	}
 
 	return nil
+}
+
+func (a *App) ensureTerminalMCPAttachments(projectRoot string) {
+	if envFlagEnabled(envDisableMCPBootstrap) {
+		return
+	}
+	settings, _, err := mcp.LoadSettings("")
+	if err != nil || !settings.Enabled {
+		return
+	}
+	command, err := resolveRuntimeMCPBootstrapServerCommand()
+	if err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP command resolution failed: %v", err))
+		return
+	}
+	if _, err := mcp.EnsureProjectMCPBootstrapWithCommand(projectRoot, command); err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP project bootstrap failed: %v", err))
+		return
+	}
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		termManager.SetAgentLaunchBinaries(mcp.DiscoveredAgentMCPLaunchBinaries(projectRoot, true))
+	}
+	if _, err := mcp.EnsureDiscoveredAgentMCPAttachments(projectRoot, command, true); err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP adapter bootstrap failed: %v", err))
+	}
+	if _, err := mcp.EnsureInferredProjectMCPAttachments(projectRoot, command); err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP inferred configuration bootstrap failed: %v", err))
+	}
+}
+
+func (a *App) ensureTerminalMCPCLIAttachment(projectRoot, binary string) {
+	if envFlagEnabled(envDisableMCPBootstrap) || strings.TrimSpace(binary) == "" {
+		return
+	}
+	settings, _, err := mcp.LoadSettings("")
+	if err != nil || !settings.Enabled {
+		return
+	}
+	command, err := resolveRuntimeMCPBootstrapServerCommand()
+	if err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP command resolution failed: %v", err))
+		return
+	}
+	result, handled, err := mcp.EnsureCanonicalMCPCLIAttachment(projectRoot, binary, command)
+	if err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP CLI discovery failed: %v", err))
+		return
+	}
+	if handled {
+		if result.Status == "failed" {
+			a.logWarning(fmt.Sprintf("[Terminal] MCP CLI attachment failed for %s: %s", binary, result.Detail))
+		}
+		return
+	}
+	result, handled, err = mcp.EnsureDiscoveredClientProjectMCPAttachment(projectRoot, binary, command)
+	if err != nil {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP client configuration discovery failed: %v", err))
+		return
+	}
+	if handled && result.Status == "failed" {
+		a.logWarning(fmt.Sprintf("[Terminal] MCP CLI attachment failed for %s: %s", binary, result.Detail))
+	}
+}
+
+func terminalInputSubmitsCommand(data []byte) bool {
+	return strings.ContainsRune(string(data), '\r') || strings.ContainsRune(string(data), '\n')
 }
 
 func (a *App) ResizeTerminal(id string, rows, cols int) error {
