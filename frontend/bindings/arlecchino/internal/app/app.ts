@@ -506,10 +506,8 @@ export function ClearCompiled(): $CancellablePromise<string> {
     return $Call.ByID(2560055152);
 }
 
-export function ClearPrivateUpdateToken(): $CancellablePromise<$models.PrivateUpdateAuthStatus> {
-    return $Call.ByID(1040294288).then(($result: any) => {
-        return $$createType55($result);
-    });
+export function ClearRecentProjects(): $CancellablePromise<void> {
+    return $Call.ByID(3411991382);
 }
 
 export function CloneRepository(repositoryURL: string, directory: string, projectName: string): $CancellablePromise<string> {
@@ -601,7 +599,7 @@ export function CreatePolicy(name: string, opts: plugins$0.PolicyClassOptions): 
 
 export function CreateProjectEntry(req: $models.ProjectEntryCreateRequest): $CancellablePromise<$models.ProjectEntryCreateResult> {
     return $Call.ByID(1609105829, req).then(($result: any) => {
-        return $$createType56($result);
+        return $$createType55($result);
     });
 }
 
@@ -627,7 +625,7 @@ export function DBSeed($class: string): $CancellablePromise<string> {
 
 export function DetectLanguage(code: string): $CancellablePromise<$models.LanguagePrediction[]> {
     return $Call.ByID(2559271775, code).then(($result: any) => {
-        return $$createType58($result);
+        return $$createType57($result);
     });
 }
 
@@ -637,7 +635,7 @@ export function DetectLanguageFromFile(filePath: string, content: string): $Canc
 
 export function DispatchCommand(input: string): $CancellablePromise<$models.DispatcherResultJS> {
     return $Call.ByID(473229233, input).then(($result: any) => {
-        return $$createType59($result);
+        return $$createType58($result);
     });
 }
 
@@ -669,12 +667,14 @@ export function FindEnv(path: string): $CancellablePromise<boolean> {
  */
 export function FindFileByName(searchDir: string, fileName: string): $CancellablePromise<string[]> {
     return $Call.ByID(1401680497, searchDir, fileName).then(($result: any) => {
-        return $$createType60($result);
+        return $$createType59($result);
     });
 }
 
 /**
- * FormatCode formats a file using code formatter (Prettier for JS/TS/HTML/CSS)
+ * FormatCode is kept for binding compatibility. Formatting runs in the
+ * renderer's bundled Prettier runtime so opening a workspace never executes a
+ * project-controlled formatter binary.
  */
 export function FormatCode(filePath: string, content: string): $CancellablePromise<string> {
     return $Call.ByID(2905248636, filePath, content);
@@ -682,7 +682,7 @@ export function FormatCode(filePath: string, content: string): $CancellablePromi
 
 export function GetAllLSPServers(): $CancellablePromise<$models.LSPServerInfo[]> {
     return $Call.ByID(4096872364).then(($result: any) => {
-        return $$createType62($result);
+        return $$createType61($result);
     });
 }
 
@@ -697,19 +697,19 @@ export function GetAutoUpdateStatus(): $CancellablePromise<$models.AutoUpdateSta
  */
 export function GetAutocompleteLanguageCapabilities(): $CancellablePromise<$models.AutocompleteLanguageCapability[]> {
     return $Call.ByID(1283257190).then(($result: any) => {
-        return $$createType64($result);
+        return $$createType63($result);
     });
 }
 
 export function GetBackgroundShellStatus(): $CancellablePromise<$models.BackgroundShellStatusSnapshot> {
     return $Call.ByID(3067698102).then(($result: any) => {
-        return $$createType65($result);
+        return $$createType64($result);
     });
 }
 
 export function GetBuildInfo(): $CancellablePromise<$models.BuildInfo> {
     return $Call.ByID(2280510586).then(($result: any) => {
-        return $$createType66($result);
+        return $$createType65($result);
     });
 }
 
@@ -730,7 +730,7 @@ export function GetCurrentProjectPath(): $CancellablePromise<string> {
 
 export function GetCurrentProjectWindowSession(): $CancellablePromise<$models.ProjectWindowSessionPayload> {
     return $Call.ByID(3077915216).then(($result: any) => {
-        return $$createType67($result);
+        return $$createType66($result);
     });
 }
 
@@ -740,25 +740,25 @@ export function GetCurrentWorkDir(): $CancellablePromise<string> {
 
 export function GetDependencyFlatPolicyPlan(consentMode: string): $CancellablePromise<depsync$0.FlatPolicyPlan> {
     return $Call.ByID(449041705, consentMode).then(($result: any) => {
-        return $$createType68($result);
+        return $$createType67($result);
     });
 }
 
 export function GetDependencyGraph(filePath: string, depth: number): $CancellablePromise<indexer$0.DependencyGraph | null> {
     return $Call.ByID(2362147149, filePath, depth).then(($result: any) => {
-        return $$createType70($result);
+        return $$createType69($result);
     });
 }
 
 export function GetDependencyPolicyPlan(req: depsync$0.PolicyPlanRequest): $CancellablePromise<depsync$0.PolicyPlan> {
     return $Call.ByID(2830371102, req).then(($result: any) => {
-        return $$createType71($result);
+        return $$createType70($result);
     });
 }
 
 export function GetDependencySyncPlan(mode: string): $CancellablePromise<depsync$0.Plan> {
     return $Call.ByID(2210020427, mode).then(($result: any) => {
-        return $$createType72($result);
+        return $$createType71($result);
     });
 }
 
@@ -767,37 +767,37 @@ export function GetDependencySyncPlan(mode: string): $CancellablePromise<depsync
  */
 export function GetDevToolsStatus(): $CancellablePromise<welcome$0.ToolStatus[]> {
     return $Call.ByID(2497445234).then(($result: any) => {
-        return $$createType74($result);
+        return $$createType73($result);
     });
 }
 
 export function GetDispatcherPinned(): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(3370448653).then(($result: any) => {
-        return $$createType76($result);
+        return $$createType75($result);
     });
 }
 
 export function GetDispatcherRecent(): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(1437673616).then(($result: any) => {
-        return $$createType76($result);
+        return $$createType75($result);
     });
 }
 
 export function GetDispatcherSuggestions(input: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(3251177080, input).then(($result: any) => {
-        return $$createType76($result);
+        return $$createType75($result);
     });
 }
 
 export function GetEditorCompletions(ctx: $models.EditorCompletionContext): $CancellablePromise<$models.EditorCompletionResult> {
     return $Call.ByID(1922551346, ctx).then(($result: any) => {
-        return $$createType77($result);
+        return $$createType76($result);
     });
 }
 
 export function GetExecutionProfiles(request: $models.ExecutionProfilesRequest): $CancellablePromise<execution$0.ProfileSet> {
     return $Call.ByID(3416027546, request).then(($result: any) => {
-        return $$createType78($result);
+        return $$createType77($result);
     });
 }
 
@@ -820,7 +820,7 @@ export function GetGitBranch(): $CancellablePromise<string> {
  */
 export function GetGitBranches(): $CancellablePromise<string[]> {
     return $Call.ByID(1460332482).then(($result: any) => {
-        return $$createType60($result);
+        return $$createType59($result);
     });
 }
 
@@ -857,7 +857,7 @@ export function GetGitFileDiffBetweenCommits(filePath: string, fromCommit: strin
  */
 export function GetGitLog(limit: number, filePath: string): $CancellablePromise<$models.GitCommitInfo[]> {
     return $Call.ByID(3703725424, limit, filePath).then(($result: any) => {
-        return $$createType80($result);
+        return $$createType79($result);
     });
 }
 
@@ -885,7 +885,7 @@ export function GetLSPBinaryPath(serverID: string): $CancellablePromise<string> 
 
 export function GetLSPForFile(filePath: string): $CancellablePromise<$models.LSPServerInfo | null> {
     return $Call.ByID(1917781466, filePath).then(($result: any) => {
-        return $$createType81($result);
+        return $$createType80($result);
     });
 }
 
@@ -894,13 +894,13 @@ export function GetLSPForFile(filePath: string): $CancellablePromise<$models.LSP
  */
 export function GetLSPStatus(): $CancellablePromise<lsp$0.ServerStatus[]> {
     return $Call.ByID(3128036363).then(($result: any) => {
-        return $$createType83($result);
+        return $$createType82($result);
     });
 }
 
 export function GetLanguageForFile(filePath: string): $CancellablePromise<$models.LanguageInfoResult | null> {
     return $Call.ByID(3906744297, filePath).then(($result: any) => {
-        return $$createType85($result);
+        return $$createType84($result);
     });
 }
 
@@ -910,6 +910,12 @@ export function GetLaravelVersion(path: string): $CancellablePromise<string> {
 
 export function GetLastAutocompleteTrace(): $CancellablePromise<brain$0.CompletionTrace> {
     return $Call.ByID(3503910979).then(($result: any) => {
+        return $$createType85($result);
+    });
+}
+
+export function GetLocalPreviewURL(filePath: string): $CancellablePromise<$models.LocalPreviewURL> {
+    return $Call.ByID(1509559068, filePath).then(($result: any) => {
         return $$createType86($result);
     });
 }
@@ -936,12 +942,6 @@ export function GetPluginCommands(): $CancellablePromise<$models.PluginCommandDe
     });
 }
 
-export function GetPrivateUpdateAuthStatus(): $CancellablePromise<$models.PrivateUpdateAuthStatus> {
-    return $Call.ByID(926527160).then(($result: any) => {
-        return $$createType55($result);
-    });
-}
-
 export function GetProjectEntryUndoState(): $CancellablePromise<$models.ProjectEntryUndoState> {
     return $Call.ByID(3356730640).then(($result: any) => {
         return $$createType91($result);
@@ -950,19 +950,25 @@ export function GetProjectEntryUndoState(): $CancellablePromise<$models.ProjectE
 
 export function GetProjectWindowSession(sessionID: string): $CancellablePromise<$models.ProjectWindowSessionPayload> {
     return $Call.ByID(3178930845, sessionID).then(($result: any) => {
-        return $$createType67($result);
+        return $$createType66($result);
+    });
+}
+
+export function GetRecentProjectIndexStatuses(paths: string[]): $CancellablePromise<$models.RecentProjectIndexStatus[]> {
+    return $Call.ByID(2717536244, paths).then(($result: any) => {
+        return $$createType93($result);
     });
 }
 
 export function GetRecentProjects(limit: number): $CancellablePromise<project$0.Project[]> {
     return $Call.ByID(1425955691, limit).then(($result: any) => {
-        return $$createType93($result);
+        return $$createType95($result);
     });
 }
 
 export function GetRelatedFiles(filePath: string): $CancellablePromise<indexer$0.FileRelation[]> {
     return $Call.ByID(2278641048, filePath).then(($result: any) => {
-        return $$createType95($result);
+        return $$createType97($result);
     });
 }
 
@@ -972,43 +978,43 @@ export function GetRouteList(filter: string): $CancellablePromise<any> {
 
 export function GetSearchIndexStatus(): $CancellablePromise<dispatcher$0.SearchBackendStatus> {
     return $Call.ByID(3845559944).then(($result: any) => {
-        return $$createType96($result);
+        return $$createType98($result);
     });
 }
 
 export function GetShellCapabilities(): $CancellablePromise<$models.ShellCapabilitiesSnapshot> {
     return $Call.ByID(1382644170).then(($result: any) => {
-        return $$createType97($result);
+        return $$createType99($result);
     });
 }
 
 export function GetSupportedLanguages(): $CancellablePromise<string[]> {
     return $Call.ByID(2571379691).then(($result: any) => {
-        return $$createType60($result);
+        return $$createType59($result);
     });
 }
 
 export function GetTerminalHistory(limit: number): $CancellablePromise<string[]> {
     return $Call.ByID(3017116498, limit).then(($result: any) => {
-        return $$createType60($result);
+        return $$createType59($result);
     });
 }
 
 export function GetTerminalPreview(command: string): $CancellablePromise<$models.TerminalPreviewJS> {
     return $Call.ByID(2082398734, command).then(($result: any) => {
-        return $$createType98($result);
+        return $$createType100($result);
     });
 }
 
 export function GetWails3PackagedSmokeReport(args: string[]): $CancellablePromise<$models.Wails3PackagedSmokeReport> {
     return $Call.ByID(2800269332, args).then(($result: any) => {
-        return $$createType99($result);
+        return $$createType101($result);
     });
 }
 
 export function GetWindowLeaseStatus(): $CancellablePromise<$models.WindowLeaseSnapshot> {
     return $Call.ByID(493136510).then(($result: any) => {
-        return $$createType100($result);
+        return $$createType102($result);
     });
 }
 
@@ -1018,7 +1024,7 @@ export function GetWindowLeaseStatus(): $CancellablePromise<$models.WindowLeaseS
  */
 export function GoToDefinition(filePath: string, content: string, line: number, column: number, word: string, beforeWord: string, afterWord: string): $CancellablePromise<$models.DefinitionResult[]> {
     return $Call.ByID(478407520, filePath, content, line, column, word, beforeWord, afterWord).then(($result: any) => {
-        return $$createType102($result);
+        return $$createType104($result);
     });
 }
 
@@ -1032,7 +1038,7 @@ export function ImportShellHistory(projectID: string, historyPath: string, workD
 
 export function IndexLaravelAll(): $CancellablePromise<{ [_ in string]?: any }> {
     return $Call.ByID(3426453654).then(($result: any) => {
-        return $$createType103($result);
+        return $$createType105($result);
     });
 }
 
@@ -1058,7 +1064,13 @@ export function InitDispatcherForProject(): $CancellablePromise<void> {
 
 export function InspectEditorFile(filePath: string): $CancellablePromise<$models.EditorFileInspection> {
     return $Call.ByID(114260637, filePath).then(($result: any) => {
-        return $$createType104($result);
+        return $$createType106($result);
+    });
+}
+
+export function InspectEditorFileForProjectSession(sessionID: string, filePath: string): $CancellablePromise<$models.EditorFileInspection> {
+    return $Call.ByID(2529908559, sessionID, filePath).then(($result: any) => {
+        return $$createType106($result);
     });
 }
 
@@ -1068,7 +1080,7 @@ export function InspectProject(): $CancellablePromise<any> {
 
 export function InspectProjectAccess(path: string): $CancellablePromise<$models.ProjectAccessInspection> {
     return $Call.ByID(2130412873, path).then(($result: any) => {
-        return $$createType105($result);
+        return $$createType107($result);
     });
 }
 
@@ -1122,13 +1134,13 @@ export function LSPApplyWorkspaceEdit(edit: $models.LSPWorkspaceEdit | null): $C
 
 export function LSPGetCodeActions(filePath: string, content: string, line: number, character: number): $CancellablePromise<$models.LSPCodeAction[]> {
     return $Call.ByID(3094221445, filePath, content, line, character).then(($result: any) => {
-        return $$createType107($result);
+        return $$createType109($result);
     });
 }
 
 export function LSPGetDiagnostics(filePath: string): $CancellablePromise<$models.LSPDiagnostic[]> {
     return $Call.ByID(2460201797, filePath).then(($result: any) => {
-        return $$createType109($result);
+        return $$createType111($result);
     });
 }
 
@@ -1137,7 +1149,7 @@ export function LSPGetDiagnostics(filePath: string): $CancellablePromise<$models
  */
 export function LSPGoToDefinition(filePath: string, content: string, line: number, character: number): $CancellablePromise<$models.LSPDefinitionResult[]> {
     return $Call.ByID(1788738471, filePath, content, line, character).then(($result: any) => {
-        return $$createType111($result);
+        return $$createType113($result);
     });
 }
 
@@ -1157,13 +1169,13 @@ export function LSPPreloadProjectDiagnostics(projectPath: string): $CancellableP
  */
 export function LSPSignatureHelp(filePath: string, content: string, line: number, character: number): $CancellablePromise<$models.SignatureHelpResult | null> {
     return $Call.ByID(1305918266, filePath, content, line, character).then(($result: any) => {
-        return $$createType113($result);
+        return $$createType115($result);
     });
 }
 
 export function ListApprovedDependencyActions(): $CancellablePromise<string[]> {
     return $Call.ByID(2370967423).then(($result: any) => {
-        return $$createType60($result);
+        return $$createType59($result);
     });
 }
 
@@ -1171,9 +1183,15 @@ export function ListInstalledPackages(): $CancellablePromise<string> {
     return $Call.ByID(299341705);
 }
 
+export function ListSystemFontFamilies(): $CancellablePromise<$models.SystemFontFamily[]> {
+    return $Call.ByID(762679462).then(($result: any) => {
+        return $$createType117($result);
+    });
+}
+
 export function ListTerminalSessions(): $CancellablePromise<string[]> {
     return $Call.ByID(1100446623).then(($result: any) => {
-        return $$createType60($result);
+        return $$createType59($result);
     });
 }
 
@@ -1207,7 +1225,7 @@ export function MigrateStatus(): $CancellablePromise<string> {
 
 export function MoveProjectEntry(path: string, targetDirectory: string): $CancellablePromise<$models.ProjectEntryMoveResult> {
     return $Call.ByID(1959204684, path, targetDirectory).then(($result: any) => {
-        return $$createType114($result);
+        return $$createType118($result);
     });
 }
 
@@ -1234,7 +1252,7 @@ export function NotifyFileOpened(filePath: string, language: string, content: st
 
 export function OpenNativeContextMenu(request: $models.NativeContextMenuRequest): $CancellablePromise<$models.NativeContextMenuResponse> {
     return $Call.ByID(4034583415, request).then(($result: any) => {
-        return $$createType115($result);
+        return $$createType119($result);
     });
 }
 
@@ -1244,7 +1262,13 @@ export function OpenProject(path: string): $CancellablePromise<void> {
 
 export function OpenProjectWindow(path: string): $CancellablePromise<$models.ProjectWindowLaunchResult> {
     return $Call.ByID(3704102895, path).then(($result: any) => {
-        return $$createType116($result);
+        return $$createType120($result);
+    });
+}
+
+export function OpenProjectWindowForProjectSession(sessionID: string, path: string): $CancellablePromise<$models.ProjectWindowLaunchResult> {
+    return $Call.ByID(2887877941, sessionID, path).then(($result: any) => {
+        return $$createType120($result);
     });
 }
 
@@ -1254,7 +1278,7 @@ export function OpenProjectWindowSession(sessionID: string, path: string): $Canc
 
 export function ParseCommand(input: string): $CancellablePromise<{ [_ in string]?: any }> {
     return $Call.ByID(1388141726, input).then(($result: any) => {
-        return $$createType103($result);
+        return $$createType105($result);
     });
 }
 
@@ -1268,13 +1292,13 @@ export function PositionNativeWindowControls(closeX: number, closeY: number, min
 
 export function PredictCommand(input: string): $CancellablePromise<$models.ClassResult | null> {
     return $Call.ByID(3501135860, input).then(($result: any) => {
-        return $$createType118($result);
+        return $$createType122($result);
     });
 }
 
 export function PredictTerminalCommand(req: $models.TerminalPredictionRequest): $CancellablePromise<$models.TerminalPredictionResponse> {
     return $Call.ByID(2824179160, req).then(($result: any) => {
-        return $$createType119($result);
+        return $$createType123($result);
     });
 }
 
@@ -1288,25 +1312,49 @@ export function QueueWork(connection: string, queue: string): $CancellablePromis
 
 export function ReadDirectory(dirPath: string): $CancellablePromise<$models.FileEntry[]> {
     return $Call.ByID(500956621, dirPath).then(($result: any) => {
-        return $$createType121($result);
+        return $$createType125($result);
+    });
+}
+
+export function ReadDirectoryForProjectSession(sessionID: string, dirPath: string): $CancellablePromise<$models.FileEntry[]> {
+    return $Call.ByID(3956958335, sessionID, dirPath).then(($result: any) => {
+        return $$createType125($result);
     });
 }
 
 export function ReadEditorBinaryFile(filePath: string): $CancellablePromise<$models.EditorBinaryFile> {
     return $Call.ByID(1714943980, filePath).then(($result: any) => {
-        return $$createType122($result);
+        return $$createType126($result);
+    });
+}
+
+export function ReadEditorBinaryFileForProjectSession(sessionID: string, filePath: string): $CancellablePromise<$models.EditorBinaryFile> {
+    return $Call.ByID(3211917100, sessionID, filePath).then(($result: any) => {
+        return $$createType126($result);
     });
 }
 
 export function ReadEditorFilePreview(filePath: string, maxBytes: number): $CancellablePromise<$models.EditorFilePreview> {
     return $Call.ByID(1734762579, filePath, maxBytes).then(($result: any) => {
-        return $$createType123($result);
+        return $$createType127($result);
+    });
+}
+
+export function ReadEditorFilePreviewForProjectSession(sessionID: string, filePath: string, maxBytes: number): $CancellablePromise<$models.EditorFilePreview> {
+    return $Call.ByID(4093294417, sessionID, filePath, maxBytes).then(($result: any) => {
+        return $$createType127($result);
     });
 }
 
 export function ReadEditorVisualFile(filePath: string): $CancellablePromise<$models.EditorVisualFile> {
     return $Call.ByID(3196754789, filePath).then(($result: any) => {
-        return $$createType124($result);
+        return $$createType128($result);
+    });
+}
+
+export function ReadEditorVisualFileForProjectSession(sessionID: string, filePath: string): $CancellablePromise<$models.EditorVisualFile> {
+    return $Call.ByID(1901688679, sessionID, filePath).then(($result: any) => {
+        return $$createType128($result);
     });
 }
 
@@ -1314,9 +1362,13 @@ export function ReadFile(filePath: string): $CancellablePromise<string> {
     return $Call.ByID(2878347744, filePath);
 }
 
+export function ReadFileForProjectSession(sessionID: string, filePath: string): $CancellablePromise<string> {
+    return $Call.ByID(2100856424, sessionID, filePath);
+}
+
 export function RebuildSearchIndex(): $CancellablePromise<dispatcher$0.SearchBackendStatus> {
     return $Call.ByID(1241435419).then(($result: any) => {
-        return $$createType96($result);
+        return $$createType98($result);
     });
 }
 
@@ -1358,15 +1410,19 @@ export function RemovePackage(name: string, opts: composer$0.RemoveOptions): $Ca
     return $Call.ByID(3740764738, name, opts);
 }
 
+export function RemoveRecentProject(path: string): $CancellablePromise<void> {
+    return $Call.ByID(2784443562, path);
+}
+
 export function RenameProjectEntry(path: string, newName: string): $CancellablePromise<$models.ProjectEntryRenameResult> {
     return $Call.ByID(1128153851, path, newName).then(($result: any) => {
-        return $$createType125($result);
+        return $$createType129($result);
     });
 }
 
 export function RenameProjectEntryWithHistory(req: $models.ProjectEntryRenameRequest): $CancellablePromise<$models.ProjectEntryRenameResult> {
     return $Call.ByID(76275837, req).then(($result: any) => {
-        return $$createType125($result);
+        return $$createType129($result);
     });
 }
 
@@ -1376,7 +1432,7 @@ export function ResizeTerminal(id: string, rows: number, cols: number): $Cancell
 
 export function ResolveEditorCompletion(req: $models.EditorCompletionResolveRequest): $CancellablePromise<$models.EditorCompletionResolveResult> {
     return $Call.ByID(3420650961, req).then(($result: any) => {
-        return $$createType126($result);
+        return $$createType130($result);
     });
 }
 
@@ -1385,6 +1441,10 @@ export function ResolveEditorCompletion(req: $models.EditorCompletionResolveRequ
  */
 export function RestartLSPServer(language: string): $CancellablePromise<boolean> {
     return $Call.ByID(3339885415, language);
+}
+
+export function RevealPathInFileManager(path: string): $CancellablePromise<void> {
+    return $Call.ByID(3164866380, path);
 }
 
 export function RevealProjectEntry(path: string): $CancellablePromise<void> {
@@ -1397,19 +1457,19 @@ export function RouteCache(): $CancellablePromise<string> {
 
 export function RunBackgroundShellAction(actionID: string): $CancellablePromise<$models.BackgroundShellActionResult> {
     return $Call.ByID(2676301637, actionID).then(($result: any) => {
-        return $$createType127($result);
+        return $$createType131($result);
     });
 }
 
 export function RunDependencyFlatPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.FlatExecuteResult> {
     return $Call.ByID(2063425320, req).then(($result: any) => {
-        return $$createType128($result);
+        return $$createType132($result);
     });
 }
 
 export function RunDependencyPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.ExecuteResult> {
     return $Call.ByID(4132946231, req).then(($result: any) => {
-        return $$createType129($result);
+        return $$createType133($result);
     });
 }
 
@@ -1426,13 +1486,13 @@ export function RunMigrate(): $CancellablePromise<void> {
 
 export function RunPackagedOSIntegrationAction(actionID: string): $CancellablePromise<$models.PackagedOSActionResult> {
     return $Call.ByID(1943779455, actionID).then(($result: any) => {
-        return $$createType130($result);
+        return $$createType134($result);
     });
 }
 
 export function RunWindowLeaseAction(actionID: string): $CancellablePromise<$models.WindowLeaseActionResult> {
     return $Call.ByID(1655910089, actionID).then(($result: any) => {
-        return $$createType131($result);
+        return $$createType135($result);
     });
 }
 
@@ -1442,31 +1502,25 @@ export function SaveMCPSettings(settings: mcp$0.Settings): $CancellablePromise<$
     });
 }
 
-export function SavePrivateUpdateToken(token: string): $CancellablePromise<$models.PrivateUpdateAuthStatus> {
-    return $Call.ByID(2166894452, token).then(($result: any) => {
-        return $$createType55($result);
-    });
-}
-
 export function ScheduleRun(): $CancellablePromise<string> {
     return $Call.ByID(2056674812);
 }
 
 export function SearchClasses(prefix: string): $CancellablePromise<$models.ClassResult[]> {
     return $Call.ByID(874301014, prefix).then(($result: any) => {
-        return $$createType132($result);
+        return $$createType136($result);
     });
 }
 
 export function SearchContent(query: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(2143790527, query).then(($result: any) => {
-        return $$createType76($result);
+        return $$createType75($result);
     });
 }
 
 export function SearchFiles(pattern: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(993821393, pattern).then(($result: any) => {
-        return $$createType76($result);
+        return $$createType75($result);
     });
 }
 
@@ -1475,13 +1529,13 @@ export function SearchFiles(pattern: string): $CancellablePromise<$models.Result
  */
 export function SearchInProject(query: string, caseSensitive: boolean, useRegex: boolean, wholeWord: boolean): $CancellablePromise<$models.SearchResult[]> {
     return $Call.ByID(2391516234, query, caseSensitive, useRegex, wholeWord).then(($result: any) => {
-        return $$createType134($result);
+        return $$createType138($result);
     });
 }
 
 export function SearchSymbols(query: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(597251807, query).then(($result: any) => {
-        return $$createType76($result);
+        return $$createType75($result);
     });
 }
 
@@ -1491,7 +1545,7 @@ export function SelectDirectory(title: string): $CancellablePromise<string> {
 
 export function SelectOpenTarget(title: string): $CancellablePromise<{ [_ in string]?: any }> {
     return $Call.ByID(3890198791, title).then(($result: any) => {
-        return $$createType103($result);
+        return $$createType105($result);
     });
 }
 
@@ -1511,6 +1565,10 @@ export function SetCloseConfirmationEnabled(enabled: boolean): $CancellablePromi
     return $Call.ByID(409774704, enabled);
 }
 
+export function SetNativeWindowControlsOccluded(occluded: boolean): $CancellablePromise<boolean> {
+    return $Call.ByID(3663509986, occluded);
+}
+
 export function SetNativeWindowControlsVisible(visible: boolean): $CancellablePromise<boolean> {
     return $Call.ByID(3411965839, visible);
 }
@@ -1519,13 +1577,19 @@ export function ShowPackageInfo(name: string): $CancellablePromise<string> {
     return $Call.ByID(207457449, name);
 }
 
+export function StartRecentProjectIndex(path: string): $CancellablePromise<$models.RecentProjectIndexStatus> {
+    return $Call.ByID(1636947394, path).then(($result: any) => {
+        return $$createType92($result);
+    });
+}
+
 export function StorageLink(): $CancellablePromise<string> {
     return $Call.ByID(2745057471);
 }
 
 export function SuggestCommand(input: string): $CancellablePromise<$models.CommandSuggestion[]> {
     return $Call.ByID(141691869, input).then(($result: any) => {
-        return $$createType136($result);
+        return $$createType140($result);
     });
 }
 
@@ -1539,7 +1603,7 @@ export function SyncApplicationMenuState(payload: $models.ShellMenuStatePayload)
 
 export function SyncProjectDependencies(mode: string): $CancellablePromise<{ [_ in string]?: string }> {
     return $Call.ByID(3713092259, mode).then(($result: any) => {
-        return $$createType137($result);
+        return $$createType141($result);
     });
 }
 
@@ -1553,7 +1617,7 @@ export function ToggleNativeFullscreen(): $CancellablePromise<void> {
 
 export function TrashProjectEntries(req: $models.ProjectEntryTrashRequest): $CancellablePromise<$models.ProjectEntryTrashResult> {
     return $Call.ByID(3756043887, req).then(($result: any) => {
-        return $$createType138($result);
+        return $$createType142($result);
     });
 }
 
@@ -1588,7 +1652,7 @@ export function UpdatePrediction(input: string): $CancellablePromise<void> {
 
 export function ValidateEnvironment(): $CancellablePromise<{ [_ in string]?: boolean }> {
     return $Call.ByID(3496235921).then(($result: any) => {
-        return $$createType139($result);
+        return $$createType143($result);
     });
 }
 
@@ -1598,6 +1662,10 @@ export function ViewCache(): $CancellablePromise<string> {
 
 export function WriteFile(filePath: string, content: string): $CancellablePromise<void> {
     return $Call.ByID(313870991, filePath, content);
+}
+
+export function WriteFileForProjectSession(sessionID: string, filePath: string, content: string): $CancellablePromise<void> {
+    return $Call.ByID(3404138645, sessionID, filePath, content);
 }
 
 export function WriteTerminal(id: string, data: string): $CancellablePromise<void> {
@@ -1660,88 +1728,92 @@ const $$createType51 = ai$0.AIQuestionAnswerResult.createFrom;
 const $$createType52 = ai$0.AIChatMentionCandidate.createFrom;
 const $$createType53 = $Create.Array($$createType52);
 const $$createType54 = $models.AutoUpdateStatus.createFrom;
-const $$createType55 = $models.PrivateUpdateAuthStatus.createFrom;
-const $$createType56 = $models.ProjectEntryCreateResult.createFrom;
-const $$createType57 = $models.LanguagePrediction.createFrom;
-const $$createType58 = $Create.Array($$createType57);
-const $$createType59 = $models.DispatcherResultJS.createFrom;
-const $$createType60 = $Create.Array($Create.Any);
-const $$createType61 = $models.LSPServerInfo.createFrom;
-const $$createType62 = $Create.Array($$createType61);
-const $$createType63 = autocomplete$0.LanguageCapability.createFrom;
-const $$createType64 = $Create.Array($$createType63);
-const $$createType65 = $models.BackgroundShellStatusSnapshot.createFrom;
-const $$createType66 = $models.BuildInfo.createFrom;
-const $$createType67 = $models.ProjectWindowSessionPayload.createFrom;
-const $$createType68 = depsync$0.FlatPolicyPlan.createFrom;
-const $$createType69 = indexer$0.DependencyGraph.createFrom;
-const $$createType70 = $Create.Nullable($$createType69);
-const $$createType71 = depsync$0.PolicyPlan.createFrom;
-const $$createType72 = depsync$0.Plan.createFrom;
-const $$createType73 = welcome$0.ToolStatus.createFrom;
-const $$createType74 = $Create.Array($$createType73);
-const $$createType75 = $models.ResultItemJS.createFrom;
-const $$createType76 = $Create.Array($$createType75);
-const $$createType77 = $models.EditorCompletionResult.createFrom;
-const $$createType78 = execution$0.ProfileSet.createFrom;
-const $$createType79 = $models.GitCommitInfo.createFrom;
-const $$createType80 = $Create.Array($$createType79);
-const $$createType81 = $Create.Nullable($$createType61);
-const $$createType82 = lsp$0.ServerStatus.createFrom;
-const $$createType83 = $Create.Array($$createType82);
-const $$createType84 = $models.LanguageInfoResult.createFrom;
-const $$createType85 = $Create.Nullable($$createType84);
-const $$createType86 = brain$0.CompletionTrace.createFrom;
+const $$createType55 = $models.ProjectEntryCreateResult.createFrom;
+const $$createType56 = $models.LanguagePrediction.createFrom;
+const $$createType57 = $Create.Array($$createType56);
+const $$createType58 = $models.DispatcherResultJS.createFrom;
+const $$createType59 = $Create.Array($Create.Any);
+const $$createType60 = $models.LSPServerInfo.createFrom;
+const $$createType61 = $Create.Array($$createType60);
+const $$createType62 = autocomplete$0.LanguageCapability.createFrom;
+const $$createType63 = $Create.Array($$createType62);
+const $$createType64 = $models.BackgroundShellStatusSnapshot.createFrom;
+const $$createType65 = $models.BuildInfo.createFrom;
+const $$createType66 = $models.ProjectWindowSessionPayload.createFrom;
+const $$createType67 = depsync$0.FlatPolicyPlan.createFrom;
+const $$createType68 = indexer$0.DependencyGraph.createFrom;
+const $$createType69 = $Create.Nullable($$createType68);
+const $$createType70 = depsync$0.PolicyPlan.createFrom;
+const $$createType71 = depsync$0.Plan.createFrom;
+const $$createType72 = welcome$0.ToolStatus.createFrom;
+const $$createType73 = $Create.Array($$createType72);
+const $$createType74 = $models.ResultItemJS.createFrom;
+const $$createType75 = $Create.Array($$createType74);
+const $$createType76 = $models.EditorCompletionResult.createFrom;
+const $$createType77 = execution$0.ProfileSet.createFrom;
+const $$createType78 = $models.GitCommitInfo.createFrom;
+const $$createType79 = $Create.Array($$createType78);
+const $$createType80 = $Create.Nullable($$createType60);
+const $$createType81 = lsp$0.ServerStatus.createFrom;
+const $$createType82 = $Create.Array($$createType81);
+const $$createType83 = $models.LanguageInfoResult.createFrom;
+const $$createType84 = $Create.Nullable($$createType83);
+const $$createType85 = brain$0.CompletionTrace.createFrom;
+const $$createType86 = $models.LocalPreviewURL.createFrom;
 const $$createType87 = $models.MCPSettingsStatus.createFrom;
 const $$createType88 = $models.PackagedOSIntegrationSnapshot.createFrom;
 const $$createType89 = $models.PluginCommandDefJS.createFrom;
 const $$createType90 = $Create.Array($$createType89);
 const $$createType91 = $models.ProjectEntryUndoState.createFrom;
-const $$createType92 = project$0.Project.createFrom;
+const $$createType92 = $models.RecentProjectIndexStatus.createFrom;
 const $$createType93 = $Create.Array($$createType92);
-const $$createType94 = indexer$0.FileRelation.createFrom;
+const $$createType94 = project$0.Project.createFrom;
 const $$createType95 = $Create.Array($$createType94);
-const $$createType96 = dispatcher$0.SearchBackendStatus.createFrom;
-const $$createType97 = $models.ShellCapabilitiesSnapshot.createFrom;
-const $$createType98 = $models.TerminalPreviewJS.createFrom;
-const $$createType99 = $models.Wails3PackagedSmokeReport.createFrom;
-const $$createType100 = $models.WindowLeaseSnapshot.createFrom;
-const $$createType101 = $models.DefinitionResult.createFrom;
-const $$createType102 = $Create.Array($$createType101);
-const $$createType103 = $Create.Map($Create.Any, $Create.Any);
-const $$createType104 = $models.EditorFileInspection.createFrom;
-const $$createType105 = $models.ProjectAccessInspection.createFrom;
-const $$createType106 = $models.LSPCodeAction.createFrom;
-const $$createType107 = $Create.Array($$createType106);
-const $$createType108 = $models.LSPDiagnostic.createFrom;
+const $$createType96 = indexer$0.FileRelation.createFrom;
+const $$createType97 = $Create.Array($$createType96);
+const $$createType98 = dispatcher$0.SearchBackendStatus.createFrom;
+const $$createType99 = $models.ShellCapabilitiesSnapshot.createFrom;
+const $$createType100 = $models.TerminalPreviewJS.createFrom;
+const $$createType101 = $models.Wails3PackagedSmokeReport.createFrom;
+const $$createType102 = $models.WindowLeaseSnapshot.createFrom;
+const $$createType103 = $models.DefinitionResult.createFrom;
+const $$createType104 = $Create.Array($$createType103);
+const $$createType105 = $Create.Map($Create.Any, $Create.Any);
+const $$createType106 = $models.EditorFileInspection.createFrom;
+const $$createType107 = $models.ProjectAccessInspection.createFrom;
+const $$createType108 = $models.LSPCodeAction.createFrom;
 const $$createType109 = $Create.Array($$createType108);
-const $$createType110 = $models.LSPDefinitionResult.createFrom;
+const $$createType110 = $models.LSPDiagnostic.createFrom;
 const $$createType111 = $Create.Array($$createType110);
-const $$createType112 = $models.SignatureHelpResult.createFrom;
-const $$createType113 = $Create.Nullable($$createType112);
-const $$createType114 = $models.ProjectEntryMoveResult.createFrom;
-const $$createType115 = $models.NativeContextMenuResponse.createFrom;
-const $$createType116 = $models.ProjectWindowLaunchResult.createFrom;
-const $$createType117 = $models.ClassResult.createFrom;
-const $$createType118 = $Create.Nullable($$createType117);
-const $$createType119 = $models.TerminalPredictionResponse.createFrom;
-const $$createType120 = $models.FileEntry.createFrom;
-const $$createType121 = $Create.Array($$createType120);
-const $$createType122 = $models.EditorBinaryFile.createFrom;
-const $$createType123 = $models.EditorFilePreview.createFrom;
-const $$createType124 = $models.EditorVisualFile.createFrom;
-const $$createType125 = $models.ProjectEntryRenameResult.createFrom;
-const $$createType126 = $models.EditorCompletionResolveResult.createFrom;
-const $$createType127 = $models.BackgroundShellActionResult.createFrom;
-const $$createType128 = depsync$0.FlatExecuteResult.createFrom;
-const $$createType129 = depsync$0.ExecuteResult.createFrom;
-const $$createType130 = $models.PackagedOSActionResult.createFrom;
-const $$createType131 = $models.WindowLeaseActionResult.createFrom;
-const $$createType132 = $Create.Array($$createType117);
-const $$createType133 = $models.SearchResult.createFrom;
-const $$createType134 = $Create.Array($$createType133);
-const $$createType135 = $models.CommandSuggestion.createFrom;
-const $$createType136 = $Create.Array($$createType135);
-const $$createType137 = $Create.Map($Create.Any, $Create.Any);
-const $$createType138 = $models.ProjectEntryTrashResult.createFrom;
-const $$createType139 = $Create.Map($Create.Any, $Create.Any);
+const $$createType112 = $models.LSPDefinitionResult.createFrom;
+const $$createType113 = $Create.Array($$createType112);
+const $$createType114 = $models.SignatureHelpResult.createFrom;
+const $$createType115 = $Create.Nullable($$createType114);
+const $$createType116 = $models.SystemFontFamily.createFrom;
+const $$createType117 = $Create.Array($$createType116);
+const $$createType118 = $models.ProjectEntryMoveResult.createFrom;
+const $$createType119 = $models.NativeContextMenuResponse.createFrom;
+const $$createType120 = $models.ProjectWindowLaunchResult.createFrom;
+const $$createType121 = $models.ClassResult.createFrom;
+const $$createType122 = $Create.Nullable($$createType121);
+const $$createType123 = $models.TerminalPredictionResponse.createFrom;
+const $$createType124 = $models.FileEntry.createFrom;
+const $$createType125 = $Create.Array($$createType124);
+const $$createType126 = $models.EditorBinaryFile.createFrom;
+const $$createType127 = $models.EditorFilePreview.createFrom;
+const $$createType128 = $models.EditorVisualFile.createFrom;
+const $$createType129 = $models.ProjectEntryRenameResult.createFrom;
+const $$createType130 = $models.EditorCompletionResolveResult.createFrom;
+const $$createType131 = $models.BackgroundShellActionResult.createFrom;
+const $$createType132 = depsync$0.FlatExecuteResult.createFrom;
+const $$createType133 = depsync$0.ExecuteResult.createFrom;
+const $$createType134 = $models.PackagedOSActionResult.createFrom;
+const $$createType135 = $models.WindowLeaseActionResult.createFrom;
+const $$createType136 = $Create.Array($$createType121);
+const $$createType137 = $models.SearchResult.createFrom;
+const $$createType138 = $Create.Array($$createType137);
+const $$createType139 = $models.CommandSuggestion.createFrom;
+const $$createType140 = $Create.Array($$createType139);
+const $$createType141 = $Create.Map($Create.Any, $Create.Any);
+const $$createType142 = $models.ProjectEntryTrashResult.createFrom;
+const $$createType143 = $Create.Map($Create.Any, $Create.Any);

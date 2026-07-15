@@ -36,6 +36,8 @@ dist/
 arlecchino/
 !frontend/bindings/arlecchino/
 !frontend/bindings/arlecchino/**
+/arlecchino
+*.backup
 .bin/
 
 # Dependencies

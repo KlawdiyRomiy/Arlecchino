@@ -95,18 +95,6 @@ export interface AutoUpdateStatus {
   loadedFromBackend: boolean;
 }
 
-export interface PrivateUpdateAuthStatus {
-  provider?: string;
-  repository?: string;
-  manifestSource?: string;
-  configured: boolean;
-  source?: string;
-  envOverride: boolean;
-  keychainService?: string;
-  keychainAccount?: string;
-  reason?: string;
-}
-
 interface RuntimeEvent {
   data?: unknown;
 }
@@ -154,21 +142,6 @@ const methodNames = {
     "main.App.GetBuildInfo",
     "arlecchino.App.GetBuildInfo",
   ],
-  privateAuthStatus: [
-    "arlecchino/internal/app.App.GetPrivateUpdateAuthStatus",
-    "main.App.GetPrivateUpdateAuthStatus",
-    "arlecchino.App.GetPrivateUpdateAuthStatus",
-  ],
-  savePrivateToken: [
-    "arlecchino/internal/app.App.SavePrivateUpdateToken",
-    "main.App.SavePrivateUpdateToken",
-    "arlecchino.App.SavePrivateUpdateToken",
-  ],
-  clearPrivateToken: [
-    "arlecchino/internal/app.App.ClearPrivateUpdateToken",
-    "main.App.ClearPrivateUpdateToken",
-    "arlecchino.App.ClearPrivateUpdateToken",
-  ],
 } as const;
 
 type MethodKey = keyof typeof methodNames;
@@ -204,14 +177,6 @@ const fallbackStatus = (): AutoUpdateStatus => ({
   updatedAt: 0,
   revision: 0,
   loadedFromBackend: false,
-});
-
-const fallbackPrivateUpdateAuthStatus = (): PrivateUpdateAuthStatus => ({
-  provider: "github-release",
-  repository: "KlawdiyRomiy/Arlecchino",
-  configured: false,
-  envOverride: false,
-  reason: "Private GitHub release access status is unavailable.",
 });
 
 let status = fallbackStatus();
@@ -368,35 +333,6 @@ const normalizeVerification = (value: unknown): AutoUpdateVerification => {
   };
 };
 
-export const normalizePrivateUpdateAuthStatusPayload = (
-  payload: unknown,
-): PrivateUpdateAuthStatus => {
-  if (!isRecord(payload)) {
-    return fallbackPrivateUpdateAuthStatus();
-  }
-  return {
-    provider: readString(getRecordValue(payload, "provider", "Provider")),
-    repository: readString(getRecordValue(payload, "repository", "Repository")),
-    manifestSource: readString(
-      getRecordValue(payload, "manifestSource", "ManifestSource"),
-    ),
-    configured: readBoolean(
-      getRecordValue(payload, "configured", "Configured"),
-    ),
-    source: readString(getRecordValue(payload, "source", "Source")),
-    envOverride: readBoolean(
-      getRecordValue(payload, "envOverride", "EnvOverride"),
-    ),
-    keychainService: readString(
-      getRecordValue(payload, "keychainService", "KeychainService"),
-    ),
-    keychainAccount: readString(
-      getRecordValue(payload, "keychainAccount", "KeychainAccount"),
-    ),
-    reason: readString(getRecordValue(payload, "reason", "Reason")),
-  };
-};
-
 export const normalizeAutoUpdateStatusPayload = (
   payload: unknown,
 ): Omit<AutoUpdateStatus, "revision" | "loadedFromBackend"> => {
@@ -530,23 +466,6 @@ export async function loadBuildInfoFromBackend(): Promise<BuildInfo> {
   return normalizeBuildInfo(payload);
 }
 
-export async function getPrivateUpdateAuthStatus(): Promise<PrivateUpdateAuthStatus> {
-  const payload = await callByKnownName("privateAuthStatus");
-  return normalizePrivateUpdateAuthStatusPayload(payload);
-}
-
-export async function savePrivateUpdateToken(
-  token: string,
-): Promise<PrivateUpdateAuthStatus> {
-  const payload = await callByKnownName("savePrivateToken", token);
-  return normalizePrivateUpdateAuthStatusPayload(payload);
-}
-
-export async function clearPrivateUpdateToken(): Promise<PrivateUpdateAuthStatus> {
-  const payload = await callByKnownName("clearPrivateToken");
-  return normalizePrivateUpdateAuthStatusPayload(payload);
-}
-
 export async function checkForAutoUpdate(): Promise<AutoUpdateStatus> {
   const payload = await callByKnownName("check");
   if (payload === undefined) {
@@ -554,9 +473,6 @@ export async function checkForAutoUpdate(): Promise<AutoUpdateStatus> {
   }
   return syncAutoUpdateStatusFromPayload(payload);
 }
-
-const isPrivateGitHubReleaseManifest = (manifestURL?: string): boolean =>
-  manifestURL?.trim().startsWith("github-release://") ?? false;
 
 export const shouldRunAutoUpdateStartupCheck = (
   candidate: AutoUpdateStatus,
@@ -566,8 +482,7 @@ export const shouldRunAutoUpdateStartupCheck = (
   candidate.loadedFromBackend &&
   candidate.state === "idle" &&
   candidate.current.packaged &&
-  Boolean(candidate.current.updateManifestUrl) &&
-  !isPrivateGitHubReleaseManifest(candidate.current.updateManifestUrl);
+  Boolean(candidate.current.updateManifestUrl);
 
 export async function runAutoUpdateStartupCheckIfNeeded(
   candidate: AutoUpdateStatus,

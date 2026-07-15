@@ -87,6 +87,7 @@ export class AutoUpdateStatus {
     "stagedAppPath"?: string;
     "targetVersion"?: string;
     "targetBuild"?: string;
+    "targetSequence"?: number;
     "releaseNotes"?: string;
     "mandatory": boolean;
     "progress": number;
@@ -278,6 +279,13 @@ export class BackgroundShellJob {
     "title": string;
     "detail"?: string;
     "projectPath"?: string;
+    "sessionId"?: string;
+    "generation"?: number;
+    "reason"?: string;
+    "processId"?: number;
+    "command"?: string;
+    "queueDepth"?: number;
+    "workerCount"?: number;
     "ownerSurfaceId"?: string;
     "status": BackgroundShellJobStatus;
     "severity": BackgroundShellSeverity;
@@ -326,10 +334,10 @@ export class BackgroundShellJob {
      * Creates a new BackgroundShellJob instance from a string or object.
      */
     static createFrom($$source: any = {}): BackgroundShellJob {
-        const $$createField9_0 = $$createType10;
+        const $$createField16_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("progress" in $$parsedSource) {
-            $$parsedSource["progress"] = $$createField9_0($$parsedSource["progress"]);
+            $$parsedSource["progress"] = $$createField16_0($$parsedSource["progress"]);
         }
         return new BackgroundShellJob($$parsedSource as Partial<BackgroundShellJob>);
     }
@@ -937,9 +945,11 @@ export class EditorCompletion {
     "stableKey"?: string;
     "provenance"?: string;
     "proofKind"?: string;
+    "accessMemberAuthoritative": boolean;
     "autoImportAllowed": boolean;
     "primary": boolean;
     "requiresResolveBeforeApply": boolean;
+    "requiresSafeEditsBeforeApply"?: boolean;
 
     /** Creates a new EditorCompletion instance. */
     constructor($$source: Partial<EditorCompletion> = {}) {
@@ -966,6 +976,9 @@ export class EditorCompletion {
         }
         if (!("priority" in $$source)) {
             this["priority"] = 0;
+        }
+        if (!("accessMemberAuthoritative" in $$source)) {
+            this["accessMemberAuthoritative"] = false;
         }
         if (!("autoImportAllowed" in $$source)) {
             this["autoImportAllowed"] = false;
@@ -1026,6 +1039,7 @@ export class EditorCompletionContext {
     "currentMethod": string;
     "imports": string[];
     "triggerChar": string;
+    "accessOperator"?: string;
     "completionTriggerKind"?: number;
     "sessionId"?: string;
     "surfaceId"?: string;
@@ -1162,6 +1176,8 @@ export class EditorCompletionResult {
     "lspTriggerCharacters"?: string[];
     "lspResolveProvider"?: boolean;
     "lspCompletionAvailable"?: boolean;
+    "lspStatus"?: string;
+    "sourceStatuses"?: { [_ in string]?: string };
     "ghostText"?: string;
     "ghostConfidence"?: number;
     "showGhost": boolean;
@@ -1190,6 +1206,7 @@ export class EditorCompletionResult {
         const $$createField0_0 = $$createType36;
         const $$createField1_0 = $$createType37;
         const $$createField3_0 = $$createType0;
+        const $$createField7_0 = $$createType19;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("primary" in $$parsedSource) {
             $$parsedSource["primary"] = $$createField0_0($$parsedSource["primary"]);
@@ -1199,6 +1216,9 @@ export class EditorCompletionResult {
         }
         if ("lspTriggerCharacters" in $$parsedSource) {
             $$parsedSource["lspTriggerCharacters"] = $$createField3_0($$parsedSource["lspTriggerCharacters"]);
+        }
+        if ("sourceStatuses" in $$parsedSource) {
+            $$parsedSource["sourceStatuses"] = $$createField7_0($$parsedSource["sourceStatuses"]);
         }
         return new EditorCompletionResult($$parsedSource as Partial<EditorCompletionResult>);
     }
@@ -1930,6 +1950,38 @@ export class LanguagePrediction {
     }
 }
 
+export class LocalPreviewURL {
+    "url": string;
+    "filePath": string;
+    "projectPath": string;
+    "previewPath"?: string;
+    "siteRoot"?: string;
+    "mode"?: string;
+
+    /** Creates a new LocalPreviewURL instance. */
+    constructor($$source: Partial<LocalPreviewURL> = {}) {
+        if (!("url" in $$source)) {
+            this["url"] = "";
+        }
+        if (!("filePath" in $$source)) {
+            this["filePath"] = "";
+        }
+        if (!("projectPath" in $$source)) {
+            this["projectPath"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LocalPreviewURL instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LocalPreviewURL {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LocalPreviewURL($$parsedSource as Partial<LocalPreviewURL>);
+    }
+}
+
 export class MCPSettingsStatus {
     "settings": mcp$0.Settings;
     "tools": mcp$0.ToolSettingsEntry[];
@@ -2216,6 +2268,7 @@ export class PackagedOSAutoUpdateManifest {
     "channel"?: string;
     "version"?: string;
     "build"?: string;
+    "sequence"?: number;
     "artifacts"?: PackagedOSAutoUpdateArtifact[];
     "releaseNotes"?: string;
     "mandatory"?: boolean;
@@ -2235,14 +2288,14 @@ export class PackagedOSAutoUpdateManifest {
      * Creates a new PackagedOSAutoUpdateManifest instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSAutoUpdateManifest {
-        const $$createField3_0 = $$createType57;
-        const $$createField10_0 = $$createType58;
+        const $$createField4_0 = $$createType57;
+        const $$createField11_0 = $$createType58;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("artifacts" in $$parsedSource) {
-            $$parsedSource["artifacts"] = $$createField3_0($$parsedSource["artifacts"]);
+            $$parsedSource["artifacts"] = $$createField4_0($$parsedSource["artifacts"]);
         }
         if ("metadata" in $$parsedSource) {
-            $$parsedSource["metadata"] = $$createField10_0($$parsedSource["metadata"]);
+            $$parsedSource["metadata"] = $$createField11_0($$parsedSource["metadata"]);
         }
         return new PackagedOSAutoUpdateManifest($$parsedSource as Partial<PackagedOSAutoUpdateManifest>);
     }
@@ -2491,41 +2544,6 @@ export class PrimaryTextEditJSON {
             $$parsedSource["replace"] = $$createField3_0($$parsedSource["replace"]);
         }
         return new PrimaryTextEditJSON($$parsedSource as Partial<PrimaryTextEditJSON>);
-    }
-}
-
-export class PrivateUpdateAuthStatus {
-    "provider": string;
-    "repository"?: string;
-    "manifestSource"?: string;
-    "configured": boolean;
-    "source"?: string;
-    "envOverride": boolean;
-    "keychainService"?: string;
-    "keychainAccount"?: string;
-    "reason"?: string;
-
-    /** Creates a new PrivateUpdateAuthStatus instance. */
-    constructor($$source: Partial<PrivateUpdateAuthStatus> = {}) {
-        if (!("provider" in $$source)) {
-            this["provider"] = "";
-        }
-        if (!("configured" in $$source)) {
-            this["configured"] = false;
-        }
-        if (!("envOverride" in $$source)) {
-            this["envOverride"] = false;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new PrivateUpdateAuthStatus instance from a string or object.
-     */
-    static createFrom($$source: any = {}): PrivateUpdateAuthStatus {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new PrivateUpdateAuthStatus($$parsedSource as Partial<PrivateUpdateAuthStatus>);
     }
 }
 
@@ -2868,6 +2886,48 @@ export class ProjectWindowSessionPayload {
     }
 }
 
+export class RecentProjectIndexStatus {
+    "projectPath": string;
+    "phase": string;
+    "current": number;
+    "total": number;
+    "percent": number;
+    "error"?: string;
+    "updatedAt": string;
+
+    /** Creates a new RecentProjectIndexStatus instance. */
+    constructor($$source: Partial<RecentProjectIndexStatus> = {}) {
+        if (!("projectPath" in $$source)) {
+            this["projectPath"] = "";
+        }
+        if (!("phase" in $$source)) {
+            this["phase"] = "";
+        }
+        if (!("current" in $$source)) {
+            this["current"] = 0;
+        }
+        if (!("total" in $$source)) {
+            this["total"] = 0;
+        }
+        if (!("percent" in $$source)) {
+            this["percent"] = 0;
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = "0001-01-01T00:00:00.000Z";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RecentProjectIndexStatus instance from a string or object.
+     */
+    static createFrom($$source: any = {}): RecentProjectIndexStatus {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RecentProjectIndexStatus($$parsedSource as Partial<RecentProjectIndexStatus>);
+    }
+}
+
 export class ResultItemJS {
     "id": string;
     "icon": string;
@@ -3051,6 +3111,7 @@ export enum ShellCapabilityStatus {
 
 export class ShellMenuStatePayload {
     "hasSelection": boolean;
+    "aiPanelEnabled"?: boolean | null;
     "canCloseFullscreenPanel": boolean;
     "aiChatFullscreenActive": boolean;
     "canStopAgent": boolean;
@@ -3159,6 +3220,27 @@ export class SignatureInfo {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
         }
         return new SignatureInfo($$parsedSource as Partial<SignatureInfo>);
+    }
+}
+
+export class SystemFontFamily {
+    "family": string;
+
+    /** Creates a new SystemFontFamily instance. */
+    constructor($$source: Partial<SystemFontFamily> = {}) {
+        if (!("family" in $$source)) {
+            this["family"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SystemFontFamily instance from a string or object.
+     */
+    static createFrom($$source: any = {}): SystemFontFamily {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SystemFontFamily($$parsedSource as Partial<SystemFontFamily>);
     }
 }
 
@@ -3704,6 +3786,7 @@ export class Wails3SmokeRuntimeAssetFileProbe {
     "exists": boolean;
     "readable": boolean;
     "size": number;
+    "archs"?: string[];
 
     /** Creates a new Wails3SmokeRuntimeAssetFileProbe instance. */
     constructor($$source: Partial<Wails3SmokeRuntimeAssetFileProbe> = {}) {
@@ -3727,7 +3810,11 @@ export class Wails3SmokeRuntimeAssetFileProbe {
      * Creates a new Wails3SmokeRuntimeAssetFileProbe instance from a string or object.
      */
     static createFrom($$source: any = {}): Wails3SmokeRuntimeAssetFileProbe {
+        const $$createField4_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("archs" in $$parsedSource) {
+            $$parsedSource["archs"] = $$createField4_0($$parsedSource["archs"]);
+        }
         return new Wails3SmokeRuntimeAssetFileProbe($$parsedSource as Partial<Wails3SmokeRuntimeAssetFileProbe>);
     }
 }
@@ -3736,6 +3823,7 @@ export class Wails3SmokeRuntimeAssetsProbe {
     "assetsDir": string;
     "model": Wails3SmokeRuntimeAssetFileProbe;
     "tokenizer": Wails3SmokeRuntimeAssetFileProbe;
+    "onnxRuntime": Wails3SmokeRuntimeAssetFileProbe;
     "usingAppBundleResources": boolean;
     "status": ShellCapabilityStatus;
     "reason": string;
@@ -3750,6 +3838,9 @@ export class Wails3SmokeRuntimeAssetsProbe {
         }
         if (!("tokenizer" in $$source)) {
             this["tokenizer"] = (new Wails3SmokeRuntimeAssetFileProbe());
+        }
+        if (!("onnxRuntime" in $$source)) {
+            this["onnxRuntime"] = (new Wails3SmokeRuntimeAssetFileProbe());
         }
         if (!("usingAppBundleResources" in $$source)) {
             this["usingAppBundleResources"] = false;
@@ -3770,12 +3861,16 @@ export class Wails3SmokeRuntimeAssetsProbe {
     static createFrom($$source: any = {}): Wails3SmokeRuntimeAssetsProbe {
         const $$createField1_0 = $$createType88;
         const $$createField2_0 = $$createType88;
+        const $$createField3_0 = $$createType88;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("model" in $$parsedSource) {
             $$parsedSource["model"] = $$createField1_0($$parsedSource["model"]);
         }
         if ("tokenizer" in $$parsedSource) {
             $$parsedSource["tokenizer"] = $$createField2_0($$parsedSource["tokenizer"]);
+        }
+        if ("onnxRuntime" in $$parsedSource) {
+            $$parsedSource["onnxRuntime"] = $$createField3_0($$parsedSource["onnxRuntime"]);
         }
         return new Wails3SmokeRuntimeAssetsProbe($$parsedSource as Partial<Wails3SmokeRuntimeAssetsProbe>);
     }

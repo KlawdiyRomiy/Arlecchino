@@ -5,10 +5,6 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "/wails/runtime.js";
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as time$0 from "../../../time/models.js";
-
 export class Project {
     "id": number;
     "name": string;
@@ -19,8 +15,8 @@ export class Project {
      */
     "framework": string;
     "version": string;
-    "created_at": time$0.Time;
-    "last_opened": time$0.Time;
+    "created_at": string;
+    "last_opened": string;
     "is_favorite": boolean;
 
     /** Creates a new Project instance. */
@@ -41,10 +37,10 @@ export class Project {
             this["version"] = "";
         }
         if (!("created_at" in $$source)) {
-            this["created_at"] = null;
+            this["created_at"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("last_opened" in $$source)) {
-            this["last_opened"] = null;
+            this["last_opened"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("is_favorite" in $$source)) {
             this["is_favorite"] = false;
