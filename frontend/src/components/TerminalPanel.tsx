@@ -17,6 +17,7 @@ import "../styles/terminal.css";
 import { getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useTerminalStore } from "../stores/terminalStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import { shortcuts } from "../utils/keyboard";
 import {
   createEmptyTerminalSearchStats,
@@ -100,6 +101,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const activeProjectPath = useTerminalStore(
     (state) => state.activeProjectPath,
   );
+  const projectSwitchPending = useWorkspaceStore(
+    (state) => state.pendingId !== null,
+  );
+  const terminalSurfaceReady =
+    activeProjectPath !== null && !projectSwitchPending;
 
   useEffect(() => {
     let disposed = false;
@@ -939,7 +945,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const hasCreatedInitialTerminal = useRef(false);
 
   useEffect(() => {
-    if (!isInitialized || hasCreatedInitialTerminal.current) {
+    if (
+      !terminalSurfaceReady ||
+      !isInitialized ||
+      hasCreatedInitialTerminal.current
+    ) {
       return;
     }
 
@@ -954,7 +964,13 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     ).catch((err) => {
       setError(err?.message || "Failed to create terminal session");
     });
-  }, [createTerminal, isInitialized, panes, resolvedThemeId]);
+  }, [
+    createTerminal,
+    isInitialized,
+    panes,
+    resolvedThemeId,
+    terminalSurfaceReady,
+  ]);
 
   const attachTerminal = useCallback(
     (tabId: string, container: HTMLDivElement | null) => {
@@ -1606,11 +1622,13 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               <div
                 key={tabId}
                 ref={(el) => {
-                  if (el) {
-                    containerRefs.current.set(tabId, el);
-                    if (tabId === activeTabId) {
-                      attachTerminal(tabId, el);
-                    }
+                  if (!el) {
+                    containerRefs.current.delete(tabId);
+                    return;
+                  }
+                  containerRefs.current.set(tabId, el);
+                  if (tabId === activeTabId) {
+                    attachTerminal(tabId, el);
                   }
                 }}
                 style={{
@@ -1756,6 +1774,15 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       </div>
     );
   };
+
+  if (!terminalSurfaceReady) {
+    return (
+      <div
+        data-testid="terminal-panel"
+        style={{ height: "100%", width: "100%" }}
+      />
+    );
+  }
 
   // Calculate ghost text position based on cursor using relative units
   const getGhostTextStyle = (): {

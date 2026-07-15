@@ -306,6 +306,7 @@ const App: React.FC = () => {
     async (projectId: string, projectPath: string | null) => {
       const workspace = useWorkspaceStore.getState();
       workspace.confirmProjectSwitch(projectId);
+      useTerminalStore.getState().setActiveProject(projectPath);
       setFileToOpen(null);
 
       await waitForProjectSwitchVisualSettle();
@@ -318,9 +319,6 @@ const App: React.FC = () => {
         return false;
       }
 
-      settledWorkspace.completeProjectSwitch(projectId);
-      useTerminalStore.getState().setActiveProject(projectPath);
-      setFileToOpen(null);
       return true;
     },
     [],
@@ -583,6 +581,7 @@ const App: React.FC = () => {
         if (!isCurrentOperation || !switchFinished) {
           return;
         }
+        useWorkspaceStore.getState().completeProjectSwitch(id);
         await syncCurrentFramework();
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
@@ -670,6 +669,7 @@ const App: React.FC = () => {
         if (!isCurrentOperation || !switchFinished) {
           return;
         }
+        useWorkspaceStore.getState().completeProjectSwitch(openedProjectId);
         await syncCurrentFramework();
         if (!isProjectBackendOperationCurrent(operationId)) {
           return;
@@ -867,6 +867,7 @@ const App: React.FC = () => {
       if (!isCurrentOperation || !switchFinished) {
         return;
       }
+      useWorkspaceStore.getState().completeProjectSwitch(nextProject.id);
       await syncCurrentFramework();
       if (!isProjectBackendOperationCurrent(operationId)) {
         return;
