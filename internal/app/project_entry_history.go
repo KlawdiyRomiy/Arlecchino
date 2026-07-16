@@ -127,13 +127,15 @@ type projectEntryRenameOperation struct {
 }
 
 type projectEntryTrashOperation struct {
-	StashRoot string
-	Entries   []projectEntryTrashOperationEntry
+	StashRoot       string
+	UsesSystemTrash bool
+	Entries         []projectEntryTrashOperationEntry
 }
 
 type projectEntryTrashOperationEntry struct {
 	OriginalPath string
 	StashPath    string
+	TrashPath    string
 	IsDirectory  bool
 }
 
@@ -307,6 +309,9 @@ func (a *App) TrashProjectEntries(ctx context.Context, req ProjectEntryTrashRequ
 	if len(entries) == 0 {
 		return ProjectEntryTrashResult{}, fmt.Errorf("no entries selected")
 	}
+	if projectEntryUsesSystemTrash() {
+		return a.trashProjectEntriesToSystemTrash(root, session, entries)
+	}
 
 	operation := projectEntryOperation{
 		ID:        newProjectEntryOperationID(),
@@ -348,6 +353,52 @@ func (a *App) TrashProjectEntries(ctx context.Context, req ProjectEntryTrashRequ
 			StashPath:    entry.StashPath,
 			IsDirectory:  entry.IsDirectory,
 		})
+	}
+
+	session.projectEntryHistory.push(operation)
+	for _, entry := range entries {
+		a.pruneLSPDiagnosticsForProjectEntry(entry.Path)
+		a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{Path: entry.Path, IsDirectory: entry.IsDirectory})
+	}
+	return ProjectEntryTrashResult{Count: len(entries)}, nil
+}
+
+func (a *App) trashProjectEntriesToSystemTrash(root projectEntryResolvedRoot, session *ProjectRuntimeSession, entries []guardedTrashCandidate) (ProjectEntryTrashResult, error) {
+	operation := projectEntryOperation{
+		ID:        newProjectEntryOperationID(),
+		Kind:      "trash",
+		Label:     trashOperationLabel(entries),
+		CreatedAt: time.Now().UTC(),
+		Trash: &projectEntryTrashOperation{
+			UsesSystemTrash: true,
+			Entries:         make([]projectEntryTrashOperationEntry, 0, len(entries)),
+		},
+	}
+
+	moved := make([]projectEntryTrashOperationEntry, 0, len(entries))
+	for _, entry := range entries {
+		currentEntry, err := resolveProjectEntryPathInRoot(root, entry.Path, true)
+		if err != nil {
+			rollbackSystemTrashMoves(moved)
+			return ProjectEntryTrashResult{}, err
+		}
+		if err := validateUndoableTrashTarget(currentEntry); err != nil {
+			rollbackSystemTrashMoves(moved)
+			return ProjectEntryTrashResult{}, err
+		}
+
+		trashPath, err := trashProjectEntryWithResult(entry.Path, entry.IsDirectory)
+		if err != nil {
+			rollbackSystemTrashMoves(moved)
+			return ProjectEntryTrashResult{}, err
+		}
+		movedEntry := projectEntryTrashOperationEntry{
+			OriginalPath: entry.Path,
+			TrashPath:    trashPath,
+			IsDirectory:  entry.IsDirectory,
+		}
+		moved = append(moved, movedEntry)
+		operation.Trash.Entries = append(operation.Trash.Entries, movedEntry)
 	}
 
 	session.projectEntryHistory.push(operation)
@@ -440,6 +491,15 @@ func (a *App) applyProjectEntryUndo(root projectEntryResolvedRoot, op projectEnt
 		if op.Trash == nil {
 			return fmt.Errorf("trash operation is missing data")
 		}
+		if op.Trash.UsesSystemTrash {
+			if err := restoreTrashOperationEntriesFromSystemTrash(root, op.Trash); err != nil {
+				return err
+			}
+			for _, entry := range op.Trash.Entries {
+				a.emitEvent("project:entry:created", projectEntryCreatedEvent{Path: entry.OriginalPath, IsDirectory: entry.IsDirectory})
+			}
+			return nil
+		}
 		if err := renameTrashOperationEntries(root, *op.Trash, true); err != nil {
 			return err
 		}
@@ -502,6 +562,16 @@ func (a *App) applyProjectEntryRedo(root projectEntryResolvedRoot, op projectEnt
 	case "trash":
 		if op.Trash == nil {
 			return op, fmt.Errorf("trash operation is missing data")
+		}
+		if op.Trash.UsesSystemTrash {
+			if err := redoTrashOperationEntriesToSystemTrash(root, op.Trash); err != nil {
+				return op, err
+			}
+			for _, entry := range op.Trash.Entries {
+				a.pruneLSPDiagnosticsForProjectEntry(entry.OriginalPath)
+				a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{Path: entry.OriginalPath, IsDirectory: entry.IsDirectory})
+			}
+			return op, nil
 		}
 		if err := renameTrashOperationEntries(root, *op.Trash, false); err != nil {
 			return op, err
@@ -756,9 +826,13 @@ func prepareGuardedTrashCandidates(root projectEntryResolvedRoot, sessionID stri
 		}
 	}
 
-	stashRoot, err := selectProjectEntryUndoStashRoot(root, sessionID)
-	if err != nil {
-		return nil, err
+	stashRoot := ""
+	if !projectEntryUsesSystemTrash() {
+		var err error
+		stashRoot, err = selectProjectEntryUndoStashRoot(root, sessionID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	opID := newProjectEntryOperationID()
 	candidates := make([]guardedTrashCandidate, 0, len(deduped))
@@ -766,12 +840,16 @@ func prepareGuardedTrashCandidates(root projectEntryResolvedRoot, sessionID stri
 		if err := validateUndoableTrashTarget(target); err != nil {
 			return nil, err
 		}
-		stashName := fmt.Sprintf("%03d-%s", index, filepath.Base(target.Path))
+		stashPath := ""
+		if stashRoot != "" {
+			stashName := fmt.Sprintf("%03d-%s", index, filepath.Base(target.Path))
+			stashPath = filepath.Join(stashRoot, opID, stashName)
+		}
 		candidates = append(candidates, guardedTrashCandidate{
 			Path:        target.Path,
 			Relative:    target.Relative,
 			IsDirectory: target.IsDirectory,
-			StashPath:   filepath.Join(stashRoot, opID, stashName),
+			StashPath:   stashPath,
 		})
 	}
 	return candidates, nil
@@ -915,7 +993,7 @@ func (a *App) finalizeProjectEntryHistory(session *ProjectRuntimeSession) {
 	}
 	ops := session.projectEntryHistory.clear()
 	for _, op := range ops {
-		if op.Trash == nil {
+		if op.Trash == nil || op.Trash.UsesSystemTrash {
 			continue
 		}
 		for _, entry := range op.Trash.Entries {
@@ -1230,6 +1308,95 @@ func renameTrashOperationEntries(root projectEntryResolvedRoot, op projectEntryT
 		moved = append(moved, pair)
 	}
 	return nil
+}
+
+func restoreTrashOperationEntriesFromSystemTrash(root projectEntryResolvedRoot, op *projectEntryTrashOperation) error {
+	if op == nil || !op.UsesSystemTrash {
+		return fmt.Errorf("trash operation does not use the system trash")
+	}
+	for _, entry := range op.Entries {
+		if strings.TrimSpace(entry.TrashPath) == "" {
+			return fmt.Errorf("trash operation is missing the system Trash path")
+		}
+		if _, err := os.Lstat(entry.TrashPath); err != nil {
+			return fmt.Errorf("system Trash entry is unavailable: %w", err)
+		}
+		if _, err := resolveProjectEntryPathInRoot(root, entry.OriginalPath, false); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(entry.OriginalPath); err == nil {
+			return fmt.Errorf("entry already exists: %s", entry.OriginalPath)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	moved := make([]int, 0, len(op.Entries))
+	for index := range op.Entries {
+		entry := &op.Entries[index]
+		if err := restoreProjectEntryFromSystemTrash(entry.TrashPath, entry.OriginalPath); err != nil {
+			rollbackRestoredSystemTrashEntries(op, moved)
+			return err
+		}
+		moved = append(moved, index)
+	}
+	return nil
+}
+
+func redoTrashOperationEntriesToSystemTrash(root projectEntryResolvedRoot, op *projectEntryTrashOperation) error {
+	if op == nil || !op.UsesSystemTrash {
+		return fmt.Errorf("trash operation does not use the system trash")
+	}
+	for _, entry := range op.Entries {
+		resolvedEntry, err := resolveProjectEntryPathInRoot(root, entry.OriginalPath, true)
+		if err != nil {
+			return err
+		}
+		if err := validateUndoableTrashTarget(resolvedEntry); err != nil {
+			return err
+		}
+	}
+
+	moved := make([]int, 0, len(op.Entries))
+	for index := range op.Entries {
+		entry := &op.Entries[index]
+		trashPath, err := trashProjectEntryWithResult(entry.OriginalPath, entry.IsDirectory)
+		if err != nil {
+			rollbackSystemTrashRedoEntries(op, moved)
+			return err
+		}
+		entry.TrashPath = trashPath
+		moved = append(moved, index)
+	}
+	return nil
+}
+
+func rollbackSystemTrashMoves(moved []projectEntryTrashOperationEntry) {
+	for index := len(moved) - 1; index >= 0; index-- {
+		entry := moved[index]
+		_ = restoreProjectEntryFromSystemTrash(entry.TrashPath, entry.OriginalPath)
+	}
+}
+
+func rollbackRestoredSystemTrashEntries(op *projectEntryTrashOperation, moved []int) {
+	for index := len(moved) - 1; index >= 0; index-- {
+		entry := &op.Entries[moved[index]]
+		trashPath, err := trashProjectEntryWithResult(entry.OriginalPath, entry.IsDirectory)
+		if err == nil {
+			entry.TrashPath = trashPath
+		}
+	}
+}
+
+func rollbackSystemTrashRedoEntries(op *projectEntryTrashOperation, moved []int) {
+	for index := len(moved) - 1; index >= 0; index-- {
+		entry := &op.Entries[moved[index]]
+		_ = restoreProjectEntryFromSystemTrash(entry.TrashPath, entry.OriginalPath)
+	}
+}
+
+func projectEntryUsesSystemTrash() bool {
+	return goruntime.GOOS == "darwin"
 }
 
 func rollbackGuardedTrashMoves(moved []guardedTrashCandidate) {

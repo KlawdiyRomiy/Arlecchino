@@ -151,8 +151,10 @@ var gitAllowedSubcommands = map[string]struct{}{
 }
 
 var (
-	trashProjectEntry  = moveProjectEntryToTrash
-	revealProjectEntry = revealProjectEntryInFileManager
+	trashProjectEntry                  = moveProjectEntryToTrash
+	trashProjectEntryWithResult        = moveProjectEntryToTrashWithResult
+	restoreProjectEntryFromSystemTrash = moveProjectEntryFromSystemTrash
+	revealProjectEntry                 = revealProjectEntryInFileManager
 )
 
 func gitCommandTimeout(args []string) time.Duration {
@@ -1038,14 +1040,14 @@ func (a *App) resolveProjectEntryPath(path string) (entryPath string, projectPat
 }
 
 func moveProjectEntryToTrash(path string, isDirectory bool) error {
+	_, err := moveProjectEntryToTrashWithResult(path, isDirectory)
+	return err
+}
+
+func moveProjectEntryToTrashWithResult(path string, isDirectory bool) (string, error) {
 	switch goruntime.GOOS {
 	case "darwin":
-		script := fmt.Sprintf(`tell application "Finder" to delete POSIX file %q`, path)
-		output, err := exec.Command("osascript", "-e", script).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("move to Trash failed: %w (%s)", err, strings.TrimSpace(string(output)))
-		}
-		return nil
+		return moveProjectEntryToTrashOnDarwinWithResult(path)
 	case "windows":
 		command := buildWindowsTrashCommand(path, isDirectory)
 		output, err := exec.Command(
@@ -1056,16 +1058,23 @@ func moveProjectEntryToTrash(path string, isDirectory bool) error {
 			command,
 		).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("move to Recycle Bin failed: %w (%s)", err, strings.TrimSpace(string(output)))
+			return "", fmt.Errorf("move to Recycle Bin failed: %w (%s)", err, strings.TrimSpace(string(output)))
 		}
-		return nil
+		return "", nil
 	default:
 		output, err := exec.Command("gio", "trash", path).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("move to trash failed: %w (%s)", err, strings.TrimSpace(string(output)))
+			return "", fmt.Errorf("move to trash failed: %w (%s)", err, strings.TrimSpace(string(output)))
 		}
-		return nil
+		return "", nil
 	}
+}
+
+func moveProjectEntryFromSystemTrash(sourcePath string, targetPath string) error {
+	if goruntime.GOOS != "darwin" {
+		return fmt.Errorf("restoring a project entry from the system trash is unsupported on this platform")
+	}
+	return moveProjectEntryFromTrashOnDarwin(sourcePath, targetPath)
 }
 
 func revealProjectEntryInFileManager(path string) error {

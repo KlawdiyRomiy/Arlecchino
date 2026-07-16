@@ -70,15 +70,6 @@ const shouldBypassProjectEntryHistoryShortcut = (
   );
 };
 
-const isProjectEntryHistoryShortcutContext = (
-  activeElement: HTMLElement | null,
-): boolean => {
-  const scope = activeElement?.closest<HTMLElement>(
-    "[data-explorer-keyboard-scope='true']",
-  );
-  return Boolean(scope?.isConnected && scope.getClientRects().length > 0);
-};
-
 const AI_CHAT_FULLSCREEN_COMMAND_SHORTCUT_ACTIONS: Record<
   AIChatFullscreenCommand,
   ShortcutActionId
@@ -297,7 +288,6 @@ export const useMainLayoutKeyboardShortcuts = ({
         document.body.dataset.shortcutRecording !== "true" &&
         document.body.dataset.shellModalOpen !== "true" &&
         !document.querySelector("[data-shell-menu-content]") &&
-        isProjectEntryHistoryShortcutContext(activeElement) &&
         !shouldBypassProjectEntryHistoryShortcut(activeElement)
       ) {
         e.preventDefault();
