@@ -625,12 +625,14 @@ const WelcomeScreen: React.FC<{
         <div className="grid-bg opacity-70" />
 
         <div
-          className="absolute left-0 right-0 top-0 z-40 h-12"
-          style={{ "--wails-draggable": "drag" } as React.CSSProperties}
-        />
-        <div
-          className="absolute left-4 top-4 z-50 flex items-center gap-2"
-          style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
+          className="absolute inset-x-2 top-2 z-50 flex h-14 items-center gap-2 border-b border-transparent px-3"
+          style={
+            {
+              "--wails-draggable": "drag",
+              transform: "translateY(2px)",
+            } as React.CSSProperties
+          }
+          data-testid="welcome-window-controls-slot"
         >
           <WindowControls />
         </div>

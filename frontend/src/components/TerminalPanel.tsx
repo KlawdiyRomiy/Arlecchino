@@ -3,6 +3,8 @@ import ReactDOM from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import {
   ClipboardPaste,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Eraser,
   Plus,
@@ -1861,12 +1863,10 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     searchState.query.trim() === ""
       ? ""
       : searchState.noMatches
-        ? "no matches"
+        ? "0/0"
         : `${searchState.currentMatch}/${searchState.totalMatches}`;
-  const searchStatusColor = searchState.noMatches
-    ? "var(--status-error)"
-    : theme.textSecondary;
-
+  const hasTerminalSearchMatches =
+    searchState.totalMatches > 0 && !searchState.noMatches;
   return (
     <div
       data-testid="terminal-panel"
@@ -1923,103 +1923,81 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       )}
       {searchState.visible && (
         <div
+          className="terminal-search"
           data-terminal-search-root="true"
-          style={{
-            position: "absolute",
-            top: "10px",
-            right: "10px",
-            zIndex: 30,
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "6px",
-            borderRadius: 6,
-            border: `1px solid var(--border-default)`,
-            backgroundColor: "var(--surface-overlay)",
-            boxShadow: "var(--shadow-overlay)",
-          }}
+          role="search"
+          aria-label="Search terminal output"
         >
-          <input
-            data-terminal-search-input="true"
-            ref={searchInputRef}
-            value={searchState.query}
-            onChange={(event) => {
-              const query = event.target.value;
-              searchQueryRef.current = query;
-              setSearchState((prev) => ({ ...prev, query }));
-              findInTerminal(query, "next", "input");
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                findInTerminal(
-                  searchState.query,
-                  event.shiftKey ? "prev" : "next",
-                  "navigate",
-                );
-                return;
-              }
-
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeSearchPanel();
-              }
-            }}
-            placeholder="Find in terminal"
-            style={{
-              width: "220px",
-              height: "30px",
-              borderRadius: 6,
-              border: `1px solid var(--border-subtle)`,
-              backgroundColor: "var(--surface-1)",
-              color: theme.textPrimary,
-              padding: "0 10px",
-              fontSize: "12px",
-              fontFamily: "var(--ui-font-family)",
-            }}
-          />
-          {searchStatusText && (
-            <span
-              data-testid="terminal-search-status"
-              style={{
-                minWidth: "48px",
-                textAlign: "center",
-                fontSize: "11px",
-                color: searchStatusColor,
-                fontFamily: "var(--ui-font-family)",
+          <div className="terminal-search__field">
+            {searchState.query ? null : (
+              <Search className="terminal-search__icon" size={14} />
+            )}
+            <input
+              className="terminal-search__input"
+              data-terminal-search-input="true"
+              ref={searchInputRef}
+              value={searchState.query}
+              onChange={(event) => {
+                const query = event.target.value;
+                searchQueryRef.current = query;
+                setSearchState((prev) => ({ ...prev, query }));
+                findInTerminal(query, "next", "input");
               }}
-            >
-              {searchStatusText}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() =>
-              findInTerminal(searchState.query, "prev", "navigate")
-            }
-            style={actionBtnStyle}
-            title="Previous match"
-          >
-            ↑
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              findInTerminal(searchState.query, "next", "navigate")
-            }
-            style={actionBtnStyle}
-            title="Next match"
-          >
-            ↓
-          </button>
-          <button
-            type="button"
-            onClick={closeSearchPanel}
-            style={actionBtnStyle}
-            title="Close search"
-          >
-            <X size={12} />
-          </button>
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  findInTerminal(
+                    searchState.query,
+                    event.shiftKey ? "prev" : "next",
+                    "navigate",
+                  );
+                  return;
+                }
+
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeSearchPanel();
+                }
+              }}
+              placeholder="Search..."
+            />
+            {searchStatusText && (
+              <span
+                className="terminal-search__status"
+                data-testid="terminal-search-status"
+                aria-live="polite"
+              >
+                {searchStatusText}
+              </span>
+            )}
+            {hasTerminalSearchMatches && (
+              <div
+                className="terminal-search__navigation"
+                aria-label="Search result navigation"
+              >
+                <button
+                  className="terminal-search__button"
+                  type="button"
+                  onClick={() =>
+                    findInTerminal(searchState.query, "prev", "navigate")
+                  }
+                  title="Previous match"
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <button
+                  className="terminal-search__button"
+                  type="button"
+                  onClick={() =>
+                    findInTerminal(searchState.query, "next", "navigate")
+                  }
+                  title="Next match"
+                >
+                  <ChevronDown size={16} />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
