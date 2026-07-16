@@ -97,8 +97,8 @@ const restartLSPServerFromNotification = (
         message: failure.message,
         details: failure.details,
         progress: undefined,
-        sticky: true,
-        timeoutMs: 0,
+        sticky: false,
+        timeoutMs: 10_000,
         minimized: false,
       });
     });
@@ -123,8 +123,8 @@ const publishLSPRuntimeNotification = (status: DiagnosticsRuntimeStatus) => {
     detailsLabel: "Runtime details",
     source: "LSP",
     tag: language,
-    sticky: true,
-    timeoutMs: 0,
+    sticky: false,
+    timeoutMs: 10_000,
     action: {
       label: "Restart",
       run: () => restartLSPServerFromNotification(notificationId, language),

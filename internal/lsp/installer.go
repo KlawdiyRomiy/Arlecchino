@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,6 +48,16 @@ var serverBinaryAliases = map[string][]string{
 }
 
 const lspInstallStatusCacheTTL = 30 * time.Second
+
+const (
+	sqlLanguageServerPackage         = "sql-language-server@1.7.1"
+	sqlLanguageServerProtocolPackage = "vscode-languageserver-protocol@3.16.0"
+	sqlLanguageServerJSONRPCPackage  = "vscode-jsonrpc@6.0.0"
+	sqlLanguageServerInstallCmd      = "Arlecchino-managed Node environment: " + sqlLanguageServerPackage + " " + sqlLanguageServerProtocolPackage + " " + sqlLanguageServerJSONRPCPackage
+	cmakeLanguageServerPackage       = "cmake-language-server==0.1.11"
+	cmakeLanguageServerPyglsPackage  = "pygls==1.3.1"
+	cmakeLanguageServerInstallCmd    = "Arlecchino-managed Python environment: " + cmakeLanguageServerPackage + " " + cmakeLanguageServerPyglsPackage
+)
 
 type installStatusCacheEntry struct {
 	installed bool
@@ -144,7 +155,7 @@ func (i *Installer) registerServers() {
 		{ID: "kotlin-language-server", Name: "Kotlin Language Server", Languages: []string{"kotlin"}, Extensions: []string{".kt", ".kts"}, InstallType: "binary", InstallCmd: "Download from https://github.com/fwcd/kotlin-language-server/releases", BinaryName: "kotlin-language-server", CanInstall: false},
 		{ID: "graphql-lsp", Name: "GraphQL Language Server", Languages: []string{"graphql"}, Extensions: []string{".graphql", ".gql"}, InstallType: "npm", InstallCmd: "npm install -g graphql-language-service-cli", BinaryName: "graphql-lsp", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "terraform-ls", Name: "Terraform Language Server", Languages: []string{"terraform", "hcl"}, Extensions: []string{".tf", ".tfvars", ".hcl"}, InstallType: "binary", InstallCmd: "Download from https://releases.hashicorp.com/terraform-ls/", BinaryName: "terraform-ls", CanInstall: false},
-		{ID: "sql-language-server", Name: "SQL Language Server", Languages: []string{"sql"}, Extensions: []string{".sql"}, InstallType: "npm", InstallCmd: "npm install -g sql-language-server", BinaryName: "sql-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
+		{ID: "sql-language-server", Name: "SQL Language Server", Languages: []string{"sql"}, Extensions: []string{".sql"}, InstallType: "npm-managed", InstallCmd: sqlLanguageServerInstallCmd, BinaryName: "sql-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "jdtls", Name: "Java Language Server", Languages: []string{"java"}, Extensions: []string{".java"}, InstallType: "binary", InstallCmd: "Download from https://download.eclipse.org/jdtls/", BinaryName: "jdtls", CanInstall: false},
 		{ID: "omnisharp", Name: "C# Language Server", Languages: []string{"csharp"}, Extensions: []string{".cs", ".csx"}, InstallType: "binary", InstallCmd: "Download from https://github.com/OmniSharp/omnisharp-roslyn/releases", BinaryName: "omnisharp", CanInstall: false},
 		{ID: "metals", Name: "Scala Language Server", Languages: []string{"scala"}, Extensions: []string{".scala", ".sc"}, InstallType: "binary", InstallCmd: "cs install metals", BinaryName: "metals", CanInstall: false},
@@ -156,7 +167,7 @@ func (i *Installer) registerServers() {
 		{ID: "clojure-lsp", Name: "Clojure Language Server", Languages: []string{"clojure"}, Extensions: []string{".clj", ".cljs", ".cljc", ".edn"}, InstallType: "binary", InstallCmd: "brew install clojure-lsp/brew/clojure-lsp-native", BinaryName: "clojure-lsp", CanInstall: false},
 		{ID: "lemminx", Name: "XML Language Server", Languages: []string{"xml"}, Extensions: []string{".xml", ".xsl", ".xsd", ".svg", ".wsdl"}, InstallType: "binary", InstallCmd: "Download from https://github.com/eclipse/lemminx/releases", BinaryName: "lemminx", CanInstall: false},
 		{ID: "texlab", Name: "LaTeX Language Server", Languages: []string{"latex", "bibtex"}, Extensions: []string{".tex", ".ltx", ".sty", ".cls", ".bib"}, InstallType: "cargo", InstallCmd: "cargo install texlab", BinaryName: "texlab", CanInstall: true, Dependencies: []string{"cargo"}},
-		{ID: "cmake-language-server", Name: "CMake Language Server", Languages: []string{"cmake"}, Extensions: []string{"CMakeLists.txt", ".cmake"}, InstallType: "pip", InstallCmd: "pip install cmake-language-server", BinaryName: "cmake-language-server", CanInstall: true, Dependencies: []string{"pip"}},
+		{ID: "cmake-language-server", Name: "CMake Language Server", Languages: []string{"cmake"}, Extensions: []string{"CMakeLists.txt", ".cmake"}, InstallType: "python-venv", InstallCmd: cmakeLanguageServerInstallCmd, BinaryName: "cmake-language-server", CanInstall: true, Dependencies: []string{"python3", "cmake"}},
 		{ID: "fortls", Name: "Fortran Language Server", Languages: []string{"fortran"}, Extensions: []string{".f", ".for", ".f90", ".f95"}, InstallType: "pip", InstallCmd: "pip install fortran-language-server", BinaryName: "fortls", CanInstall: true, Dependencies: []string{"pip"}},
 		{ID: "erlang-ls", Name: "Erlang Language Server", Languages: []string{"erlang"}, Extensions: []string{".erl", ".hrl"}, InstallType: "binary", InstallCmd: "Download from https://github.com/erlang-ls/erlang_ls/releases", BinaryName: "erlang_ls", CanInstall: false},
 		{ID: "groovy-language-server", Name: "Groovy Language Server", Languages: []string{"groovy"}, Extensions: []string{".groovy", ".gradle"}, InstallType: "binary", InstallCmd: "Download from https://github.com/GroovyLanguageServer/groovy-language-server/releases", BinaryName: "groovy-language-server", CanInstall: false},
@@ -239,12 +250,8 @@ func registryInstallCommand(id string) []string {
 		return []string{"gem", "install", "solargraph"}
 	case "graphql-lsp":
 		return []string{"npm", "install", "-g", "graphql-language-service-cli"}
-	case "sql-language-server":
-		return []string{"npm", "install", "-g", "sql-language-server"}
 	case "texlab":
 		return []string{"cargo", "install", "texlab"}
-	case "cmake-language-server":
-		return []string{"pip", "install", "cmake-language-server"}
 	case "fortls":
 		return []string{"pip", "install", "fortran-language-server"}
 	case "solidity-ls":
@@ -358,6 +365,16 @@ func binaryPathCandidates(rootPath, lspDir, serverID string, binaryNames []strin
 	}
 	if lspDir != "" && serverID != "" {
 		addNames(lspDir, serverID)
+		addNames(lspDir, serverID, "bin")
+		addNames(lspDir, serverID, "Scripts")
+		addNames(lspDir, serverID, "node_modules", ".bin")
+		if runtime.GOOS == "windows" {
+			for _, binaryName := range binaryNames {
+				if !strings.HasSuffix(strings.ToLower(binaryName), ".exe") {
+					add(lspDir, serverID, "Scripts", binaryName+".exe")
+				}
+			}
+		}
 	}
 	for _, binaryName := range binaryNames {
 		if path, err := exec.LookPath(binaryName); err == nil {
@@ -560,10 +577,14 @@ func (i *Installer) runInstall(ctx context.Context, server *LSPInfo) error {
 	switch server.InstallType {
 	case "npm":
 		err = i.installNPM(ctx, server, execution)
+	case "npm-managed":
+		err = i.installManagedNPM(ctx, server, execution)
 	case "go":
 		err = i.installGo(ctx, server, execution)
 	case "pip":
 		err = i.installPip(ctx, server, execution)
+	case "python-venv":
+		err = i.installPythonVenv(ctx, server, execution)
 	case "composer":
 		err = i.installComposer(ctx, server, execution)
 	case "phar":
@@ -762,6 +783,67 @@ func (i *Installer) installNPM(ctx context.Context, server *LSPInfo, execution i
 	return nil
 }
 
+func (i *Installer) installManagedNPM(ctx context.Context, server *LSPInfo, execution installExecution) error {
+	if server.ID != "sql-language-server" {
+		return fmt.Errorf("unsupported managed npm install for %s", server.ID)
+	}
+
+	npmPath := execution.tools["npm"]
+	if npmPath == "" {
+		return fmt.Errorf("missing dependency npm: install it first")
+	}
+
+	installDir := filepath.Join(i.lspDir, server.ID)
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return fmt.Errorf("failed to create SQL language server directory: %w", err)
+	}
+	if err := writeManagedSQLPackageManifest(installDir); err != nil {
+		return err
+	}
+
+	i.emitProgress(server.ID, "installing", 20, "Installing managed SQL language server...", "")
+	if err := runInstallCommandInDir(
+		ctx,
+		"SQL language server install failed",
+		[]string{npmPath, "install", "--no-audit", "--no-fund"},
+		execution.env,
+		installDir,
+	); err != nil {
+		return err
+	}
+
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
+	return nil
+}
+
+func writeManagedSQLPackageManifest(installDir string) error {
+	manifest := struct {
+		Name         string            `json:"name"`
+		Private      bool              `json:"private"`
+		Dependencies map[string]string `json:"dependencies"`
+		Overrides    map[string]string `json:"overrides"`
+	}{
+		Name:    "arlecchino-sql-language-server",
+		Private: true,
+		Dependencies: map[string]string{
+			"sql-language-server": "1.7.1",
+		},
+		Overrides: map[string]string{
+			"vscode-jsonrpc":                 "6.0.0",
+			"vscode-languageserver-protocol": "3.16.0",
+		},
+	}
+
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode SQL language server manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(installDir, "package.json"), append(encoded, '\n'), 0644); err != nil {
+		return fmt.Errorf("failed to write SQL language server manifest: %w", err)
+	}
+	return nil
+}
+
 func (i *Installer) installGo(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running go install...", "")
 
@@ -782,6 +864,117 @@ func (i *Installer) installPip(ctx context.Context, server *LSPInfo, execution i
 
 	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
+}
+
+func (i *Installer) installPythonVenv(ctx context.Context, server *LSPInfo, execution installExecution) error {
+	if server.ID != "cmake-language-server" {
+		return fmt.Errorf("unsupported Python environment install for %s", server.ID)
+	}
+
+	pythonPath, err := findCompatibleCMakePython(ctx, execution.tools["python3"], execution.env)
+	if err != nil {
+		return err
+	}
+	if pythonPath == "" {
+		return fmt.Errorf("missing dependency python3: install it first")
+	}
+
+	venvDir, venvPython, _ := pythonVenvPaths(i.lspDir, server.ID, server.BinaryName)
+	if err := os.MkdirAll(i.lspDir, 0755); err != nil {
+		return fmt.Errorf("failed to create LSP directory: %w", err)
+	}
+
+	i.emitProgress(server.ID, "installing", 15, "Creating isolated Python environment...", "")
+	if err := runInstallCommand(
+		ctx,
+		"Python environment setup failed",
+		[]string{pythonPath, "-m", "venv", "--clear", venvDir},
+		execution.env,
+	); err != nil {
+		return err
+	}
+
+	i.emitProgress(server.ID, "installing", 55, "Installing CMake language server...", "")
+	if err := runInstallCommand(
+		ctx,
+		"CMake language server install failed",
+		[]string{
+			venvPython,
+			"-m",
+			"pip",
+			"install",
+			"--disable-pip-version-check",
+			"--upgrade",
+			cmakeLanguageServerPackage,
+			cmakeLanguageServerPyglsPackage,
+		},
+		execution.env,
+	); err != nil {
+		return err
+	}
+
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
+	return nil
+}
+
+func pythonVenvPaths(lspDir, serverID, binaryName string) (string, string, string) {
+	venvDir := filepath.Join(lspDir, serverID)
+	if runtime.GOOS == "windows" {
+		binaryPath := filepath.Join(venvDir, "Scripts", binaryName)
+		if !strings.HasSuffix(strings.ToLower(binaryPath), ".exe") {
+			binaryPath += ".exe"
+		}
+		return venvDir, filepath.Join(venvDir, "Scripts", "python.exe"), binaryPath
+	}
+	return venvDir, filepath.Join(venvDir, "bin", "python"), filepath.Join(venvDir, "bin", binaryName)
+}
+
+func findCompatibleCMakePython(ctx context.Context, preferredPath string, env []string) (string, error) {
+	candidates := []string{preferredPath}
+	for minor := 12; minor >= 8; minor-- {
+		if resolution := toolchain.ResolveExecutable("", "", fmt.Sprintf("python3.%d", minor)); resolution.Available() {
+			candidates = append(candidates, resolution.Path)
+		}
+	}
+	for _, dir := range toolchain.RuntimeDirs() {
+		candidates = append(candidates, filepath.Join(dir, "python3"))
+	}
+
+	for _, candidate := range uniqueStrings(candidates) {
+		if !executableFileExists(candidate) {
+			continue
+		}
+		major, minor, err := pythonVersion(ctx, candidate, env)
+		if err != nil {
+			continue
+		}
+		if cmakeLanguageServerSupportsPython(major, minor) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("CMake language server requires Python >= 3.8 and < 3.13; install a compatible Python 3 version and retry")
+}
+
+func cmakeLanguageServerSupportsPython(major, minor int) bool {
+	return major == 3 && minor >= 8 && minor < 13
+}
+
+func pythonVersion(ctx context.Context, pythonPath string, env []string) (int, int, error) {
+	cmd := exec.CommandContext(ctx, pythonPath, "--version")
+	if len(env) > 0 {
+		cmd.Env = env
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var major, minor int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "Python %d.%d", &major, &minor); err != nil {
+		return 0, 0, err
+	}
+	return major, minor, nil
 }
 
 func (i *Installer) installComposer(ctx context.Context, server *LSPInfo, execution installExecution) error {
@@ -884,10 +1077,17 @@ func (i *Installer) installBrew(ctx context.Context, server *LSPInfo, execution 
 }
 
 func runInstallCommand(ctx context.Context, label string, parts []string, env []string) error {
+	return runInstallCommandInDir(ctx, label, parts, env, "")
+}
+
+func runInstallCommandInDir(ctx context.Context, label string, parts []string, env []string, dir string) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("%s: empty command", label)
 	}
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	if strings.TrimSpace(dir) != "" {
+		cmd.Dir = dir
+	}
 	if len(env) > 0 {
 		cmd.Env = env
 	}

@@ -51,7 +51,6 @@ var serverArgsByID = map[string][]string{
 	"groovy-language-server":      {"--stdio"},
 	"perlnavigator":               {"--stdio"},
 	"bufls":                       {"serve"},
-	"cmake-language-server":       {"--stdio"},
 	"texlab":                      {"--stdio"},
 	"solidity-ls":                 {"--stdio"},
 	"wgsl-analyzer":               {"--stdio"},
@@ -100,8 +99,10 @@ func initParamsForServer(rootPath, serverID string) map[string]any {
 	case "astro-ls":
 		if tsdk := findTypeScriptSDK(rootPath); tsdk != "" {
 			return map[string]any{
-				"typescript": map[string]any{
-					"tsdk": tsdk,
+				"initializationOptions": map[string]any{
+					"typescript": map[string]any{
+						"tsdk": tsdk,
+					},
 				},
 			}
 		}
@@ -249,7 +250,7 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 		{"groovy", "groovy-language-server", []string{"--stdio"}, nil, nil, ""},
 		{"perl", "perlnavigator", []string{"--stdio"}, nil, nil, ""},
 		{"protobuf", "bufls", []string{"serve"}, nil, nil, ""},
-		{"cmake", "cmake-language-server", []string{"--stdio"}, nil, nil, ""},
+		{"cmake", "cmake-language-server", argsForServer("cmake-language-server"), nil, nil, ""},
 		{"latex", "texlab", []string{"--stdio"}, nil, nil, ""},
 		{"solidity", "nomicfoundation-solidity-language-server", []string{"--stdio"}, nil, nil, ""},
 		{"wgsl", "wgsl-analyzer", []string{"--stdio"}, nil, nil, ""},

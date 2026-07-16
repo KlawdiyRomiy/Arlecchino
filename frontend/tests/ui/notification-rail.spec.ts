@@ -236,6 +236,13 @@ test("notification rail stays above modal overlay surfaces", async ({
     .poll(() =>
       stack.evaluate((element) => element.parentElement === document.body),
     )
+    .toBe(false);
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("app-notification-surface")
+        .evaluate((element) => element.parentElement === document.body),
+    )
     .toBe(true);
 
   const zIndex = await stack.evaluate((element) =>
@@ -296,4 +303,100 @@ test("notification rail uses opacity-only motion when reduced motion is requeste
     (element) => getComputedStyle(element).transform,
   );
   expect(transform).toBe("none");
+});
+
+test("notification rail scales with UI and keeps long output dismissible", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(1.25);
+
+    const { useAppNotificationStore } =
+      await import("/src/stores/appNotificationStore.ts");
+    const store = useAppNotificationStore.getState();
+    store.clearNotifications();
+    store.addNotification({
+      id: "long-output",
+      kind: "error",
+      title: "CMake LSP error",
+      message: "trace line\n".repeat(1_000),
+      sticky: false,
+      timeoutMs: 20,
+    });
+  });
+
+  const card = page.getByTestId("app-notification-long-output");
+  const dismiss = page.getByRole("button", {
+    name: "Dismiss CMake LSP error",
+  });
+  await expect(card).toBeVisible();
+  await expect(dismiss).toBeVisible();
+
+  const viewport = page.viewportSize();
+  const cardBox = await card.boundingBox();
+  expect(viewport).not.toBeNull();
+  expect(cardBox).not.toBeNull();
+  expect(cardBox!.width).toBeGreaterThan(600);
+  expect(cardBox!.y).toBeGreaterThanOrEqual(0);
+  expect(cardBox!.y + cardBox!.height).toBeLessThanOrEqual(viewport!.height);
+
+  await expect(card).toHaveCount(0, { timeout: 1_000 });
+});
+
+test("notification rail scrolls long runtime details without hiding dismiss", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const { useAppNotificationStore } =
+      await import("/src/stores/appNotificationStore.ts");
+    const store = useAppNotificationStore.getState();
+    store.clearNotifications();
+    store.addNotification({
+      id: "runtime-output",
+      kind: "error",
+      title: "SQL LSP error",
+      message: "The language server exited unexpectedly.",
+      details: "stack trace line\n".repeat(1_000),
+      detailsLabel: "Runtime details",
+      sticky: true,
+      timeoutMs: 0,
+    });
+  });
+
+  const card = page.getByTestId("app-notification-runtime-output");
+  const body = page.getByTestId("app-notification-body-runtime-output");
+  const footer = page.getByTestId("app-notification-footer-runtime-output");
+  const dismiss = page.getByRole("button", {
+    name: "Dismiss SQL LSP error",
+  });
+  await expect(card).toBeVisible();
+  await page.getByRole("button", { name: "Runtime details" }).click();
+  await expect(body).toBeVisible();
+  await expect(footer).toBeVisible();
+  await expect(dismiss).toBeVisible();
+
+  const footerBoxBeforeScroll = await footer.boundingBox();
+  const scrollMetrics = await body.evaluate((element) => {
+    const container = element as HTMLDivElement;
+    container.scrollTop = 240;
+    return {
+      clientHeight: container.clientHeight,
+      scrollHeight: container.scrollHeight,
+      scrollTop: container.scrollTop,
+    };
+  });
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(
+    scrollMetrics.clientHeight,
+  );
+  expect(scrollMetrics.scrollTop).toBeGreaterThan(0);
+  const footerBoxAfterScroll = await footer.boundingBox();
+  expect(footerBoxBeforeScroll).not.toBeNull();
+  expect(footerBoxAfterScroll).not.toBeNull();
+  expect(footerBoxAfterScroll!.y).toBe(footerBoxBeforeScroll!.y);
+  expect(
+    await body.evaluate((element) => getComputedStyle(element).scrollbarGutter),
+  ).not.toBe("stable");
+  await expect(dismiss).toBeVisible();
 });

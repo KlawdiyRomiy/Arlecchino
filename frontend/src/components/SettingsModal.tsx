@@ -2146,12 +2146,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           const lspMissingDependency = /missing dependency/i.test(lspError);
           const lspActive = capability.lspRunning;
           const lspInstalled = capability.lspInstalled;
+          const lspNeedsRepair =
+            lspInstalled && Boolean(lspError) && !lspInstalling;
           const lspAvailable = capability.sources.lspAvailable;
           const lspLabel = !capability.sources.lspDeclared
             ? "No LSP"
             : lspInstalling
               ? "Installing"
-              : lspError && !lspInstalled
+              : lspError
                 ? lspMissingDependency
                   ? "Missing dependency"
                   : "Error"
@@ -2167,7 +2169,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           const showInstallButton =
             capability.sources.lspDeclared &&
             capability.lspCanInstall &&
-            !lspInstalled;
+            (!lspInstalled || lspNeedsRepair);
           const canInstall = showInstallButton && !lspInstalling;
           const installMessage =
             installEvent?.message || capability.lspInstallMessage || "";
@@ -2179,8 +2181,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           const installTypeLabel =
             installType === "brew"
               ? "Homebrew"
-              : installType
-                ? installType.toUpperCase()
+              : installType === "python-venv"
+                ? "Python venv"
+                : installType === "npm-managed"
+                  ? "Managed Node"
+                : installType
+                  ? installType.toUpperCase()
                 : "";
           const installDependencies = capability.lspInstallDependencies ?? [];
           const installUnavailableReason =
@@ -2276,10 +2282,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     {lspInstalling ? (
                       <RefreshCw size={14} className="animate-spin" />
+                    ) : lspNeedsRepair ? (
+                      <RefreshCw size={14} />
                     ) : (
                       <Plus size={14} />
                     )}
-                    {lspInstalling ? "Installing" : "Install LSP"}
+                    {lspInstalling
+                      ? "Installing"
+                      : lspNeedsRepair
+                        ? "Repair LSP"
+                        : "Install LSP"}
                   </button>
                 ) : null}
               </div>

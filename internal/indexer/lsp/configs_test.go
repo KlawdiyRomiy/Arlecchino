@@ -29,6 +29,36 @@ func TestConfigsFromInstallerUsesProjectLocalPhpactor(t *testing.T) {
 	t.Fatalf("expected php config from project-local phpactor")
 }
 
+func TestCMakeLanguageServerUsesImplicitStdio(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	installer, err := lspregistry.NewInstaller(nil)
+	if err != nil {
+		t.Fatalf("NewInstaller: %v", err)
+	}
+	wantCommand := writeConfigTestExecutable(
+		t,
+		filepath.Join(installer.GetLSPDir(), "cmake-language-server", "bin"),
+		"cmake-language-server",
+	)
+
+	configs := ConfigsFromInstaller(t.TempDir(), installer)
+	for _, cfg := range configs {
+		if cfg.Language != "cmake" {
+			continue
+		}
+		if cfg.Command != wantCommand {
+			t.Fatalf("cmake command = %q, want %q", cfg.Command, wantCommand)
+		}
+		if len(cfg.Args) != 0 {
+			t.Fatalf("cmake args = %q, want no arguments", cfg.Args)
+		}
+		return
+	}
+	t.Fatal("expected CMake config from the managed language server")
+}
+
 func TestFindExecutableDoesNotReturnPhantomCommand(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("HOME", t.TempDir())

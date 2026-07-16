@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AnimatePresence,
@@ -20,12 +20,17 @@ import {
   type AppNotification,
   useAppNotificationStore,
 } from "../../stores/appNotificationStore";
+import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { radius, zIndex } from "../../styles/colors";
+import { clampUiScale } from "../../utils/uiScale";
 
 const visibleNotificationLimit = 4;
 const collapsedStackOffset = 12;
 const expandedStackOffset = 166;
 const primaryRailHeight = 178;
+const notificationViewportInset = 76;
+const minimumNotificationCardHeight = 128;
+const maximumNotificationCardHeight = 520;
 
 const kindAccent: Record<AppNotification["kind"], string> = {
   info: "var(--status-info)",
@@ -68,12 +73,31 @@ const railVariants: Variants = {
 };
 
 const stackStyle: React.CSSProperties = {
-  position: "fixed",
+  position: "absolute",
   right: "calc(24px + env(safe-area-inset-right, 0px))",
   bottom: "calc(58px + env(safe-area-inset-bottom, 0px))",
-  width: "min(520px, calc(100vw - 40px))",
+  width: "min(520px, calc(100% - 40px))",
   pointerEvents: "none",
   zIndex: zIndex.notification,
+};
+
+const getNotificationSurfaceStyle = (uiScale: number): React.CSSProperties => ({
+  position: "fixed",
+  right: 0,
+  bottom: 0,
+  width: `${100 / uiScale}%`,
+  height: `${100 / uiScale}%`,
+  transform: `scale(${uiScale})`,
+  transformOrigin: "bottom right",
+  pointerEvents: "none",
+  zIndex: zIndex.notification,
+});
+
+const getLogicalViewportHeight = (uiScale: number): number => {
+  if (typeof window === "undefined") {
+    return maximumNotificationCardHeight + notificationViewportInset;
+  }
+  return window.innerHeight / uiScale;
 };
 
 const cardBaseStyle: React.CSSProperties = {
@@ -97,6 +121,8 @@ const contentBaseStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "32px minmax(0, 1fr) 28px",
   columnGap: "12px",
+  height: "100%",
+  minHeight: 0,
   position: "relative",
   zIndex: 1,
 };
@@ -229,11 +255,12 @@ const footerActionsStyle: React.CSSProperties = {
 };
 
 const footerRowStyle: React.CSSProperties = {
-  marginTop: "16px",
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
   gap: "12px",
+  minWidth: 0,
+  paddingTop: "12px",
 };
 
 const timeStyle: React.CSSProperties = {
@@ -245,8 +272,6 @@ const timeStyle: React.CSSProperties = {
 
 const detailsPanelStyle: React.CSSProperties = {
   marginTop: "12px",
-  maxHeight: "168px",
-  overflow: "auto",
   border: "1px solid var(--border-subtle)",
   borderRadius: "14px",
   padding: "10px 12px",
@@ -256,6 +281,23 @@ const detailsPanelStyle: React.CSSProperties = {
   lineHeight: 1.45,
   whiteSpace: "pre-wrap",
   overflowWrap: "anywhere",
+};
+
+const notificationBodyStyle: React.CSSProperties = {
+  minWidth: 0,
+  minHeight: 0,
+  overflowY: "auto",
+  overscrollBehavior: "contain",
+  paddingRight: "8px",
+  WebkitOverflowScrolling: "touch",
+};
+
+const notificationColumnStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateRows: "minmax(0, 1fr) auto",
+  minWidth: 0,
+  minHeight: 0,
+  height: "100%",
 };
 
 const getIconBubbleStyle = (
@@ -341,6 +383,7 @@ interface NotificationCardProps {
   reducedMotion: boolean;
   visibleCount: number;
   detailsExpanded: boolean;
+  maxCardHeight: number;
   onDismiss: (id: string) => void;
   onMinimize: (id: string) => void;
   onToggleDetails: (id: string) => void;
@@ -353,10 +396,17 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
   reducedMotion,
   visibleCount,
   detailsExpanded,
+  maxCardHeight,
   onDismiss,
   onMinimize,
   onToggleDetails,
 }) => {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
+  const [cardHeight, setCardHeight] = useState(() =>
+    Math.min(primaryRailHeight, maxCardHeight),
+  );
+
   useEffect(() => {
     if (notification.sticky || notification.timeoutMs <= 0) {
       return;
@@ -390,6 +440,44 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
   );
   const hasDetails = Boolean(notification.details);
 
+  useLayoutEffect(() => {
+    if (!isReadable) {
+      return;
+    }
+
+    const body = bodyRef.current;
+    const footer = footerRef.current;
+    if (!body || !footer) {
+      return;
+    }
+
+    const updateHeight = () => {
+      const nextHeight = Math.min(
+        maxCardHeight,
+        Math.max(
+          primaryRailHeight,
+          body.scrollHeight + footer.scrollHeight + 44,
+        ),
+      );
+      setCardHeight((current) =>
+        Math.abs(current - nextHeight) < 1 ? current : nextHeight,
+      );
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(body);
+    observer.observe(footer);
+    return () => observer.disconnect();
+  }, [
+    detailsExpanded,
+    isReadable,
+    maxCardHeight,
+    notification.details,
+    notification.message,
+    notification.title,
+  ]);
+
   return (
     <motion.div
       custom={motionState}
@@ -407,7 +495,11 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
       data-notification-state={isReadable ? "expanded" : "collapsed"}
       style={{
         ...cardBaseStyle,
-        minHeight: isReadable ? `${primaryRailHeight}px` : "68px",
+        height: isReadable ? `${cardHeight}px` : "68px",
+        minHeight: isReadable
+          ? `${Math.min(primaryRailHeight, maxCardHeight)}px`
+          : "68px",
+        maxHeight: isReadable ? `${maxCardHeight}px` : "68px",
         position: "absolute",
         right: 0,
         bottom: reducedMotion ? `${index * stackOffset}px` : 0,
@@ -419,31 +511,43 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
         style={{
           ...contentBaseStyle,
           padding: isReadable ? "18px 16px 26px 24px" : "13px 14px 18px 24px",
+          boxSizing: "border-box",
         }}
       >
         <div style={getIconBubbleStyle(notification.kind)}>
           {getIcon(notification, reducedMotion)}
         </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={headerRowStyle}>
-            {notification.source ? (
-              <div style={sourceStyle}>{notification.source}</div>
+        <div style={notificationColumnStyle}>
+          <div
+            ref={bodyRef}
+            className={isReadable ? "app-notification-scroll-body" : undefined}
+            data-testid={`app-notification-body-${notification.id}`}
+            style={isReadable ? notificationBodyStyle : { minWidth: 0 }}
+          >
+            <div style={headerRowStyle}>
+              {notification.source ? (
+                <div style={sourceStyle}>{notification.source}</div>
+              ) : null}
+              {notification.tag ? (
+                <div style={tagChipStyle}>{notification.tag}</div>
+              ) : null}
+            </div>
+            <div style={isReadable ? titleStyle : compactTitleStyle}>
+              {notification.title}
+            </div>
+            {isReadable && notification.message ? (
+              <div style={messageStyle}>{notification.message}</div>
             ) : null}
-            {notification.tag ? (
-              <div style={tagChipStyle}>{notification.tag}</div>
+            {isReadable && hasDetails && detailsExpanded ? (
+              <div style={detailsPanelStyle}>{notification.details}</div>
             ) : null}
           </div>
-          <div style={isReadable ? titleStyle : compactTitleStyle}>
-            {notification.title}
-          </div>
-          {isReadable && notification.message ? (
-            <div style={messageStyle}>{notification.message}</div>
-          ) : null}
-          {isReadable && hasDetails && detailsExpanded ? (
-            <div style={detailsPanelStyle}>{notification.details}</div>
-          ) : null}
           {isReadable ? (
-            <div style={footerRowStyle}>
+            <div
+              ref={footerRef}
+              data-testid={`app-notification-footer-${notification.id}`}
+              style={footerRowStyle}
+            >
               <div style={footerActionsStyle}>
                 {notification.action ? (
                   <button
@@ -512,6 +616,12 @@ export const AppNotificationStack: React.FC = () => {
     Record<string, boolean>
   >({});
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  const uiScale = clampUiScale(
+    useEditorSettingsStore((state) => state.uiScale),
+  );
+  const [logicalViewportHeight, setLogicalViewportHeight] = useState(() =>
+    getLogicalViewportHeight(uiScale),
+  );
   const notifications = useAppNotificationStore((state) => state.notifications);
   const dismissNotification = useAppNotificationStore(
     (state) => state.dismissNotification,
@@ -530,10 +640,27 @@ export const AppNotificationStack: React.FC = () => {
     primaryRailHeight +
     Math.max(0, visibleNotifications.length - 1) *
       (expanded ? expandedStackOffset : collapsedStackOffset);
+  const maxCardHeight = Math.max(
+    minimumNotificationCardHeight,
+    Math.min(
+      maximumNotificationCardHeight,
+      logicalViewportHeight - notificationViewportInset,
+    ),
+  );
 
   useEffect(() => {
     setPortalTarget(document.body);
   }, []);
+
+  useEffect(() => {
+    const updateViewportHeight = () => {
+      setLogicalViewportHeight(getLogicalViewportHeight(uiScale));
+    };
+
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    return () => window.removeEventListener("resize", updateViewportHeight);
+  }, [uiScale]);
 
   if (visibleNotifications.length === 0 || !portalTarget) {
     return null;
@@ -541,71 +668,78 @@ export const AppNotificationStack: React.FC = () => {
 
   return createPortal(
     <div
-      aria-live="polite"
-      aria-relevant="additions text"
-      data-app-notification-stack="true"
-      data-testid="app-notification-stack"
-      data-stack-expanded={expanded ? "true" : "false"}
-      style={{
-        ...stackStyle,
-        height: stackHeight,
-      }}
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
-      onFocusCapture={() => setExpanded(true)}
-      onBlurCapture={(event) => {
-        const nextTarget = event.relatedTarget;
-        if (
-          !(nextTarget instanceof Node) ||
-          !event.currentTarget.contains(nextTarget)
-        ) {
-          setExpanded(false);
-        }
-      }}
+      data-app-notification-surface="true"
+      data-testid="app-notification-surface"
+      style={getNotificationSurfaceStyle(uiScale)}
     >
-      <AnimatePresence initial={false}>
-        {visibleNotifications.map((notification, index) => (
-          <NotificationCard
-            key={`${notification.id}:${notification.revision}`}
-            notification={notification}
-            index={index}
-            expanded={expanded}
-            reducedMotion={reducedMotion}
-            visibleCount={visibleNotifications.length}
-            detailsExpanded={Boolean(expandedDetails[notification.id])}
-            onDismiss={dismissNotification}
-            onMinimize={minimizeNotification}
-            onToggleDetails={(id) =>
-              setExpandedDetails((current) => ({
-                ...current,
-                [id]: !current[id],
-              }))
-            }
-          />
-        ))}
-      </AnimatePresence>
-      {stackNotifications.length > visibleNotificationLimit ? (
-        <motion.div
-          initial={reducedMotion ? false : { opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          style={{
-            position: "absolute",
-            right: 0,
-            bottom: stackHeight + (expanded ? 10 : 0),
-            borderRadius: radius.full,
-            padding: "5px 10px",
-            background:
-              "color-mix(in srgb, var(--surface-overlay) 92%, transparent)",
-            border: "1px solid var(--border-subtle)",
-            color: "var(--text-secondary)",
-            fontSize: "11px",
-            pointerEvents: "auto",
-          }}
-        >
-          +{stackNotifications.length - visibleNotificationLimit} more
-        </motion.div>
-      ) : null}
+      <div
+        aria-live="polite"
+        aria-relevant="additions text"
+        data-app-notification-stack="true"
+        data-testid="app-notification-stack"
+        data-stack-expanded={expanded ? "true" : "false"}
+        style={{
+          ...stackStyle,
+          height: stackHeight,
+        }}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocusCapture={() => setExpanded(true)}
+        onBlurCapture={(event) => {
+          const nextTarget = event.relatedTarget;
+          if (
+            !(nextTarget instanceof Node) ||
+            !event.currentTarget.contains(nextTarget)
+          ) {
+            setExpanded(false);
+          }
+        }}
+      >
+        <AnimatePresence initial={false}>
+          {visibleNotifications.map((notification, index) => (
+            <NotificationCard
+              key={`${notification.id}:${notification.revision}`}
+              notification={notification}
+              index={index}
+              expanded={expanded}
+              reducedMotion={reducedMotion}
+              visibleCount={visibleNotifications.length}
+              detailsExpanded={Boolean(expandedDetails[notification.id])}
+              maxCardHeight={maxCardHeight}
+              onDismiss={dismissNotification}
+              onMinimize={minimizeNotification}
+              onToggleDetails={(id) =>
+                setExpandedDetails((current) => ({
+                  ...current,
+                  [id]: !current[id],
+                }))
+              }
+            />
+          ))}
+        </AnimatePresence>
+        {stackNotifications.length > visibleNotificationLimit ? (
+          <motion.div
+            initial={reducedMotion ? false : { opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: stackHeight + (expanded ? 10 : 0),
+              borderRadius: radius.full,
+              padding: "5px 10px",
+              background:
+                "color-mix(in srgb, var(--surface-overlay) 92%, transparent)",
+              border: "1px solid var(--border-subtle)",
+              color: "var(--text-secondary)",
+              fontSize: "11px",
+              pointerEvents: "auto",
+            }}
+          >
+            +{stackNotifications.length - visibleNotificationLimit} more
+          </motion.div>
+        ) : null}
+      </div>
     </div>,
     portalTarget,
   );

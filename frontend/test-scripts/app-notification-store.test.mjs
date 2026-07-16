@@ -119,3 +119,23 @@ test("app notification store keeps a bounded newest-first queue", async () => {
   assert.equal(notifications[0].id, "notice-29");
   assert.equal(notifications[23].id, "notice-6");
 });
+
+test("app notification store bounds long messages and preserves full output", async () => {
+  const { useAppNotificationStore } = await loadNotificationStore();
+  const store = useAppNotificationStore.getState();
+  store.clearNotifications();
+
+  const fullOutput = "stack trace line\n".repeat(120);
+  store.addNotification({
+    id: "long-output",
+    kind: "error",
+    title: "LSP failed",
+    message: fullOutput,
+  });
+
+  const [notification] = useAppNotificationStore.getState().notifications;
+  assert.ok(notification.message.length <= 480);
+  assert.match(notification.message, /\.\.\.$/);
+  assert.equal(notification.details, fullOutput.trim());
+  assert.equal(notification.detailsLabel, "Full output");
+});

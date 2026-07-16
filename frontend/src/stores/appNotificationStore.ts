@@ -1,11 +1,7 @@
 import { create } from "zustand";
 
 export type AppNotificationKind =
-  | "info"
-  | "success"
-  | "warning"
-  | "error"
-  | "progress";
+  "info" | "success" | "warning" | "error" | "progress";
 
 export interface AppNotificationAction {
   label: string;
@@ -62,6 +58,44 @@ interface AppNotificationState {
 }
 
 const MAX_NOTIFICATIONS = 24;
+const MAX_NOTIFICATION_TITLE_LENGTH = 160;
+const MAX_NOTIFICATION_MESSAGE_LENGTH = 480;
+
+const truncateNotificationText = (value: string, maxLength: number): string =>
+  value.length <= maxLength
+    ? value
+    : `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+
+const normalizeNotificationContent = <
+  T extends Pick<
+    AppNotification,
+    "title" | "message" | "details" | "detailsLabel"
+  >,
+>(
+  notification: T,
+): T => {
+  const fullMessage = notification.message?.trim();
+  const message = fullMessage
+    ? truncateNotificationText(fullMessage, MAX_NOTIFICATION_MESSAGE_LENGTH)
+    : undefined;
+  const messageWasTruncated = message !== fullMessage;
+  const details =
+    notification.details?.trim() ||
+    (messageWasTruncated ? fullMessage : undefined);
+
+  return {
+    ...notification,
+    title: truncateNotificationText(
+      notification.title.trim(),
+      MAX_NOTIFICATION_TITLE_LENGTH,
+    ),
+    message,
+    details,
+    detailsLabel:
+      notification.detailsLabel ??
+      (messageWasTruncated ? "Full output" : undefined),
+  };
+};
 
 const defaultTimeoutMs = (kind: AppNotificationKind): number => {
   switch (kind) {
@@ -94,7 +128,7 @@ const normalizeNotification = (
   const sticky = input.sticky ?? kind === "progress";
   const timeoutMs = input.timeoutMs ?? defaultTimeoutMs(kind);
 
-  return {
+  return normalizeNotificationContent({
     id: input.id ?? createNotificationId(),
     kind,
     title: input.title,
@@ -114,7 +148,7 @@ const normalizeNotification = (
     createdAt: timestamp,
     updatedAt: timestamp,
     revision: 0,
-  };
+  });
 };
 
 export const useAppNotificationStore = create<AppNotificationState>(
@@ -163,7 +197,7 @@ export const useAppNotificationStore = create<AppNotificationState>(
             typeof patch.progress === "number"
               ? Math.max(0, Math.min(1, patch.progress))
               : patch.progress;
-          return {
+          return normalizeNotificationContent({
             ...item,
             ...patch,
             kind,
@@ -173,7 +207,7 @@ export const useAppNotificationStore = create<AppNotificationState>(
             timeoutMs: patch.timeoutMs ?? item.timeoutMs,
             updatedAt: Date.now(),
             revision: item.revision + 1,
-          };
+          });
         }),
       }));
     },
