@@ -1,4 +1,28 @@
 import type { ITheme } from "@xterm/xterm";
+import { bundledThemeSources } from "./bundledThemes";
+
+const IMPORTED_THEME_IDS = [
+  "cobalt-signal-night",
+  "ember-signal-night",
+  "moss-signal-night",
+  "amethyst-signal-night",
+  "arctic-signal-night",
+  "rosewood-signal-night",
+  "sandstone-signal-night",
+  "lime-signal-night",
+  "seafoam-signal-night",
+  "sakura-signal-night",
+  "cobalt-signal-day",
+  "ember-signal-day",
+  "moss-signal-day",
+  "amethyst-signal-day",
+  "arctic-signal-day",
+  "rosewood-signal-day",
+  "sandstone-signal-day",
+  "lime-signal-day",
+  "seafoam-signal-day",
+  "sakura-signal-day",
+] as const;
 
 export const BUILT_IN_THEME_IDS = [
   "blackprint",
@@ -9,6 +33,7 @@ export const BUILT_IN_THEME_IDS = [
   "catppuccin-frappe",
   "catppuccin-macchiato",
   "catppuccin-mocha",
+  ...IMPORTED_THEME_IDS,
 ] as const;
 
 export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
@@ -640,114 +665,111 @@ const lightTheme = createThemeDefinition({
   id: "arlecchino-light",
   name: "Arlecchino Light",
   appearance: "light",
-  description:
-    "Cool daylight Arlecchino theme with mineral-green surfaces and clear semantic states.",
+  description: "Monochrome white, gray, and black Arlecchino theme.",
   colors: {
-    bg: "#F1F6F5",
-    bgSecondary: "#E3ECEA",
-    bgTertiary: "#D6E2DF",
-    bgPanel: "#F8FBFA",
-    bgHover: "#C9DBD7",
-    border: "#AFC6C0",
-    borderSubtle: "#CDE0DC",
-    borderLight: "#55736C",
-    text: "#152B29",
-    textPrimary: "#152B29",
-    textSecondary: "#34514C",
-    textMuted: "#63807A",
+    bg: "#ffffff",
+    bgSecondary: "#f7f7f7",
+    bgTertiary: "#eeeeee",
+    bgPanel: "#ffffff",
+    bgHover: "#e6e6e6",
+    border: "#cfcfcf",
+    borderSubtle: "#dddddd",
+    borderLight: "#9f9f9f",
+    text: "#0a0a0a",
+    textPrimary: "#0a0a0a",
+    textSecondary: "#3f3f3f",
+    textMuted: "#727272",
   },
   editor: {
-    background: "#F8FBFA",
-    surface: "#E3ECEA",
-    surfaceElevated: "#D6E2DF",
-    gutter: "#E7F0EE",
-    scrollbarTrack: "#D6E2DF",
-    scrollbarThumb: "#94B0AA",
-    scrollbarThumbHover: "#6F928B",
-    border: "rgba(21, 43, 41, 0.12)",
-    borderStrong: "rgba(21, 43, 41, 0.23)",
-    text: "#1B3230",
-    textSoft: "#46635D",
-    textMuted: "#718C86",
-    caret: "#173F39",
-    activeLine: "rgba(31, 116, 87, 0.1)",
-    activeLineGutter: "#1F7457",
-    selection: "rgba(31, 116, 87, 0.2)",
-    selectionInactive: "rgba(31, 116, 87, 0.12)",
-    selectionMatch: "rgba(30, 110, 167, 0.13)",
-    bracketMatch: "rgba(157, 108, 22, 0.2)",
-    searchMatch: "rgba(157, 108, 22, 0.24)",
-    tooltipBg: "#F8FBFA",
-    tooltipBgStrong: "#E3ECEA",
+    background: "#fbfbfb",
+    surface: "#f3f3f3",
+    surfaceElevated: "#ececec",
+    gutter: "#f0f0f0",
+    scrollbarTrack: "#e7e7e7",
+    scrollbarThumb: "#bcbcbc",
+    scrollbarThumbHover: "#969696",
+    border: "rgba(24, 24, 24, 0.105)",
+    borderStrong: "rgba(24, 24, 24, 0.2)",
+    text: "#202020",
+    textSoft: "#555555",
+    textMuted: "#7a7a7a",
+    caret: "#121212",
+    activeLine: "rgba(24, 24, 24, 0.042)",
+    activeLineGutter: "#292929",
+    selection: "rgba(24, 24, 24, 0.15)",
+    selectionInactive: "rgba(24, 24, 24, 0.09)",
+    selectionMatch: "rgba(24, 24, 24, 0.075)",
+    bracketMatch: "rgba(24, 24, 24, 0.105)",
+    searchMatch: "rgba(24, 24, 24, 0.11)",
+    tooltipBg: "rgba(251, 251, 251, 0.985)",
+    tooltipBgStrong: "rgba(243, 243, 243, 0.99)",
     tooltipShadow:
-      "inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 18px 38px -24px rgba(21, 43, 41, 0.24), 0 28px 70px -42px rgba(21, 43, 41, 0.18)",
-    ghostText: "rgba(27, 50, 48, 0.32)",
-    highlight: "rgba(31, 116, 87, 0.12)",
-    comment: "#718C86",
-    string: "#207457",
-    number: "#9D6C16",
-    keyword: "#B84455",
-    operator: "#55736C",
-    type: "#1E6EA7",
-    property: "#197A7A",
-    function: "#246A52",
-    variable: "#1B3230",
-    constant: "#9D6C16",
-    accent: "#1F7457",
+      "inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 18px 38px -24px rgba(24, 24, 24, 0.26), 0 28px 70px -42px rgba(24, 24, 24, 0.18)",
+    ghostText: "rgba(32, 32, 32, 0.32)",
+    highlight: "rgba(52, 52, 52, 0.105)",
+    comment: "#828282",
+    string: "#626262",
+    number: "#5f5f5f",
+    keyword: "#242424",
+    operator: "#686868",
+    type: "#5d5d5d",
+    property: "#606060",
+    function: "#585858",
+    variable: "#202020",
+    constant: "#626262",
+    accent: "#363636",
   },
   terminal: {
-    background: "#F1F6F5",
-    foreground: "#152B29",
-    cursor: "#173F39",
-    cursorAccent: "#F8FBFA",
-    selectionBackground: "rgba(31, 116, 87, 0.2)",
-    black: "#152B29",
-    red: "#B84455",
-    green: "#207457",
-    yellow: "#9D6C16",
-    blue: "#1E6EA7",
-    magenta: "#7A5BA5",
-    cyan: "#197A7A",
-    white: "#34514C",
-    brightBlack: "#63807A",
-    brightRed: "#D05A6A",
-    brightGreen: "#35936D",
-    brightYellow: "#BD8523",
-    brightBlue: "#3D89C5",
-    brightMagenta: "#9776C3",
-    brightCyan: "#2D9898",
-    brightWhite: "#152B29",
+    background: "#ffffff",
+    foreground: "#171717",
+    cursor: "#171717",
+    cursorAccent: "#ffffff",
+    selectionBackground: "rgba(23, 23, 23, 0.18)",
+    black: "#0a0a0a",
+    red: "#525252",
+    green: "#3f3f3f",
+    yellow: "#666666",
+    blue: "#474747",
+    magenta: "#737373",
+    cyan: "#333333",
+    white: "#525252",
+    brightBlack: "#737373",
+    brightRed: "#6b6b6b",
+    brightGreen: "#575757",
+    brightYellow: "#7d7d7d",
+    brightBlue: "#606060",
+    brightMagenta: "#898989",
+    brightCyan: "#4a4a4a",
+    brightWhite: "#171717",
   },
   variableOptions: {
-    gridLine: "rgba(21, 43, 41, 0.055)",
-    gridDot: "rgba(31, 116, 87, 0.075)",
-    shellBorder: "rgba(21, 43, 41, 0.1)",
-    shellBorderStrong: "rgba(21, 43, 41, 0.18)",
-    shellInlineDivider: "rgba(21, 43, 41, 0.1)",
+    gridLine: "rgba(0, 0, 0, 0.05)",
+    gridDot: "rgba(0, 0, 0, 0.07)",
+    shellBorder: "rgba(0, 0, 0, 0.08)",
+    shellBorderStrong: "rgba(0, 0, 0, 0.14)",
+    shellInlineDivider: "rgba(0, 0, 0, 0.08)",
     shellInnerHighlight: "rgba(255, 255, 255, 0.92)",
     shellShadow:
       "0 0 0 1px rgba(0, 0, 0, 0.04), 0 10px 30px -18px rgba(0, 0, 0, 0.2), 0 24px 52px -36px rgba(0, 0, 0, 0.22)",
     shellShadowActive:
       "0 0 0 1px rgba(0, 0, 0, 0.08), 0 18px 44px -20px rgba(0, 0, 0, 0.24), 0 30px 90px -34px rgba(0, 0, 0, 0.28)",
-    shadowSoft: "0 8px 24px rgba(21, 43, 41, 0.12)",
+    shadowSoft: "0 8px 24px rgba(0, 0, 0, 0.12)",
     shadowOverlay:
       "0 0 0 1px rgba(0, 0, 0, 0.04), 0 18px 40px -18px rgba(0, 0, 0, 0.24), 0 28px 72px -28px rgba(0, 0, 0, 0.28)",
     shadowDrag:
       "0 0 0 1px rgba(0, 0, 0, 0.08), 0 20px 44px -20px rgba(0, 0, 0, 0.28), 0 36px 96px -32px rgba(0, 0, 0, 0.3)",
     shadowPanel:
       "0 0 0 1px rgba(0, 0, 0, 0.08), 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 12px 16px -4px rgba(0, 0, 0, 0.1), 0 24px 32px -8px rgba(0, 0, 0, 0.1)",
-    focusRing: "rgba(31, 116, 87, 0.24)",
-    focusRingStrong: "rgba(31, 116, 87, 0.4)",
-    borderFocus: "rgba(31, 116, 87, 0.54)",
-    accentPrimary: "#1F7457",
-    accentPrimarySoft: "#D8EBE3",
-    accentBrand: "#1E6EA7",
-    accentBrandSoft: "#DCEBF6",
+    focusRing: "rgba(0, 0, 0, 0.16)",
+    focusRingStrong: "rgba(0, 0, 0, 0.26)",
+    borderFocus: "rgba(0, 0, 0, 0.38)",
+    accentBrand: "#303030",
+    accentBrandSoft: "rgba(48, 48, 48, 0.12)",
     statuses: {
-      success: "#207457",
-      warning: "#9D6C16",
-      error: "#B84455",
-      info: "#1E6EA7",
+      success: "#16a34a",
+      warning: "#ca8a04",
+      error: "#dc2626",
+      info: "#2563eb",
     },
   },
 });
@@ -1145,6 +1167,18 @@ const createCatppuccinTheme = (
   });
 };
 
+const bundledThemeList = bundledThemeSources.map((source) =>
+  createThemeDefinition({
+    ...source,
+    variableOptions: createCustomThemeVariableOptions(
+      source.colors,
+      source.editor,
+      source.terminal,
+      source.appearance,
+    ),
+  }),
+);
+
 const themeList: IDEThemeDefinition[] = [
   blackprintTheme,
   lightTheme,
@@ -1174,6 +1208,7 @@ const themeList: IDEThemeDefinition[] = [
     "dark",
     catppuccin.mocha,
   ),
+  ...bundledThemeList,
 ];
 
 export const builtInThemes = Object.fromEntries(
@@ -1194,6 +1229,21 @@ export const isCustomThemeId = (value: unknown): value is CustomThemeId =>
   typeof value === "string" &&
   value.startsWith(CUSTOM_THEME_PREFIX) &&
   value.length > CUSTOM_THEME_PREFIX.length;
+
+export const getBuiltInThemeIdForCustomTheme = (
+  value: unknown,
+): BuiltInThemeId | null => {
+  if (!isCustomThemeId(value)) {
+    return null;
+  }
+
+  const bundledId = value.slice(CUSTOM_THEME_PREFIX.length);
+  return IMPORTED_THEME_IDS.includes(
+    bundledId as (typeof IMPORTED_THEME_IDS)[number],
+  )
+    ? (bundledId as BuiltInThemeId)
+    : null;
+};
 
 let runtimeCustomThemes: Record<CustomThemeId, IDEThemeDefinition> =
   {} as Record<CustomThemeId, IDEThemeDefinition>;
@@ -1226,7 +1276,7 @@ export const normalizeThemePreference = (value: unknown): ThemePreference => {
     return value;
   }
   if (isCustomThemeId(value)) {
-    return value;
+    return getBuiltInThemeIdForCustomTheme(value) ?? value;
   }
   return "system";
 };

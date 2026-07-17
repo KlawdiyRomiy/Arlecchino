@@ -16,6 +16,7 @@ import {
 } from "../types/theme";
 import {
   createCustomThemeDefinition,
+  getBuiltInThemeIdForCustomTheme,
   getThemeDefinition,
   normalizeThemePreference,
   resolveThemePreference,
@@ -82,9 +83,11 @@ const loadStoredCustomThemes = (): IDEThemeDefinition[] => {
 
     return parsed.flatMap((value, index) => {
       try {
-        return [
-          createCustomThemeDefinition(value, `custom-theme-${index + 1}.json`),
-        ];
+        const theme = createCustomThemeDefinition(
+          value,
+          `custom-theme-${index + 1}.json`,
+        );
+        return getBuiltInThemeIdForCustomTheme(theme.id) ? [] : [theme];
       } catch {
         return [];
       }
