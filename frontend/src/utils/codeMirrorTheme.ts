@@ -276,8 +276,7 @@ export const codeEditorStyles = EditorView.theme(
       padding: "8px",
       borderRadius: "22px",
       border: `1px solid ${editorPalette.borderStrong}`,
-      background:
-        "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 98%, transparent), color-mix(in srgb, var(--surface-shell) 99%, transparent))",
+      background: "var(--surface-shell-panel)",
       boxShadow: "var(--shadow-overlay)",
       fontFamily: "var(--ui-font-family)",
       transformOrigin: "top right",
@@ -297,9 +296,8 @@ export const codeEditorStyles = EditorView.theme(
       gap: "8px",
       border: "1px solid var(--shell-border)",
       borderRadius: "999px",
-      background: "color-mix(in srgb, var(--surface-2) 90%, transparent)",
-      boxShadow:
-        "inset 0 1px 0 color-mix(in srgb, var(--shell-inner-highlight) 60%, transparent)",
+      background: "var(--surface-2)",
+      boxShadow: "none",
       color: "var(--text-tertiary)",
       padding: "0 8px 0 12px",
     },
@@ -383,7 +381,7 @@ export const codeEditorStyles = EditorView.theme(
       backfaceVisibility: "hidden",
     },
     ".cm-tooltip-autocomplete": {
-      background: `linear-gradient(180deg, ${editorPalette.tooltipBg}, ${editorPalette.tooltipBgStrong})`,
+      background: editorPalette.tooltipBg,
       border: `1px solid ${editorPalette.borderStrong}`,
       borderRadius: "22px",
       boxShadow: editorPalette.tooltipShadow,
@@ -457,7 +455,7 @@ export const codeEditorStyles = EditorView.theme(
       transition: `background-color ${transitions.fast}, border-color ${transitions.fast}, color ${transitions.fast}, box-shadow ${transitions.fast}`,
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
-      background: `linear-gradient(180deg, color-mix(in srgb, ${editorPalette.accent} 10%, transparent), color-mix(in srgb, ${editorPalette.accent} 6%, transparent))`,
+      background: `color-mix(in srgb, ${editorPalette.accent} 14%, ${editorPalette.surface})`,
       borderColor: editorPalette.borderStrong,
       boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
     },
@@ -716,7 +714,6 @@ export const codeEditorSurfaceClassName =
 export const editorCanvasBackground = editorPalette.background;
 
 export const codeEditorChromeStyle = {
-  background:
-    "radial-gradient(circle at top, color-mix(in srgb, var(--editor-text) 3%, transparent), transparent 24%), var(--editor-bg)",
+  background: "var(--editor-bg)",
   boxShadow: "var(--shadow-panel)",
 } as const;

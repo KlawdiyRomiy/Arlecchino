@@ -1277,15 +1277,9 @@ export const diagnosticsTheme = EditorView.theme({
       letterSpacing: "0",
       lineHeight: "1.3",
       color: "var(--text-primary)",
-      backgroundColor:
-        "color-mix(in srgb, var(--surface-elevated) 94%, var(--surface-shell-soft))",
+      backgroundColor: "var(--surface-elevated)",
       border: "1px solid var(--shell-border-strong)",
-      boxShadow:
-        "inset 0 1px 0 var(--shell-inner-highlight), 0 34px 86px -34px rgba(0, 0, 0, 0.82), 0 14px 32px -20px rgba(0, 0, 0, 0.72), var(--shadow-overlay)",
-      backdropFilter:
-        "blur(var(--diagnostic-tooltip-blur, 12px)) saturate(1.18)",
-      WebkitBackdropFilter:
-        "blur(var(--diagnostic-tooltip-blur, 12px)) saturate(1.18)",
+      boxShadow: "var(--shadow-overlay)",
       pointerEvents: "none",
     },
   ".cm-tooltip .cm-diagnostic-tooltip.cm-diagnostic-tooltip-error.cm-tooltip-section, .cm-diagnostic-tooltip.cm-diagnostic-tooltip-error":

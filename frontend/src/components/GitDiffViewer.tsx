@@ -11,7 +11,6 @@ import { EditorView } from "@codemirror/view";
 import { unifiedMergeView } from "@codemirror/merge";
 import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 
-import { useTheme } from "../hooks/useTheme";
 import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import { radius } from "../styles/colors";
 import { writeClipboardTextWithFallback } from "../utils/clipboard";
@@ -224,29 +223,29 @@ const splitRowKey = (row: SplitRow): string => {
   return `${left}::${right}`;
 };
 
-const lineAccent = (isDark: boolean, type: DiffLine["type"]): string => {
+const lineAccent = (type: DiffLine["type"]): string => {
   switch (type) {
     case "add":
-      return isDark ? "rgba(34,197,94,0.18)" : "rgba(34,197,94,0.16)";
+      return "var(--status-success-surface)";
     case "remove":
-      return isDark ? "rgba(239,68,68,0.16)" : "rgba(239,68,68,0.14)";
+      return "var(--status-error-surface)";
     case "hunk":
-      return isDark ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.12)";
+      return "var(--status-info-surface)";
     case "header":
-      return isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)";
+      return "var(--surface-2)";
     default:
-      return "transparent";
+      return "var(--surface-1)";
   }
 };
 
 const lineBorder = (type: DiffLine["type"]): string => {
   switch (type) {
     case "add":
-      return "#22c55e";
+      return "var(--status-success-border)";
     case "remove":
-      return "#ef4444";
+      return "var(--status-error-border)";
     case "hunk":
-      return "#3b82f6";
+      return "var(--status-info-border)";
     default:
       return "transparent";
   }
@@ -261,7 +260,6 @@ const renderLineCell = (
     text: string;
     textMuted: string;
   },
-  isDark: boolean,
   side: "left" | "right",
 ): React.ReactElement => {
   if (!line) {
@@ -295,7 +293,7 @@ const renderLineCell = (
       className="git-diff-code-row grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
       data-ui-font-scale-exempt
       style={{
-        background: lineAccent(isDark, line.type),
+        background: lineAccent(line.type),
         borderLeft: `2px solid ${lineBorder(line.type)}`,
       }}
     >
@@ -316,9 +314,9 @@ const renderLineCell = (
             style={{
               color:
                 line.type === "add"
-                  ? "#22c55e"
+                  ? "var(--status-success-text)"
                   : line.type === "remove"
-                    ? "#ef4444"
+                    ? "var(--status-error-text)"
                     : theme.textMuted,
             }}
           >
@@ -340,7 +338,6 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
   hasPrev = false,
   hasNext = false,
 }) => {
-  const { isDark } = useTheme();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<"unified" | "split" | "review">(
     "unified",
@@ -349,14 +346,14 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
 
   const theme = useMemo(
     () => ({
-      bg: isDark ? "#0c0c0d" : "#ffffff",
-      bgSecondary: isDark ? "#151517" : "#f8fafc",
-      bgTertiary: isDark ? "#1c1d20" : "#f1f5f9",
-      border: isDark ? "#33353a" : "#dbe4ee",
-      text: isDark ? "#ffffff" : "#111827",
-      textMuted: isDark ? "#a5a8b1" : "#667085",
+      bg: "var(--surface-canvas)",
+      bgSecondary: "var(--surface-1)",
+      bgTertiary: "var(--surface-2)",
+      border: "var(--border-default)",
+      text: "var(--text-primary)",
+      textMuted: "var(--text-muted)",
     }),
-    [isDark],
+    [],
   );
 
   const hunks = useMemo(() => parseDiff(diff), [diff]);
@@ -534,8 +531,12 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
             <div className="truncate text-[13px] font-medium">{fileName}</div>
             <div className="mt-1 flex items-center gap-3 text-[11px] text-[var(--git-diff-muted)]">
               <span>{viewMode}</span>
-              <span className="text-[#22c55e]">+{stats.additions}</span>
-              <span className="text-[#ef4444]">-{stats.deletions}</span>
+              <span className="text-[var(--status-success-text)]">
+                +{stats.additions}
+              </span>
+              <span className="text-[var(--status-error-text)]">
+                -{stats.deletions}
+              </span>
             </div>
           </div>
         </div>
@@ -569,7 +570,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
           title="Copy diff"
         >
           {copied ? (
-            <Check size={13} className="text-[#22c55e]" />
+            <Check size={13} className="text-[var(--status-success-text)]" />
           ) : (
             <Copy size={13} />
           )}
@@ -626,7 +627,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                     className="git-diff-code-row grid min-h-[20px] grid-cols-[42px_42px_minmax(0,1fr)]"
                     data-ui-font-scale-exempt
                     style={{
-                      background: lineAccent(isDark, line.type),
+                      background: lineAccent(line.type),
                       borderLeft: `2px solid ${lineBorder(line.type)}`,
                     }}
                   >
@@ -652,12 +653,12 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                     </div>
                     <div className="overflow-x-auto px-2.5 py-0.5 font-mono text-[11px] leading-5 text-[var(--git-diff-text)]">
                       {line.type === "add" && (
-                        <span className="mr-2 inline-block w-3 text-center text-[#22c55e]">
+                        <span className="mr-2 inline-block w-3 text-center text-[var(--status-success-text)]">
                           +
                         </span>
                       )}
                       {line.type === "remove" && (
-                        <span className="mr-2 inline-block w-3 text-center text-[#ef4444]">
+                        <span className="mr-2 inline-block w-3 text-center text-[var(--status-error-text)]">
                           -
                         </span>
                       )}
@@ -703,9 +704,9 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                     className="border-r"
                     style={{ borderColor: theme.border }}
                   >
-                    {renderLineCell(row.left, theme, isDark, "left")}
+                    {renderLineCell(row.left, theme, "left")}
                   </div>
-                  <div>{renderLineCell(row.right, theme, isDark, "right")}</div>
+                  <div>{renderLineCell(row.right, theme, "right")}</div>
                 </div>
               ))}
             </div>

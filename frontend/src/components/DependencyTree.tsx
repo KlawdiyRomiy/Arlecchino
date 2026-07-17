@@ -238,7 +238,7 @@ const ANIM_STYLES = `
   --xy-minimap-mask-stroke-color: transparent;
   --xy-minimap-node-background-color: color-mix(in srgb, var(--text-muted) 46%, var(--surface-2));
   --xy-minimap-node-stroke-color: color-mix(in srgb, var(--border-default) 78%, transparent);
-  --xy-controls-button-background-color: color-mix(in srgb, var(--surface-elevated) 96%, transparent);
+  --xy-controls-button-background-color: var(--surface-elevated);
   --xy-controls-button-background-color-hover: var(--surface-hover);
   --xy-controls-button-color: var(--text-secondary);
   --xy-controls-button-color-hover: var(--text-primary);
@@ -249,7 +249,7 @@ const ANIM_STYLES = `
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--surface-elevated) 96%, transparent);
+  background: var(--surface-elevated);
 }
 .dependency-tree-flow .react-flow__controls-button {
   transition:

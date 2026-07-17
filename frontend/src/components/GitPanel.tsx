@@ -734,14 +734,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     () =>
       ({
         "--git-bg": theme.bg,
-        "--git-surface":
-          "color-mix(in srgb, var(--surface-1) 98%, transparent)",
-        "--git-bg-tertiary":
-          "color-mix(in srgb, var(--surface-2) 96%, transparent)",
+        "--git-surface": "var(--surface-1)",
+        "--git-bg-tertiary": "var(--surface-2)",
         "--git-border": theme.border,
         "--git-border-strong": "var(--border-strong)",
-        "--git-row-active":
-          "color-mix(in srgb, var(--surface-active) 88%, transparent)",
+        "--git-row-active": "var(--surface-active)",
         "--git-text": theme.text,
         "--git-text-secondary": theme.textSecondary,
         "--git-text-tertiary": theme.textMuted,

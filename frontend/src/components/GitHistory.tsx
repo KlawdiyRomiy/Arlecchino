@@ -12,7 +12,6 @@ import {
 
 import * as AppFunctions from "../wails/app";
 import type { GitCommitInfo } from "../../bindings/arlecchino/internal/app/models";
-import { useTheme } from "../hooks/useTheme";
 import { radius, transitions, zIndex } from "../styles/colors";
 import { toErrorMessage } from "../utils/errorMessages";
 import { GitDiffViewer } from "./GitDiffViewer";
@@ -202,7 +201,6 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
   onViewDiff,
   variant = "default",
 }) => {
-  const { isDark } = useTheme();
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitStats, setCommitStats] = useState<Record<string, string>>({});
   const [commitDiffs, setCommitDiffs] = useState<Record<string, string>>({});
@@ -220,18 +218,16 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
   const panelVars = useMemo(
     () =>
       ({
-        "--git-bg": isDark ? "#0a0a0a" : "#ffffff",
-        "--git-bg-secondary": isDark ? "#111111" : "#f9fafb",
-        "--git-bg-tertiary": isDark ? "#1a1a1a" : "#f3f4f6",
-        "--git-bg-hover": isDark
-          ? "rgba(255,255,255,0.04)"
-          : "rgba(0,0,0,0.035)",
-        "--git-border": isDark ? "#2a2a2a" : "#e5e7eb",
-        "--git-text": isDark ? "#ffffff" : "#111827",
-        "--git-text-secondary": isDark ? "#888888" : "#6b7280",
-        "--git-accent": "#ef4444",
+        "--git-bg": "var(--surface-canvas)",
+        "--git-bg-secondary": "var(--surface-1)",
+        "--git-bg-tertiary": "var(--surface-2)",
+        "--git-bg-hover": "var(--surface-hover)",
+        "--git-border": "var(--border-default)",
+        "--git-text": "var(--text-primary)",
+        "--git-text-secondary": "var(--text-secondary)",
+        "--git-accent": "var(--accent-brand)",
       }) as React.CSSProperties,
-    [isDark],
+    [],
   );
 
   const filteredCommits = useMemo(() => {

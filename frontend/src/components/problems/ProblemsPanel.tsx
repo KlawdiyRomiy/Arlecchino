@@ -110,52 +110,45 @@ const severityTone = (severity: DiagnosticsSeverity | "clear") => {
   switch (severity) {
     case "error":
       return {
-        color: "var(--status-error)",
-        background:
-          "color-mix(in srgb, var(--status-error) 14%, var(--problems-bg-tertiary))",
-        border:
-          "color-mix(in srgb, var(--status-error) 28%, var(--problems-border))",
+        color: "var(--status-error-text)",
+        background: "var(--status-error-surface)",
+        border: "var(--status-error-border)",
       };
     case "warning":
       return {
-        color: "var(--status-warning)",
-        background:
-          "color-mix(in srgb, var(--status-warning) 14%, var(--problems-bg-tertiary))",
-        border:
-          "color-mix(in srgb, var(--status-warning) 28%, var(--problems-border))",
+        color: "var(--status-warning-text)",
+        background: "var(--status-warning-surface)",
+        border: "var(--status-warning-border)",
       };
     case "info":
       return {
-        color: "var(--status-info)",
-        background:
-          "color-mix(in srgb, var(--status-info) 14%, var(--problems-bg-tertiary))",
-        border:
-          "color-mix(in srgb, var(--status-info) 28%, var(--problems-border))",
+        color: "var(--status-info-text)",
+        background: "var(--status-info-surface)",
+        border: "var(--status-info-border)",
       };
     default:
       return {
-        color: "var(--status-success)",
-        background:
-          "color-mix(in srgb, var(--status-success) 14%, var(--problems-bg-tertiary))",
-        border:
-          "color-mix(in srgb, var(--status-success) 28%, var(--problems-border))",
+        color: "var(--status-success-text)",
+        background: "var(--status-success-surface)",
+        border: "var(--status-success-border)",
       };
   }
 };
 
 const severityIcon = (severity: DiagnosticsSeverity | "clear", size = 14) => {
+  const tone = severityTone(severity);
+  const iconStyle = { color: tone.color };
+
   if (severity === "error") {
-    return <AlertCircle size={size} className="text-[var(--status-error)]" />;
+    return <AlertCircle size={size} style={iconStyle} />;
   }
   if (severity === "warning") {
-    return (
-      <AlertTriangle size={size} className="text-[var(--status-warning)]" />
-    );
+    return <AlertTriangle size={size} style={iconStyle} />;
   }
   if (severity === "info") {
-    return <CircleDot size={size} className="text-[var(--status-info)]" />;
+    return <CircleDot size={size} style={iconStyle} />;
   }
-  return <CheckCircle2 size={size} className="text-[var(--status-success)]" />;
+  return <CheckCircle2 size={size} style={iconStyle} />;
 };
 
 const renderSeverityIcon = (problem: DiagnosticsProblem) =>
@@ -186,6 +179,8 @@ const relativePath = (
 
 const summaryValuePillClass =
   "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-medium";
+const summaryFilterPillClass =
+  "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-medium transition-[background-color,border-color,color,box-shadow] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
 
 export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   activeFilePath,
@@ -516,14 +511,11 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     () =>
       ({
         "--problems-bg": theme.bg,
-        "--problems-surface":
-          "color-mix(in srgb, var(--surface-1) 98%, transparent)",
-        "--problems-bg-tertiary":
-          "color-mix(in srgb, var(--surface-2) 96%, transparent)",
+        "--problems-surface": "var(--surface-1)",
+        "--problems-bg-tertiary": "var(--surface-2)",
         "--problems-border": theme.border,
         "--problems-border-strong": "var(--border-strong)",
-        "--problems-row-active":
-          "color-mix(in srgb, var(--surface-active) 86%, transparent)",
+        "--problems-row-active": "var(--surface-active)",
         "--problems-text": theme.text,
         "--problems-text-secondary": theme.textSecondary,
         "--problems-text-tertiary": theme.textMuted,
@@ -578,24 +570,55 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     };
   };
 
+  const summaryFilterPillStyle = (
+    severity: DiagnosticsSeverity,
+    active: boolean,
+  ): React.CSSProperties => {
+    const tone = severityTone(severity);
+    return {
+      color: tone.color,
+      borderColor: tone.border,
+      background: tone.background,
+      boxShadow: active ? `inset 0 0 0 1px ${tone.color}` : undefined,
+    };
+  };
+
   const renderProjectSummaryPills = (): React.ReactNode => (
     <div className="flex flex-wrap items-center gap-2">
       <span className={problemsPillClass}>{projectSummary.total} total</span>
-      <span className={summaryValuePillClass} style={summaryPillStyle("error")}>
+      <button
+        type="button"
+        onClick={() => setSeverityFilter("error")}
+        aria-label="Show errors"
+        aria-pressed={severityFilter === "error"}
+        className={summaryFilterPillClass}
+        style={summaryFilterPillStyle("error", severityFilter === "error")}
+      >
         <AlertCircle size={12} />
         {projectSummary.errors} errors
-      </span>
-      <span
-        className={summaryValuePillClass}
-        style={summaryPillStyle("warning")}
+      </button>
+      <button
+        type="button"
+        onClick={() => setSeverityFilter("warning")}
+        aria-label="Show warnings"
+        aria-pressed={severityFilter === "warning"}
+        className={summaryFilterPillClass}
+        style={summaryFilterPillStyle("warning", severityFilter === "warning")}
       >
         <AlertTriangle size={12} />
         {projectSummary.warnings} warnings
-      </span>
-      <span className={summaryValuePillClass} style={summaryPillStyle("info")}>
+      </button>
+      <button
+        type="button"
+        onClick={() => setSeverityFilter("info")}
+        aria-label="Show info"
+        aria-pressed={severityFilter === "info"}
+        className={summaryFilterPillClass}
+        style={summaryFilterPillStyle("info", severityFilter === "info")}
+      >
         <CircleDot size={12} />
         {projectSummary.infos} info
-      </span>
+      </button>
       {isPartialWorkspaceDiagnostics ? (
         <span
           className={summaryValuePillClass}
@@ -640,22 +663,6 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
             )}
           >
             All files
-          </button>
-          <button
-            type="button"
-            onClick={() => setSeverityFilter("error")}
-            aria-pressed={severityFilter === "error"}
-            className={filterButtonClass(severityFilter === "error")}
-          >
-            Errors
-          </button>
-          <button
-            type="button"
-            onClick={() => setSeverityFilter("warning")}
-            aria-pressed={severityFilter === "warning"}
-            className={filterButtonClass(severityFilter === "warning")}
-          >
-            Warnings
           </button>
           <button
             type="button"
@@ -768,46 +775,57 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const renderProblemRow = (
     problem: DiagnosticsProblem,
     variant: "compact" | "detail",
-  ): React.ReactNode => (
-    <ContextActionMenu
-      key={problem.id}
-      items={buildProblemContextMenuItems(problem)}
-    >
-      <button
-        type="button"
-        onClick={() =>
-          onNavigate(problem.filePath, problem.line, problem.column)
-        }
-        className={`group flex w-full items-start gap-3 rounded-[18px] border border-[var(--problems-border)] bg-[var(--problems-bg-tertiary)] text-left transition-colors hover:border-[var(--problems-border-strong)] hover:bg-[var(--problems-row-active)] focus:bg-[var(--problems-row-active)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
-          variant === "detail" ? "px-4 py-3.5" : "px-3.5 py-3"
-        }`}
+  ): React.ReactNode => {
+    const tone = severityTone(problem.severityLabel);
+
+    return (
+      <ContextActionMenu
+        key={problem.id}
+        items={buildProblemContextMenuItems(problem)}
       >
-        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[14px] border border-[var(--problems-border)] bg-[var(--problems-surface)]">
-          {renderSeverityIcon(problem)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="line-clamp-2 text-[13px] font-medium text-[var(--problems-text)]">
-            {problem.message}
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate(problem.filePath, problem.line, problem.column)
+          }
+          className={`group flex w-full items-start gap-3 rounded-[18px] border border-[var(--problems-border)] bg-[var(--problems-bg-tertiary)] text-left transition-colors hover:border-[var(--problems-border-strong)] hover:bg-[var(--problems-row-active)] focus:bg-[var(--problems-row-active)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
+            variant === "detail" ? "px-4 py-3.5" : "px-3.5 py-3"
+          }`}
+        >
+          <div
+            className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[14px] border"
+            style={{
+              color: tone.color,
+              borderColor: tone.border,
+              background: tone.background,
+            }}
+          >
+            {renderSeverityIcon(problem)}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--problems-text-tertiary)]">
-            <span className={problemsPillClass}>
-              Ln {problem.line}, Col {problem.column}
-            </span>
-            {problem.source ? (
-              <span className={problemsPillClass}>{problem.source}</span>
-            ) : null}
-            {problem.code ? (
-              <span className={problemsPillClass}>{problem.code}</span>
-            ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="line-clamp-2 text-[13px] font-medium text-[var(--problems-text)]">
+              {problem.message}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--problems-text-tertiary)]">
+              <span className={problemsPillClass}>
+                Ln {problem.line}, Col {problem.column}
+              </span>
+              {problem.source ? (
+                <span className={problemsPillClass}>{problem.source}</span>
+              ) : null}
+              {problem.code ? (
+                <span className={problemsPillClass}>{problem.code}</span>
+              ) : null}
+            </div>
           </div>
-        </div>
-        <ChevronRight
-          size={14}
-          className="mt-1 shrink-0 text-[var(--problems-text-tertiary)] transition-transform group-hover:translate-x-0.5"
-        />
-      </button>
-    </ContextActionMenu>
-  );
+          <ChevronRight
+            size={14}
+            className="mt-1 shrink-0 text-[var(--problems-text-tertiary)] transition-transform group-hover:translate-x-0.5"
+          />
+        </button>
+      </ContextActionMenu>
+    );
+  };
 
   const renderLimitNotice = (
     hiddenCount: number,

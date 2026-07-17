@@ -20,6 +20,7 @@ import {
   normalizeThemePreference,
   resolveThemePreference,
   setRuntimeCustomThemes,
+  type CustomThemeId,
   type IDEThemeDefinition,
   type ThemeId,
 } from "../styles/themes";
@@ -99,6 +100,9 @@ const persistCustomThemes = (themes: IDEThemeDefinition[]) => {
     JSON.stringify(themes.map(serializeTheme)),
   );
 };
+
+const getCustomThemeFallback = (appearance: "light" | "dark"): Theme =>
+  appearance === "dark" ? "blackprint" : "arlecchino-light";
 
 const getInteractionNow = (): number =>
   typeof performance === "undefined" ? Date.now() : performance.now();
@@ -473,6 +477,32 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     [],
   );
 
+  const handleRemoveCustomTheme = useCallback(
+    (themeId: CustomThemeId) => {
+      const removedTheme = customThemes.find(
+        (customTheme) => customTheme.id === themeId,
+      );
+      if (!removedTheme) {
+        return;
+      }
+
+      previewThemeRef.current = null;
+      setCustomThemes((currentThemes) => {
+        const nextThemes = currentThemes.filter(
+          (customTheme) => customTheme.id !== themeId,
+        );
+        persistCustomThemes(nextThemes);
+        setRuntimeCustomThemes(nextThemes);
+        return nextThemes;
+      });
+
+      if (theme === themeId) {
+        handleSetTheme(getCustomThemeFallback(removedTheme.appearance));
+      }
+    },
+    [customThemes, handleSetTheme, theme],
+  );
+
   const contextValue = useMemo(
     () => ({
       theme,
@@ -480,6 +510,7 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
       previewTheme: handlePreviewTheme,
       customThemes,
       addCustomTheme: handleAddCustomTheme,
+      removeCustomTheme: handleRemoveCustomTheme,
       isDark,
       resolvedThemeId,
       activeTheme,
@@ -489,6 +520,7 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
       customThemes,
       handleAddCustomTheme,
       handlePreviewTheme,
+      handleRemoveCustomTheme,
       handleSetTheme,
       isDark,
       resolvedThemeId,

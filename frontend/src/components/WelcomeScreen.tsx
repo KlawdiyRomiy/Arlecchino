@@ -41,15 +41,15 @@ const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 const welcomePanelClass =
-  "w-full overflow-hidden rounded-[34px] border border-[var(--shell-border-strong)] bg-[color-mix(in_srgb,var(--surface-elevated)_96%,transparent)] shadow-[inset_0_1px_0_var(--shell-inner-highlight),0_1px_2px_rgba(0,0,0,0.05),0_14px_28px_-20px_rgba(0,0,0,0.34),0_30px_64px_-48px_rgba(0,0,0,0.28)] backdrop-blur-xl";
+  "w-full overflow-hidden rounded-[34px] border border-[var(--shell-border-strong)] bg-[var(--surface-elevated)] shadow-[inset_0_1px_0_var(--shell-inner-highlight),0_1px_2px_rgba(0,0,0,0.05),0_14px_28px_-20px_rgba(0,0,0,0.34),0_30px_64px_-48px_rgba(0,0,0,0.28)]";
 const welcomeClusterClass =
-  "rounded-[34px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_96%,transparent)] p-2 shadow-[inset_0_1px_0_var(--shell-inner-highlight),var(--shell-shadow)]";
+  "rounded-[34px] border border-[var(--shell-border)] bg-[var(--surface-shell-soft)] p-2 shadow-[inset_0_1px_0_var(--shell-inner-highlight),var(--shell-shadow)]";
 const welcomeActionClass =
-  "flex min-h-[86px] min-w-0 items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell)_86%,transparent)] px-5 py-3 text-left text-[var(--text-primary)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_72%,transparent)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]";
+  "flex min-h-[86px] min-w-0 items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell)] px-5 py-3 text-left text-[var(--text-primary)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[var(--surface-active)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]";
 const welcomeIconClass =
-  "flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_78%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]";
+  "flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell-strong)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]";
 const welcomeThemeTriggerClass =
-  "inline-flex h-10 min-w-[240px] max-w-[300px] items-center justify-between gap-2 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_94%,transparent)] px-4 text-left text-[13px] font-medium text-[var(--text-secondary)] outline-none transition-colors hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--shell-border-strong)]";
+  "inline-flex h-10 min-w-[240px] max-w-[300px] items-center justify-between gap-2 rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell-soft)] px-4 text-left text-[13px] font-medium text-[var(--text-secondary)] outline-none transition-colors hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--shell-border-strong)]";
 
 const applyWelcomeZoomAction = (action: string) => {
   const settingsStore = useEditorSettingsStore.getState();
@@ -134,14 +134,14 @@ const RecentProjectIndexButton: React.FC<{
       title={title}
       className={`relative flex h-11 min-w-[112px] shrink-0 items-center justify-center overflow-hidden rounded-full border px-3 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
         isComplete
-          ? "border-[color-mix(in_srgb,var(--status-success)_44%,var(--shell-border))] bg-[color-mix(in_srgb,var(--status-success)_12%,var(--surface-shell-soft))] text-[var(--status-success)]"
+          ? "border-[var(--status-success-border)] bg-[var(--status-success-surface)] text-[var(--status-success-text)]"
           : isError
-            ? "border-[color-mix(in_srgb,var(--status-error)_44%,var(--shell-border))] bg-[color-mix(in_srgb,var(--status-error)_12%,var(--surface-shell-soft))] text-[var(--status-error)] hover:border-[color-mix(in_srgb,var(--status-error)_62%,var(--shell-border-strong))]"
-            : "border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell)_82%,transparent)] text-[var(--text-secondary)] hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)] disabled:hover:border-[var(--shell-border)] disabled:hover:text-[var(--text-secondary)]"
+            ? "border-[var(--status-error-border)] bg-[var(--status-error-surface)] text-[var(--status-error-text)] hover:border-[var(--status-error-text)]"
+            : "border-[var(--shell-border)] bg-[var(--surface-shell)] text-[var(--text-secondary)] hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)] disabled:hover:border-[var(--shell-border)] disabled:hover:text-[var(--text-secondary)]"
       }`}
     >
       {isIndexing ? (
-        <span className="absolute inset-x-3 bottom-1.5 h-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)]">
+        <span className="absolute inset-x-3 bottom-1.5 h-1 overflow-hidden rounded-full bg-[var(--surface-2)]">
           <span
             className="block h-full origin-left rounded-full bg-[var(--accent-primary)] transition-transform duration-200"
             style={{ transform: `scaleX(${percent / 100})` }}
@@ -588,22 +588,21 @@ const WelcomeScreen: React.FC<{
   if (loading) {
     return (
       <div className="relative flex h-full items-center justify-center overflow-hidden bg-[var(--surface-canvas)] px-6">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_120%_80%_at_50%_38%,color-mix(in_srgb,var(--surface-2)_40%,transparent)_0%,transparent_66%)]" />
         <div className="grid-bg opacity-70" />
         <div className={`${welcomePanelClass} relative max-w-[860px]`}>
           <div className="px-10 pb-6 pt-9">
-            <div className="h-7 w-44 animate-pulse rounded-full bg-[color-mix(in_srgb,var(--surface-2)_80%,transparent)]" />
-            <div className="mt-3 h-4 w-64 animate-pulse rounded-full bg-[color-mix(in_srgb,var(--surface-2)_64%,transparent)]" />
+            <div className="h-7 w-44 animate-pulse rounded-full bg-[var(--surface-2)]" />
+            <div className="mt-3 h-4 w-64 animate-pulse rounded-full bg-[var(--surface-2)]" />
           </div>
           <div className="space-y-5 px-7 pb-7">
             <div className={welcomeClusterClass}>
               <div className="grid gap-3 sm:grid-cols-3">
-                <div className="h-[86px] animate-pulse rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell)_86%,transparent)]" />
-                <div className="h-[86px] animate-pulse rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell)_86%,transparent)]" />
-                <div className="h-[86px] animate-pulse rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell)_86%,transparent)]" />
+                <div className="h-[86px] animate-pulse rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell)]" />
+                <div className="h-[86px] animate-pulse rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell)]" />
+                <div className="h-[86px] animate-pulse rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell)]" />
               </div>
             </div>
-            <div className="flex h-40 items-center justify-center rounded-[28px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] text-[var(--text-muted)]">
+            <div className="flex h-40 items-center justify-center rounded-[28px] border border-[var(--shell-border)] bg-[var(--surface-shell-soft)] text-[var(--text-muted)]">
               <Loader2 size={20} className="animate-spin" />
             </div>
           </div>
@@ -621,7 +620,6 @@ const WelcomeScreen: React.FC<{
     >
       <div className="relative flex h-full flex-col overflow-hidden bg-[var(--surface-canvas)]">
         <div className="absolute inset-0 z-0 bg-[var(--surface-canvas)]" />
-        <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_120%_82%_at_50%_38%,color-mix(in_srgb,var(--surface-2)_44%,transparent)_0%,transparent_68%)]" />
         <div className="grid-bg opacity-70" />
 
         <div
@@ -768,14 +766,14 @@ const WelcomeScreen: React.FC<{
                         >
                           <div
                             data-welcome-recent-project
-                            className="flex min-h-[76px] w-full items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-3 py-3 shadow-[inset_0_1px_0_var(--shell-inner-highlight)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_66%,transparent)]"
+                            className="flex min-h-[76px] w-full items-center gap-3 rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell-soft)] px-3 py-3 shadow-[inset_0_1px_0_var(--shell-inner-highlight)] transition-colors hover:border-[var(--shell-border-strong)] hover:bg-[var(--surface-active)]"
                           >
                             <button
                               type="button"
                               onClick={() => onProjectOpen(project.path)}
                               className="flex min-w-0 flex-1 items-center gap-4 rounded-full px-1 text-left focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
                             >
-                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_78%,transparent)] text-[14px] font-medium text-[var(--text-primary)]">
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[var(--shell-border)] bg-[var(--surface-shell-strong)] text-[14px] font-medium text-[var(--text-primary)]">
                                 {project.name.slice(0, 2).toUpperCase()}
                               </div>
                               <div className="min-w-0 flex-1">
@@ -810,7 +808,7 @@ const WelcomeScreen: React.FC<{
                       );
                     })
                   ) : (
-                    <div className="rounded-[28px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-soft)_86%,transparent)] px-5 py-6 text-[15px] text-[var(--text-muted)]">
+                    <div className="rounded-[28px] border border-[var(--shell-border)] bg-[var(--surface-shell-soft)] px-5 py-6 text-[15px] text-[var(--text-muted)]">
                       No recent projects yet.
                     </div>
                   )}

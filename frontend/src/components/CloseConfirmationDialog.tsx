@@ -96,7 +96,7 @@ export const CloseConfirmationDialog: React.FC<
             return (
               <>
                 <div className="flex items-start gap-[1.25em]">
-                  <div className="mt-[0.08em] flex h-[3.25em] w-[3.25em] shrink-0 items-center justify-center rounded-[1.1em] border border-[color-mix(in_srgb,var(--status-warning)_35%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)] text-[var(--status-warning)]">
+                  <div className="mt-[0.08em] flex h-[3.25em] w-[3.25em] shrink-0 items-center justify-center rounded-[1.1em] border border-[var(--status-warning-border)] bg-[var(--status-warning-surface)] text-[var(--status-warning-text)]">
                     <AlertCircle className="h-[1.45em] w-[1.45em]" />
                   </div>
                   <div className="min-w-0">

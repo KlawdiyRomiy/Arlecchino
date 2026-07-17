@@ -58,7 +58,7 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
     >
       <div className="relative w-full max-w-[680px]">
         <div
-          className="shell-modal-surface overflow-hidden rounded-[16px] bg-[color-mix(in_srgb,var(--surface-overlay)_96%,transparent)] backdrop-blur-[6px]"
+          className="shell-modal-surface overflow-hidden rounded-[16px] bg-[var(--surface-overlay)]"
           data-testid="tab-switcher-panel"
         >
           <div ref={listRef} className="max-h-[420px] overflow-y-auto p-2">

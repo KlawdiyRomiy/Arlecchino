@@ -113,27 +113,27 @@ import {
 } from "./ui/motionContracts";
 
 const settingsPanelClass =
-  "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_98%,transparent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)]";
+  "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[var(--surface-1)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)]";
 const settingsInsetClass =
-  "overflow-hidden rounded-[22px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)]";
+  "overflow-hidden rounded-[22px] border border-[var(--border-subtle)] bg-[var(--surface-2)]";
 const settingsPillClass =
-  "inline-flex min-h-[30px] items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[11px] font-medium text-[var(--text-secondary)]";
+  "inline-flex min-h-[30px] items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[11px] font-medium text-[var(--text-secondary)]";
 const settingsIconButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-40";
 const settingsActionButtonClass =
-  "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
 const settingsSwitchRootClass =
   "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border border-[var(--border-default)] bg-[var(--surface-3)] p-0.5 transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-60 data-[state=checked]:border-[var(--text-primary)] data-[state=checked]:bg-[var(--text-primary)]";
 const settingsSwitchThumbClass =
   "block h-6 w-6 translate-x-0 rounded-full bg-[var(--text-secondary)] shadow-sm transition-transform data-[state=checked]:translate-x-5 data-[state=checked]:bg-[var(--surface-canvas)]";
 const settingsDropdownTriggerClass =
-  "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-4 text-left text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--border-default)]";
+  "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-4 text-left text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--border-default)]";
 const settingsDropdownContentClass =
-  "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-overlay)_98%,transparent)] p-2 shadow-[var(--shadow-overlay)] backdrop-blur-xl";
+  "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-overlay)] p-2 shadow-[var(--shadow-overlay)]";
 const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
 const settingsInputClass =
-  "h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+  "h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-3 text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
 const isThemeSpatialTransitionActive = () =>
   document.body.dataset.themeSpatialTransitionActive === "true" ||
   document.querySelector(".theme-spatial-transition-overlay") !== null;
@@ -174,7 +174,7 @@ const autocompleteSourceLabels: Array<
 const autocompleteBadgeClass = (active: boolean) =>
   `${settingsPillClass} min-h-[26px] px-2.5 ${
     active
-      ? "border-[color-mix(in_srgb,var(--status-success)_45%,var(--border-subtle))] text-[var(--status-success)]"
+      ? "border-[var(--status-success-border)] bg-[var(--status-success-surface)] text-[var(--status-success-text)]"
       : "opacity-45"
   }`;
 
@@ -961,7 +961,7 @@ const ShortcutPill: React.FC<{ shortcut: string; active?: boolean }> = ({
     className={`inline-flex min-h-[28px] items-center rounded-full border px-3 font-mono text-[10px] font-semibold uppercase text-[var(--text-secondary)] ${
       active
         ? "border-[var(--focus-ring)] bg-[color-mix(in_srgb,var(--focus-ring)_14%,var(--surface-2))] text-[var(--text-primary)]"
-        : "border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)]"
+        : "border-[var(--border-subtle)] bg-[var(--surface-1)]"
     }`}
   >
     {formatShortcut(shortcut)}
@@ -1287,8 +1287,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       .filter(
         (entry) =>
           showAIProviderSettings ||
-            (entry.id !== "ai-provider-launch" &&
-              entry.id !== "ai-remote-byok"),
+          (entry.id !== "ai-provider-launch" && entry.id !== "ai-remote-byok"),
       )
       .map((entry) => ({
         entry,
@@ -1943,11 +1942,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
 
     void refreshAutocompleteCapabilities();
-  }, [
-    activeTab,
-    isOpen,
-    refreshAutocompleteCapabilities,
-  ]);
+  }, [activeTab, isOpen, refreshAutocompleteCapabilities]);
 
   useEffect(() => {
     if (!isOpen || activeTab !== "mcp") {
@@ -2100,7 +2095,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {autocompleteTierCounts.map((item) => (
           <div
             key={item.tier}
-            className="rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2"
+            className="rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 py-2"
           >
             <div className="text-[11px] text-[var(--text-muted)]">
               {item.label}
@@ -2124,7 +2119,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </label>
 
       {autocompleteError ? (
-        <div className="mt-3 flex items-center gap-2 rounded-[16px] border border-[color-mix(in_srgb,var(--status-error)_55%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-3 py-2 text-[12px] text-[var(--status-error)]">
+        <div className="mt-3 flex items-center gap-2 rounded-[16px] border border-[var(--status-error-border)] bg-[var(--status-error-surface)] px-3 py-2 text-[12px] text-[var(--status-error-text)]">
           <AlertCircle size={14} />
           {autocompleteError}
         </div>
@@ -2185,9 +2180,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ? "Python venv"
                 : installType === "npm-managed"
                   ? "Managed Node"
-                : installType
-                  ? installType.toUpperCase()
-                : "";
+                  : installType
+                    ? installType.toUpperCase()
+                    : "";
           const installDependencies = capability.lspInstallDependencies ?? [];
           const installUnavailableReason =
             !lspInstalled && !capability.lspCanInstall
@@ -2262,7 +2257,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span
                       className={
                         lspError && !lspInstalling
-                          ? `${settingsPillClass} min-h-[26px] border-[color-mix(in_srgb,var(--status-error)_45%,var(--border-subtle))] px-2.5 text-[var(--status-error)]`
+                          ? `${settingsPillClass} min-h-[26px] border-[var(--status-error-border)] bg-[var(--status-error-surface)] px-2.5 text-[var(--status-error-text)]`
                           : autocompleteBadgeClass(lspActive || lspAvailable)
                       }
                     >
@@ -2297,7 +2292,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {capabilityDetailRows.length > 0 ? (
-                <div className="grid gap-x-3 gap-y-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] px-3 py-2 text-[11px] leading-5 text-[var(--text-secondary)] sm:grid-cols-[96px_minmax(0,1fr)]">
+                <div className="grid gap-x-3 gap-y-2 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 py-2 text-[11px] leading-5 text-[var(--text-secondary)] sm:grid-cols-[96px_minmax(0,1fr)]">
                   {capabilityDetailRows.map((row) => (
                     <React.Fragment key={row.label}>
                       <div className="font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">
@@ -2336,7 +2331,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {showInstallMetadata ? (
-                <div className="min-w-0 space-y-1 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] px-3 py-2">
+                <div className="min-w-0 space-y-1 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 py-2">
                   {capability.lspInstallCommand ? (
                     <div className="break-all font-mono text-[11px] leading-5 text-[var(--text-secondary)]">
                       {capability.lspInstallCommand}
@@ -2661,18 +2656,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     size={14}
                     className={
                       remoteBYOKSetup.statusTone === "error"
-                        ? "text-[var(--status-error)]"
+                        ? "text-[var(--status-error-text)]"
                         : remoteBYOKSetup.statusTone === "success"
-                          ? "text-[var(--status-success)]"
+                          ? "text-[var(--status-success-text)]"
                           : "text-[var(--text-muted)]"
                     }
                   />
                   <span
                     className={
                       remoteBYOKSetup.statusTone === "error"
-                        ? "text-[var(--status-error)]"
+                        ? "text-[var(--status-error-text)]"
                         : remoteBYOKSetup.statusTone === "success"
-                          ? "text-[var(--status-success)]"
+                          ? "text-[var(--status-success-text)]"
                           : "text-[var(--text-muted)]"
                     }
                   >
@@ -2744,7 +2739,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {mcpError ? (
-          <div className="flex items-center gap-2 rounded-[16px] border border-[color-mix(in_srgb,var(--status-error)_55%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-3 py-2 text-[12px] text-[var(--status-error)]">
+          <div className="flex items-center gap-2 rounded-[16px] border border-[var(--status-error-border)] bg-[var(--status-error-surface)] px-3 py-2 text-[12px] text-[var(--status-error-text)]">
             <AlertCircle size={14} />
             {mcpError}
           </div>
@@ -2793,7 +2788,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ].map(([label, value]) => (
                 <div
                   key={label}
-                  className="rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2"
+                  className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 py-2"
                 >
                   <div className="text-[var(--text-muted)]">{label}</div>
                   <div className="mt-1 break-words font-mono text-[11px] text-[var(--text-primary)]">
@@ -2918,8 +2913,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <span
                         className={`${settingsPillClass} min-h-[24px] px-2 ${
                           tool.effectiveEnabled
-                            ? "text-[var(--status-success)]"
-                            : "text-[var(--status-warning)]"
+                            ? "text-[var(--status-success-text)]"
+                            : "text-[var(--status-warning-text)]"
                         }`}
                       >
                         {tool.effectiveEnabled ? "Available" : "Blocked"}
@@ -3172,7 +3167,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     }
                     onAnimationStart={markSettingsMotion}
                   >
-                    <div className="flex w-[276px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] p-3">
+                    <div className="flex w-[276px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--surface-1)] p-3">
                       <div className="shell-cluster-soft mb-3 flex min-h-[58px] w-full items-center gap-3 px-3 py-2">
                         <div className="flex h-10 w-10 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
                           <Settings size={17} />
@@ -3267,7 +3262,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                       },
                                     }
                               }
-                              className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_94%,transparent)] shadow-[var(--shadow-overlay)]"
+                              className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-overlay)] shadow-[var(--shadow-overlay)]"
                               data-testid="settings-search-suggestions"
                               onAnimationStart={markSettingsMotion}
                               style={surfaceStyle}
@@ -3291,7 +3286,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     }
                                     className={`grid min-h-[54px] w-full grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-[var(--surface-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
                                       activeTab === entry.tab
-                                        ? "bg-[color-mix(in_srgb,var(--surface-active)_80%,transparent)]"
+                                        ? "bg-[var(--surface-active)]"
                                         : ""
                                     }`}
                                   >
@@ -3337,7 +3332,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
                               }`}
                             >
-                              <span className="flex h-8 w-8 items-center justify-center rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)]">
+                              <span className="flex h-8 w-8 items-center justify-center rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)]">
                                 <Icon size={15} />
                               </span>
                               <span className="min-w-0">
@@ -3504,8 +3499,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     <div
                                       className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
                                         customFontStatus.tone === "success"
-                                          ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                                          : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                                          ? "border-[var(--status-success-border)] bg-[var(--status-success-surface)] text-[var(--status-success-text)]"
+                                          : "border-[var(--status-error-border)] bg-[var(--status-error-surface)] text-[var(--status-error-text)]"
                                       }`}
                                     >
                                       {customFontStatus.message}
@@ -3869,8 +3864,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     <div
                                       className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
                                         customFontStatus.tone === "success"
-                                          ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                                          : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                                          ? "border-[var(--status-success-border)] bg-[var(--status-success-surface)] text-[var(--status-success-text)]"
+                                          : "border-[var(--status-error-border)] bg-[var(--status-error-surface)] text-[var(--status-error-text)]"
                                       }`}
                                     >
                                       {customFontStatus.message}
@@ -4107,7 +4102,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   ].map(([label, value]) => (
                                     <div
                                       key={label}
-                                      className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
+                                      className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
                                     >
                                       <span className="text-[var(--text-muted)]">
                                         {label}

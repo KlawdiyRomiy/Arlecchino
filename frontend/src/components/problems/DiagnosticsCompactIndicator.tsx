@@ -15,12 +15,7 @@ interface DiagnosticsCompactIndicatorProps {
   summary: DiagnosticsSummary;
   onClick: () => void;
   state?:
-    | "default"
-    | "scanning"
-    | "partial"
-    | "incomplete"
-    | "unavailable"
-    | "scan";
+    "default" | "scanning" | "partial" | "incomplete" | "unavailable" | "scan";
 }
 
 const formatCount = (value: number, label: string) => `${value} ${label}`;
@@ -53,15 +48,24 @@ export const DiagnosticsCompactIndicator: React.FC<
     >
       {hasProblems ? (
         <>
-          <span className="flex items-center gap-1 text-[#EF4444]">
+          <span
+            className="flex items-center gap-1"
+            style={{ color: "var(--status-error-text)" }}
+          >
             <AlertCircle size={12} />
             <span className="font-semibold">{summary.errors}</span>
           </span>
-          <span className="flex items-center gap-1 text-[#F59E0B]">
+          <span
+            className="flex items-center gap-1"
+            style={{ color: "var(--status-warning-text)" }}
+          >
             <AlertTriangle size={12} />
             <span className="font-semibold">{summary.warnings}</span>
           </span>
-          <span className="flex items-center gap-1 text-[#3B82F6]">
+          <span
+            className="flex items-center gap-1"
+            style={{ color: "var(--status-info-text)" }}
+          >
             <Info size={12} />
             <span className="font-semibold">{summary.infos}</span>
           </span>
@@ -72,17 +76,26 @@ export const DiagnosticsCompactIndicator: React.FC<
           <span className="font-semibold">Scanning</span>
         </span>
       ) : state === "partial" ? (
-        <span className="flex items-center gap-1 text-[#F59E0B]">
+        <span
+          className="flex items-center gap-1"
+          style={{ color: "var(--status-warning-text)" }}
+        >
           <Layers3 size={12} />
           <span className="font-semibold">Partial</span>
         </span>
       ) : state === "incomplete" ? (
-        <span className="flex items-center gap-1 text-[#F59E0B]">
+        <span
+          className="flex items-center gap-1"
+          style={{ color: "var(--status-warning-text)" }}
+        >
           <Layers3 size={12} />
           <span className="font-semibold">Incomplete</span>
         </span>
       ) : state === "unavailable" ? (
-        <span className="flex items-center gap-1 text-[#F59E0B]">
+        <span
+          className="flex items-center gap-1"
+          style={{ color: "var(--status-warning-text)" }}
+        >
           <AlertTriangle size={12} />
           <span className="font-semibold">Unavailable</span>
         </span>
@@ -92,7 +105,10 @@ export const DiagnosticsCompactIndicator: React.FC<
           <span className="font-semibold">Scan</span>
         </span>
       ) : (
-        <span className="flex items-center gap-1 text-[#22C55E]">
+        <span
+          className="flex items-center gap-1"
+          style={{ color: "var(--status-success-text)" }}
+        >
           <CheckCircle2 size={12} />
           <span className="font-semibold">Clear</span>
         </span>

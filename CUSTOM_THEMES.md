@@ -11,6 +11,53 @@ importing another JSON file with the same normalized id.
 If you adapt an existing theme, keep its attribution and license with your
 theme file.
 
+## Flat Surface Contract
+
+Custom themes use opaque, flat surfaces for permanent IDE chrome: the canvas,
+sidebars, tab bars, menus, panels, popovers, and editor background. Use `bg`,
+`bgSecondary`, `bgTertiary`, and `bgPanel` as distinct solid levels. Do not use
+gradients, translucency, or backdrop blur to make a theme feel coloured.
+
+Reserve the accent colour for selected states, focus, buttons, status, and
+editor syntax. A selected row may use one solid colour mixed from the accent
+and its opaque surface, but it must not be a gradient. Built-in themes and the
+bundled custom-theme collection follow this same rule.
+
+For light themes especially, make the whole workspace deliberately light but
+not blank: give `bg`, `bgSecondary`, `bgTertiary`, and `bgPanel` a coherent
+warm or cool cast with visible, opaque steps between them. Keep the saturation
+low enough for long coding sessions, but do not flatten every permanent surface
+to white or gray. Do not use a saturated accent as a whole sidebar, panel, or
+chat-canvas background: it competes with text and makes adjacent surface levels
+look like abrupt colour breaks.
+
+## Light Theme Calibration
+
+Use a single calm surface scale, similar to a well-tuned editor theme: the
+canvas is the most neutral level, chrome is one measured step away, and panels
+or menus are visibly separated without becoming a second brand colour. The
+accent belongs in code syntax, selection, focus, primary actions, and compact
+semantic markers. It must not become the default fill for permanent UI.
+
+Keep these checks when authoring a light theme:
+
+- `bg`, `bgSecondary`, `bgTertiary`, and `bgPanel` must be opaque colours.
+  Give each a distinct job and keep neighbouring steps close enough that a
+  sidebar, editor, terminal, and dialog read as one workspace.
+- In a light theme, `bg` also tints the persistent panel roots and editor
+  canvas. Do not set it to generic white: choose the theme's calm base tint so
+  the Explorer and code editor remain visibly part of the same workspace.
+- Use opaque semantic triples for success, warning, error, and info: a dark,
+  readable foreground, a clearly visible border, and a light but unmistakable
+  semantic surface mixed with the panel background. Inactive pills need the
+  same semantic surface as selected ones, with selection communicated by the
+  active outline. Do not blend semantic fills with `transparent`.
+- Check normal text and every status label against the surface below it. Body
+  text and compact labels require at least 4.5:1 contrast. A coloured outline
+  never compensates for unreadable label text.
+- Treat `bgHover` as interaction feedback only. It must not be reused as a
+  permanent sidebar, panel, modal, or input background.
+
 ## File Shape
 
 A custom theme file must be a JSON object with these top-level fields:
@@ -135,29 +182,29 @@ Ready-to-import files:
   "appearance": "light",
   "description": "A rehearsal-paper theme with copper structure and emerald focus cues.",
   "colors": {
-    "bg": "#F7F1E6",
-    "bgSecondary": "#EFE7D8",
-    "bgTertiary": "#E6DCCB",
-    "bgPanel": "#FFF9EF",
-    "bgHover": "#E9DCC6",
-    "border": "#C9BCA8",
-    "borderSubtle": "#DED2BD",
-    "borderLight": "#A9672B",
+    "bg": "#FFF5DF",
+    "bgSecondary": "#F7E6BE",
+    "bgTertiary": "#ECD39A",
+    "bgPanel": "#FFFAEE",
+    "bgHover": "#E6C67E",
+    "border": "#C9A865",
+    "borderSubtle": "#E7D2A7",
+    "borderLight": "#936A27",
     "text": "#232323",
     "textPrimary": "#1B1B1B",
     "textSecondary": "#4D463D",
     "textMuted": "#756D61"
   },
   "editor": {
-    "background": "#FFF9EF",
-    "surface": "#F4ECDD",
-    "surfaceElevated": "#ECE0CE",
-    "gutter": "#F1E7D6",
-    "scrollbarTrack": "#E8DDCA",
+    "background": "#FFFAEE",
+    "surface": "#F7E6BE",
+    "surfaceElevated": "#ECD39A",
+    "gutter": "#F9EAC7",
+    "scrollbarTrack": "#ECD39A",
     "scrollbarThumb": "#BDAF98",
     "scrollbarThumbHover": "#A48763",
-    "border": "rgba(35, 35, 35, 0.11)",
-    "borderStrong": "rgba(169, 103, 43, 0.28)",
+    "border": "#E7D2A7",
+    "borderStrong": "#C9A865",
     "text": "#232323",
     "textSoft": "#4D463D",
     "textMuted": "#756D61",
@@ -169,8 +216,8 @@ Ready-to-import files:
     "selectionMatch": "rgba(169, 103, 43, 0.14)",
     "bracketMatch": "rgba(169, 103, 43, 0.24)",
     "searchMatch": "rgba(223, 151, 61, 0.3)",
-    "tooltipBg": "rgba(255, 249, 239, 0.985)",
-    "tooltipBgStrong": "rgba(244, 236, 221, 0.99)",
+    "tooltipBg": "#FFFAEE",
+    "tooltipBgStrong": "#F7E6BE",
     "tooltipShadow": "inset 0 1px 0 rgba(255, 255, 255, 0.84), 0 18px 38px -24px rgba(71, 55, 32, 0.28), 0 28px 70px -42px rgba(71, 55, 32, 0.2)",
     "ghostText": "rgba(35, 35, 35, 0.32)",
     "highlight": "rgba(14, 127, 104, 0.1)",
@@ -187,10 +234,10 @@ Ready-to-import files:
     "accent": "#0E7F68"
   },
   "terminal": {
-    "background": "#FFF9EF",
+    "background": "#FFF5DF",
     "foreground": "#232323",
     "cursor": "#0E7F68",
-    "cursorAccent": "#FFF9EF",
+    "cursorAccent": "#FFFAEE",
     "selectionBackground": "rgba(14, 127, 104, 0.2)",
     "black": "#232323",
     "red": "#A14F3C",
@@ -323,10 +370,11 @@ Instead, Arlecchino generates a small shared palette:
 Those slots are derived from `colors.textPrimary`, `colors.textSecondary`, the
 generated theme accent, status colors, and editor syntax colors. Explorer maps
 common labels to familiar color families, such as blue for TypeScript/C++/Docker,
-green for YAML and shell scripts, amber for JavaScript/env labels, teal for Go,
-red for JSON/HTML/Git, and purple for PHP/GraphQL/lint-style labels. Remaining
-labels fall back to a stable hash slot, so labels get varied colors without
-random flicker and without a per-language theme contract.
+green for YAML and shell scripts, amber for JavaScript/env labels, teal for
+Go/Rust/Swift, red for JSON/HTML/Git, violet for PHP/GraphQL/CSS-family labels,
+and a separate accent for less common runtimes. Remaining labels fall back to a
+stable hash slot, so labels get varied colors without random flicker and without
+a per-language theme contract.
 
 When authoring a custom theme, keep `colors.textPrimary`,
 `colors.textSecondary`, the status colors, and editor syntax colors readable
@@ -364,10 +412,19 @@ dropdown.
 
 - Keep `appearance` honest. Dark themes should use `"dark"` and light themes
   should use `"light"` so Arlecchino can set the right document mode.
-- Keep editor and terminal backgrounds opaque unless you are intentionally
-  auditing transparent material layers and contrast.
+- Keep every persistent surface opaque: editor and terminal canvases, sidebars,
+  panels, menus, dialogs, inputs, chips, and tooltip fills. Transparency is
+  reserved for temporary selections, focus rings, and transition overlays.
 - Tune `colors` for the IDE shell first, then tune `editor` and `terminal`
   against that shell palette.
+- `editor.accent` also colors primary actions and focus treatment in custom
+  themes. Choose an accent that remains readable with the theme background.
+- Problems summary filters, the status-bar diagnostic indicator, Sync
+  Dependencies, and every shared semantic chip derive a foreground, border, and
+  opaque low-chroma fill from terminal ANSI `red`, `yellow`, `blue`, and
+  `green`. Keep those four colours distinct and readable against the terminal
+  background; never add a `/10`, `/25`, or `color-mix(..., transparent)` fill
+  around the raw ANSI colour.
 - Do not paste a VS Code, Zed, or terminal theme directly. Convert its palette
   into the three Arlecchino sections and keep every required key present.
 - Do not add `cssVariables`; Arlecchino generates CSS variables from the three

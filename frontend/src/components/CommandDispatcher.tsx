@@ -965,7 +965,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
               {isTerminalMode && (
                 <>
                   {ghostText && <span className="shell-kbd">Tab</span>}
-                  <span className="shell-pill border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 text-[var(--status-success)]">
+                  <span className="shell-pill border-[var(--status-success-border)] bg-[var(--status-success-surface)] text-[var(--status-success-text)]">
                     Terminal
                   </span>
                 </>

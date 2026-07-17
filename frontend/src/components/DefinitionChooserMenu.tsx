@@ -106,18 +106,15 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
         top: finalY,
         width: `${menuWidth}px`,
         maxHeight: `${menuHeight}px`,
-        background:
-          "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 98%, transparent), color-mix(in srgb, var(--surface-shell) 99%, transparent))",
+        background: "var(--surface-shell-panel)",
         borderRadius: "18px",
-        boxShadow:
-          "var(--shadow-overlay), inset 0 1px 0 var(--shell-inner-highlight)",
+        boxShadow: "var(--shadow-overlay)",
         border: "1px solid var(--shell-border-strong)",
         zIndex: zIndex.modal,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         color: "var(--text-primary)",
-        backdropFilter: "blur(14px) saturate(1.08)",
         ...getInteractiveSurfaceMotionStyle({ preserveTransform: true }),
       }}
     >
@@ -158,10 +155,8 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
                 "background-color 150ms ease, color 150ms ease, box-shadow 150ms ease",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor =
-                "color-mix(in srgb, var(--surface-active) 74%, transparent)";
-              e.currentTarget.style.boxShadow =
-                "inset 0 1px 0 var(--shell-inner-highlight)";
+              e.currentTarget.style.backgroundColor = "var(--surface-active)";
+              e.currentTarget.style.boxShadow = "none";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = "transparent";

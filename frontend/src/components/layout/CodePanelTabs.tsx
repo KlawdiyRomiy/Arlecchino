@@ -307,7 +307,7 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
     <div
       ref={containerRef}
       data-testid="code-panel-tabs"
-      className="flex h-9 min-h-9 items-center gap-1 overflow-x-auto border-b border-[var(--shell-border-subtle)] bg-[color-mix(in_srgb,var(--surface-shell)_88%,transparent)] px-2"
+      className="flex h-9 min-h-9 items-center gap-1 overflow-x-auto border-b border-[var(--shell-border-subtle)] bg-[var(--surface-shell)] px-2"
     >
       {tabs.map((tab) => {
         const isActive = tab.path === activePath;

@@ -1,4 +1,5 @@
 import type {
+  CustomThemeId,
   IDEThemeDefinition,
   ThemeId,
   ThemePreference,
@@ -21,6 +22,7 @@ export interface ThemeContextType {
   previewTheme: (theme: Theme | null) => void;
   customThemes: IDEThemeDefinition[];
   addCustomTheme: (value: unknown, sourceName?: string) => IDEThemeDefinition;
+  removeCustomTheme: (themeId: CustomThemeId) => void;
   isDark: boolean;
   resolvedThemeId: ThemeId;
   activeTheme: IDEThemeDefinition;

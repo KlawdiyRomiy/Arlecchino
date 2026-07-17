@@ -1,10 +1,10 @@
 import React, { useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronDown, Plus } from "lucide-react";
+import { Check, ChevronDown, Plus, X } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
 import { themeOptions as builtInThemeOptions } from "../styles/themes";
-import type { IDEThemeDefinition } from "../styles/themes";
+import type { CustomThemeId, IDEThemeDefinition } from "../styles/themes";
 import type { Theme, ThemeTransitionOrigin } from "../types/theme";
 import { MotionDropdownContent } from "./ui/MotionDropdownContent";
 
@@ -12,6 +12,11 @@ type ThemeOption = {
   value: Theme;
   label: string;
   appearance: "auto" | "light" | "dark";
+};
+
+type CustomThemeOption = Omit<ThemeOption, "value"> & {
+  value: CustomThemeId;
+  isCustom: true;
 };
 
 type CustomThemeImportStatus = {
@@ -27,19 +32,19 @@ export type CustomThemeImportController = {
 };
 
 export const themeDropdownTriggerClass =
-  "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-4 text-left text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--border-default)]";
+  "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-4 text-left text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--border-default)]";
 export const themeDropdownContentClass =
-  "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-overlay)_98%,transparent)] p-2 shadow-[var(--shadow-overlay)] backdrop-blur-xl";
+  "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-overlay)] p-2 shadow-[var(--shadow-overlay)]";
 export const themeDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
 export const themeActionButtonClass =
-  "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
 
 export const themeImportStatusClass = (tone: CustomThemeImportStatus["tone"]) =>
   `mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
     tone === "success"
-      ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-      : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+      ? "border-[var(--status-success-border)] bg-[var(--status-success-surface)] text-[var(--status-success-text)]"
+      : "border-[var(--status-error-border)] bg-[var(--status-error-surface)] text-[var(--status-error-text)]"
   }`;
 
 const settingsThemeOptions: ThemeOption[] = [
@@ -98,11 +103,12 @@ const resolveThemeDropdownValueOrigin = (
 
 const createCustomThemeOptions = (
   customThemes: IDEThemeDefinition[],
-): ThemeOption[] =>
+): CustomThemeOption[] =>
   customThemes.map((customTheme) => ({
-    value: customTheme.id as Theme,
+    value: customTheme.id as CustomThemeId,
     label: customTheme.name,
     appearance: customTheme.appearance,
+    isCustom: true,
   }));
 
 export const useSelectedThemeLabel = () => {
@@ -189,7 +195,7 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
   maxHeight = "min(480px, var(--radix-dropdown-menu-content-available-height))",
   customThemeImport,
 }) => {
-  const { theme, setTheme, customThemes } = useTheme();
+  const { theme, setTheme, customThemes, removeCustomTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const optionElementsRef = useRef<Map<Theme, HTMLElement>>(new Map());
   const optionOriginsRef = useRef<Map<Theme, ThemeTransitionOrigin>>(new Map());
@@ -252,8 +258,7 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
         ? event.target.closest<HTMLElement>("[data-theme-option-value]")
         : null;
     const optionValue = optionElement?.dataset.themeOptionValue as
-      | Theme
-      | undefined;
+      Theme | undefined;
 
     if (optionElement && optionValue) {
       rememberSelectionOrigin(optionValue, optionElement);
@@ -268,8 +273,7 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
         ? event.target.closest<HTMLElement>("[data-theme-option-value]")
         : null;
     const optionValue = optionElement?.dataset.themeOptionValue as
-      | Theme
-      | undefined;
+      Theme | undefined;
 
     if (optionValue) {
       rememberCursorOrigin(optionValue, event);
@@ -311,6 +315,15 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
     setTheme(nextTheme, transitionOrigin ? { transitionOrigin } : undefined);
   };
 
+  const handleCustomThemeRemove = (themeOption: CustomThemeOption) => {
+    optionElementsRef.current.delete(themeOption.value);
+    optionOriginsRef.current.delete(themeOption.value);
+    if (selectionOriginRef.current?.value === themeOption.value) {
+      selectionOriginRef.current = null;
+    }
+    removeCustomTheme(themeOption.value);
+  };
+
   const renderThemeOption = (option: ThemeOption) => (
     <DropdownMenu.Item
       key={option.value}
@@ -323,7 +336,7 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
         }
       }}
       onSelect={(event) => handleThemeSelect(option.value, event)}
-      className={itemClassName}
+      className={`${itemClassName} w-full min-w-0`}
     >
       <Check
         size={14}
@@ -338,6 +351,26 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
         {option.appearance}
       </span>
     </DropdownMenu.Item>
+  );
+
+  const renderCustomThemeOption = (option: CustomThemeOption) => (
+    <div
+      key={option.value}
+      className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-1"
+    >
+      {renderThemeOption(option)}
+      <DropdownMenu.Item
+        aria-label={`Remove ${option.label}`}
+        title={`Remove ${option.label}`}
+        className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[14px] text-[var(--text-muted)] outline-none transition-colors data-[highlighted]:bg-[var(--status-error-surface)] data-[highlighted]:text-[var(--status-error-text)] focus-visible:bg-[var(--status-error-surface)] focus-visible:text-[var(--status-error-text)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+        onSelect={(event) => {
+          event.preventDefault();
+          handleCustomThemeRemove(option);
+        }}
+      >
+        <X size={15} aria-hidden="true" />
+      </DropdownMenu.Item>
+    </div>
   );
 
   return (
@@ -385,7 +418,7 @@ export const ThemeDropdown: React.FC<ThemeDropdownProps> = ({
             Custom themes
           </DropdownMenu.Label>
           {customThemeOptions.length > 0 ? (
-            customThemeOptions.map(renderThemeOption)
+            customThemeOptions.map(renderCustomThemeOption)
           ) : (
             <div className="px-4 py-2 text-[13px] text-[var(--text-muted)]">
               No custom themes added

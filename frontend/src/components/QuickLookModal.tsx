@@ -68,11 +68,9 @@ const quickLookControlsBubbleStyle: React.CSSProperties = {
   gap: "6px",
   padding: "4px",
   borderRadius: 9999,
-  background: "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
-  border: "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
+  background: "var(--surface-shell-soft)",
+  border: "1px solid var(--shell-border)",
   boxShadow: "var(--shell-shadow)",
-  backdropFilter: "blur(12px)",
-  WebkitBackdropFilter: "blur(12px)",
 };
 
 const setHighlightLineEffect = StateEffect.define<number | null>();
@@ -307,11 +305,8 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
               width: modalSize.width,
               height: modalSize.height,
               borderRadius: "30px",
-              background:
-                "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 98%, transparent), color-mix(in srgb, var(--surface-shell) 99%, transparent))",
+              background: "var(--surface-shell-panel)",
               color: "var(--text-primary)",
-              backdropFilter: "blur(18px) saturate(1.08)",
-              WebkitBackdropFilter: "blur(18px) saturate(1.08)",
             }}
           >
             <div
@@ -320,8 +315,7 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
                 minHeight: 56,
                 padding: "8px 14px",
                 borderBottom: "1px solid var(--shell-inline-divider)",
-                background:
-                  "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-strong) 92%, transparent), color-mix(in srgb, var(--surface-shell) 98%, transparent))",
+                background: "var(--surface-shell-strong)",
               }}
             >
               <div style={quickLookControlsBubbleStyle}>

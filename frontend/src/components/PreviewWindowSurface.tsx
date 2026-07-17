@@ -164,7 +164,6 @@ const buildBrowserPreviewStatusDocument = (
         border-radius: 18px;
         background: var(--panel-bg);
         box-shadow: 0 18px 44px rgba(15, 23, 42, 0.12);
-        backdrop-filter: blur(18px) saturate(1.22);
       }
       h1 { margin: 0 0 10px; font-size: 20px; line-height: 1.25; }
       p { margin: 0; color: var(--panel-muted); line-height: 1.6; }

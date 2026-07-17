@@ -4369,7 +4369,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
                   onMouseDown={(event) => event.preventDefault()}
                   aria-label="Close split"
                   title="Close split"
-                  className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 min-w-10 items-center justify-center rounded-[18px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_94%,transparent)] p-0 text-[var(--text-secondary)] shadow-[var(--shell-shadow)] backdrop-blur-xl transition-[background-color,border-color,color,box-shadow,transform] hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_78%,transparent)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+                  className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 min-w-10 items-center justify-center rounded-[18px] border border-[var(--shell-border)] bg-[var(--surface-shell-strong)] p-0 text-[var(--text-secondary)] shadow-[var(--shell-shadow)] transition-[background-color,border-color,color,box-shadow,transform] hover:border-[var(--shell-border-strong)] hover:bg-[var(--surface-active)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
                 >
                   <X
                     className="h-4 w-4 min-w-4 shrink-0"

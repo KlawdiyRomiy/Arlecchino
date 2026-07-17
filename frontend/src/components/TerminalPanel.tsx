@@ -1185,13 +1185,9 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
 
   const terminalChromeBubbleStyle: React.CSSProperties = {
     borderRadius: 9999,
-    background:
-      "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
-    border:
-      "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
+    background: "var(--surface-shell-soft)",
+    border: "1px solid var(--shell-border)",
     boxShadow: "var(--shell-shadow)",
-    backdropFilter: "blur(12px)",
-    WebkitBackdropFilter: "blur(12px)",
   };
 
   const tabBarStyle: React.CSSProperties = tuiModeActive

@@ -106,12 +106,8 @@ const cardBaseStyle: React.CSSProperties = {
   overflow: "hidden",
   borderRadius: "22px",
   border: "1px solid var(--shell-border-strong)",
-  background:
-    "linear-gradient(150deg, color-mix(in srgb, var(--surface-shell-soft) 96%, transparent), color-mix(in srgb, var(--surface-shell-panel) 98%, transparent) 58%, color-mix(in srgb, var(--surface-shell) 94%, transparent))",
-  boxShadow:
-    "var(--shadow-overlay), inset 0 1px 0 var(--shell-inner-highlight), inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 64%, transparent)",
-  backdropFilter: "blur(22px) saturate(1.16)",
-  WebkitBackdropFilter: "blur(22px) saturate(1.16)",
+  background: "var(--surface-shell-panel)",
+  boxShadow: "var(--shadow-overlay)",
   color: "var(--text-primary)",
   pointerEvents: "auto",
   transformOrigin: "100% 100%",

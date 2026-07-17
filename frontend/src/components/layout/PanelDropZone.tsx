@@ -29,7 +29,7 @@ export const PanelDropZone: React.FC<PanelDropZoneProps> = ({
     justifyContent: "center",
     background: isActive
       ? isSwapTarget
-        ? "linear-gradient(180deg, color-mix(in srgb, var(--accent-brand) 18%, transparent), color-mix(in srgb, var(--accent-brand) 8%, transparent))"
+        ? "color-mix(in srgb, var(--accent-brand) 14%, var(--surface-2))"
         : isDark
           ? "rgba(255,255,255,0.08)"
           : "rgba(0,0,0,0.06)"

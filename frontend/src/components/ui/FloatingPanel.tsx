@@ -1448,9 +1448,7 @@ export const FloatingPanel = React.forwardRef<
         flexDirection: "column",
         background: immersiveFrameActive
           ? "var(--terminal-bg)"
-          : motionPaintConstrained
-            ? "var(--surface-shell-panel)"
-            : "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
+          : "var(--surface-shell-panel)",
         border: "1px solid var(--shell-border)",
         borderRadius: panelFrameRadius,
         boxShadow: panelFrameShadow,
@@ -1899,16 +1897,13 @@ export const FloatingPanel = React.forwardRef<
       justifyContent: "space-between",
       height: "40px",
       padding: "0 14px",
-      background:
-        "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-strong) 95%, transparent), color-mix(in srgb, var(--surface-shell) 98%, transparent))",
+      background: "var(--surface-shell-strong)",
       borderBottom: "1px solid var(--shell-border)",
       userSelect: "none",
       flexShrink: 0,
       position: "relative",
       cursor: isDragging ? "grabbing" : "grab",
-      boxShadow: motionPaintConstrained
-        ? "none"
-        : "inset 0 1px 0 var(--shell-inner-highlight)",
+      boxShadow: "none",
       touchAction: "none",
       ...WAILS_NO_DRAG_STYLE,
       ...(immersiveFrameActive
@@ -1943,13 +1938,9 @@ export const FloatingPanel = React.forwardRef<
     const controlsBubbleStyle: React.CSSProperties = {
       padding: "4px",
       borderRadius: 9999,
-      background:
-        "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
-      border:
-        "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
+      background: "var(--surface-shell-soft)",
+      border: "1px solid var(--shell-border)",
       boxShadow: motionPaintConstrained ? "none" : "var(--shell-shadow)",
-      backdropFilter: motionPaintConstrained ? "none" : "blur(12px)",
-      WebkitBackdropFilter: motionPaintConstrained ? "none" : "blur(12px)",
     };
 
     const controlsStyle: React.CSSProperties = {

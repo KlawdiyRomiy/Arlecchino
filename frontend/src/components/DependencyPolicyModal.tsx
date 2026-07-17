@@ -60,30 +60,41 @@ const CONSENT_OPTIONS: {
 ];
 
 const dependencySurfaceClass =
-  "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_98%,transparent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)]";
+  "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[var(--surface-1)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)]";
 const dependencyInsetClass =
-  "rounded-[20px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)]";
+  "rounded-[20px] border border-[var(--border-subtle)] bg-[var(--surface-2)]";
 const dependencyPillClass =
-  "inline-flex min-h-[30px] items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[11px] font-semibold text-[var(--text-secondary)]";
+  "inline-flex min-h-[30px] items-center gap-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[11px] font-semibold text-[var(--text-secondary)]";
 const dependencyActionClass =
-  "inline-flex h-9 items-center justify-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-9 items-center justify-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-60";
 const dependencyIconButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
 const dependencyPrimaryClass =
   "inline-flex h-9 items-center justify-center gap-2 rounded-[18px] border border-[var(--border-default)] bg-[var(--text-primary)] px-4 text-[12px] font-semibold text-[var(--surface-canvas)] transition-colors hover:border-[var(--border-strong)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:border-[var(--border-subtle)] disabled:bg-[var(--surface-2)] disabled:text-[var(--text-muted)] disabled:opacity-60";
 const dependencyReadableTextClass =
   "text-[color-mix(in_srgb,var(--text-secondary)_82%,var(--text-primary))]";
 
-const riskBadgeClass = (risk: string) => {
+type DependencyTone = "success" | "warning" | "error" | "info";
+
+const dependencyToneStyle = (tone: DependencyTone): React.CSSProperties => ({
+  color: `var(--status-${tone}-text)`,
+  borderColor: `var(--status-${tone}-border)`,
+  background: `var(--status-${tone}-surface)`,
+});
+
+const riskTone = (risk: string): DependencyTone => {
   switch (risk) {
     case "high":
-      return "border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 text-[var(--status-error)]";
+      return "error";
     case "medium":
-      return "border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 text-[var(--status-warning)]";
+      return "warning";
     default:
-      return "border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 text-[var(--status-success)]";
+      return "success";
   }
 };
+
+const riskBadgeClass =
+  "inline-flex min-h-[26px] items-center rounded-full border px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em]";
 
 const normalizeApprovedActionIds = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
@@ -100,12 +111,26 @@ const dependencyResultState = (status: string) => status || "completed";
 const dependencyResultCardClass = (status: string) => {
   switch (dependencyResultState(status)) {
     case "failed":
-      return "rounded-[20px] border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]";
+      return "rounded-[20px] border px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]";
     case "blocked":
     case "unavailable":
-      return "rounded-[20px] border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]";
+      return "rounded-[20px] border px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]";
     default:
       return `${dependencyInsetClass} px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]`;
+  }
+};
+
+const dependencyResultCardStyle = (
+  status: string,
+): React.CSSProperties | undefined => {
+  switch (dependencyResultState(status)) {
+    case "failed":
+      return dependencyToneStyle("error");
+    case "blocked":
+    case "unavailable":
+      return dependencyToneStyle("warning");
+    default:
+      return undefined;
   }
 };
 
@@ -116,7 +141,7 @@ const SwitchRow: React.FC<{
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
 }> = ({ title, description, checked, onCheckedChange, disabled = false }) => (
-  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)] px-4 py-4">
+  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] px-4 py-4">
     <div className="min-w-0">
       <div className="text-[15px] font-semibold leading-5 text-[var(--text-primary)]">
         {title}
@@ -450,7 +475,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                         : SHELL_DIALOG_PANEL_TRANSITION
                     }
                   >
-                    <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-6 py-5">
+                    <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-1)] px-6 py-5">
                       <div className="flex items-center gap-3">
                         <div className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
                           <ShieldCheck size={18} />
@@ -494,7 +519,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                   className={`grid w-full grid-cols-[34px_minmax(0,1fr)] items-start gap-3 rounded-[20px] border px-3.5 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
                                     consentMode === option.value
                                       ? "border-[var(--border-default)] bg-[var(--surface-active)]"
-                                      : "border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)] hover:border-[var(--border-default)] hover:bg-[var(--surface-3)]"
+                                      : "border-[var(--border-subtle)] bg-[var(--surface-2)] hover:border-[var(--border-default)] hover:bg-[var(--surface-3)]"
                                   }`}
                                   aria-pressed={consentMode === option.value}
                                 >
@@ -594,7 +619,10 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                         </section>
 
                         {error && (
-                          <div className="rounded-[20px] border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 px-4 py-3 text-[13px] text-[var(--status-error)]">
+                          <div
+                            className="rounded-[20px] border px-4 py-3 text-[13px]"
+                            style={dependencyToneStyle("error")}
+                          >
                             {error}
                           </div>
                         )}
@@ -690,7 +718,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                             : action.id,
                                         );
                                       }}
-                                      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,transparent)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)]"
+                                      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-[var(--surface-3)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)]"
                                     >
                                       <div className="min-w-0 flex-1">
                                         <div className="flex flex-wrap items-center gap-2">
@@ -698,7 +726,12 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                             {action.label}
                                           </span>
                                           <span
-                                            className={`inline-flex min-h-[26px] items-center rounded-full border px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${riskBadgeClass(action.mutationRisk || "low")}`}
+                                            className={riskBadgeClass}
+                                            style={dependencyToneStyle(
+                                              riskTone(
+                                                action.mutationRisk || "low",
+                                              ),
+                                            )}
                                           >
                                             {action.mutationRisk || "low"}
                                           </span>
@@ -824,18 +857,29 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                                   : action.id,
                                               );
                                             }}
-                                            className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,transparent)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)]"
+                                            className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-[var(--surface-3)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)]"
                                           >
                                             <div className="min-w-0 flex-1">
                                               <div className="flex flex-wrap items-center gap-2">
                                                 <span className="text-[14px] font-semibold text-[var(--text-primary)]">
                                                   {action.label}
                                                 </span>
-                                                <span className="inline-flex min-h-[26px] items-center rounded-full border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--status-warning)]">
+                                                <span
+                                                  className={riskBadgeClass}
+                                                  style={dependencyToneStyle(
+                                                    "warning",
+                                                  )}
+                                                >
                                                   unavailable
                                                 </span>
                                                 <span
-                                                  className={`inline-flex min-h-[26px] items-center rounded-full border px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${riskBadgeClass(action.mutationRisk || "low")}`}
+                                                  className={riskBadgeClass}
+                                                  style={dependencyToneStyle(
+                                                    riskTone(
+                                                      action.mutationRisk ||
+                                                        "low",
+                                                    ),
+                                                  )}
                                                 >
                                                   {action.mutationRisk || "low"}
                                                 </span>
@@ -852,7 +896,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                                 </span>
                                               </div>
                                               {entry.availabilityReason ? (
-                                                <div className="mt-2 text-[12px] leading-5 text-[var(--status-warning)]">
+                                                <div className="mt-2 text-[12px] leading-5 text-[var(--status-warning-text)]">
                                                   {entry.availabilityReason}
                                                 </div>
                                               ) : null}
@@ -899,6 +943,9 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                     <div
                                       key={outcome.actionId}
                                       className={dependencyResultCardClass(
+                                        outcome.status,
+                                      )}
+                                      style={dependencyResultCardStyle(
                                         outcome.status,
                                       )}
                                     >
