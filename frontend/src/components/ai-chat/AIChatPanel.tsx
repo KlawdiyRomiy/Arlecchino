@@ -28,6 +28,7 @@ import {
   AIListChatActions,
   AIListChatRunArtifacts,
   AIListChatRuns,
+  AIListQueuedChatRuns,
   AIListContextCapsules,
   AIListMnemonicEntries,
   AIListModelCapabilities,
@@ -48,6 +49,10 @@ import {
   AIStopProviderRuntime,
   AISubmitQuestionAnswer,
   AISuggestChatMentions,
+  AISteerChatRun,
+  AIQueueChatRun,
+  AIUpdateQueuedChatRun,
+  AIRemoveQueuedChatRun,
   type AIProviderRuntimeDescriptor,
   type AIProviderRuntimeModel,
   type AIProviderAuthSession,
@@ -75,6 +80,7 @@ import {
   type AIRunTimelineEvent,
   type AIModelCapabilityDescriptor,
   type AIPendingApproval,
+  type AIQueuedChatRun,
   type AIProviderCapability,
   type AIStatus,
   type AIToolProposal,
@@ -170,6 +176,16 @@ const allProjectChatRunsLimit = 100;
 const chatHydrationMaxAttempts = 3;
 const chatHydrationRetryDelayMs = 750;
 const chatTokenBatchIntervalMs = 40;
+
+const newContinuationIdempotencyKey = (): string => {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return `continuation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
 
 const isTerminalChatRunStatus = (status?: string | null): boolean =>
   status === "completed" ||
@@ -1252,6 +1268,7 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
     canCancel: run.canCancel,
     contextSummary: run.contextSummary,
     toolProposals: run.toolProposals,
+    inputs: run.inputs,
     links: run.links,
     revision: run.revision,
     createdAt: run.createdAt,
@@ -1566,6 +1583,7 @@ export function AIChatPanelContent({
   const [continuityCapsules, setContinuityCapsules] = useState<
     AIContextCapsuleSummary[]
   >([]);
+  const [queuedRuns, setQueuedRuns] = useState<AIQueuedChatRun[]>([]);
   const [drawerDrag, setDrawerDrag] = useState<{
     drawer: DrawerId;
     offsetX: number;
@@ -2112,6 +2130,28 @@ export function AIChatPanelContent({
     selectedProviderReady &&
     !activeRunRunning &&
     !selectedActionDescriptor?.executionUnavailable;
+
+  const refreshQueuedRuns = useCallback(async () => {
+    if (!chatProjectScopeReady) {
+      setQueuedRuns([]);
+      return;
+    }
+    const requestScopeKey = currentChatProjectScopeKey;
+    try {
+      const items = await AIListQueuedChatRuns(activeSessionId);
+      if (chatProjectScopeKeyRef.current !== requestScopeKey) return;
+      setQueuedRuns(
+        [...items].sort((left, right) => left.position - right.position),
+      );
+    } catch (error) {
+      if (chatProjectScopeKeyRef.current !== requestScopeKey) return;
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [activeSessionId, chatProjectScopeReady, currentChatProjectScopeKey]);
+
+  useEffect(() => {
+    void refreshQueuedRuns();
+  }, [refreshQueuedRuns]);
   const transcriptRuns = useMemo(
     () => [...activeSessionEnvelopes].reverse(),
     [activeSessionEnvelopes],
@@ -2966,6 +3006,16 @@ export function AIChatPanelContent({
     }
   });
 
+  const handleQueueUpdateEvent = useEffectEvent((payload: unknown) => {
+    const item = payload as AIQueuedChatRun;
+    if (!item || !projectSessionMatches(item, currentProjectSessionId)) {
+      return;
+    }
+    if (chatSessionKey(item.sessionId) === activeSessionId) {
+      void refreshQueuedRuns();
+    }
+  });
+
   const handlePatchArtifactAppliedEvent = useEffectEvent((payload: unknown) => {
     const record = payload as ProjectScopedRecord;
     const runId = record?.runId?.trim();
@@ -3059,6 +3109,9 @@ export function AIChatPanelContent({
       "ai:patch:artifact-rolled-back",
       (payload) => handlePatchArtifactAppliedEvent(payload),
     );
+    const offQueue = EventsOn("ai:chat:queue-updated", (payload) =>
+      handleQueueUpdateEvent(payload),
+    );
     return () => {
       runTokenFrameBufferRef.current?.discard();
       offStarted?.();
@@ -3081,6 +3134,7 @@ export function AIChatPanelContent({
       offChatToolResult?.();
       offPatchApplied?.();
       offPatchRolledBack?.();
+      offQueue?.();
     };
   }, []);
 
@@ -3476,6 +3530,116 @@ export function AIChatPanelContent({
     if (!canSend || !selectedProvider) return;
     await startChatRun();
   }, [canSend, selectedProvider, startChatRun]);
+
+  const continueActiveRun = useCallback(
+    async (disposition: "steer" | "redirect") => {
+      const run =
+        activeSessionEnvelopes.find(
+          (candidate) =>
+            candidate.status === "running" || candidate.status === "queued",
+        ) ?? null;
+      const message = state.input.trim();
+      if (!run || !message) return;
+      setRuntimeError(null);
+      try {
+        await AISteerChatRun({
+          runId: run.id,
+          message,
+          expectedRevision: run.revision,
+          idempotencyKey: newContinuationIdempotencyKey(),
+          disposition,
+          selectedAction: state.selectedAction,
+        });
+        dispatch({ type: "resetComposer" });
+        const envelope = await AIGetChatRunEnvelope(run.id);
+        if (projectSessionMatches(envelope, currentProjectSessionId)) {
+          commitRunEnvelope(envelope);
+        }
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [
+      activeSessionEnvelopes,
+      commitRunEnvelope,
+      currentProjectSessionId,
+      state.input,
+      state.selectedAction,
+    ],
+  );
+
+  const handleSteer = useCallback(() => {
+    void continueActiveRun("steer");
+  }, [continueActiveRun]);
+
+  const handleRedirect = useCallback(() => {
+    void continueActiveRun("redirect");
+  }, [continueActiveRun]);
+
+  const handleQueue = useCallback(async () => {
+    const message = state.input.trim();
+    if (!message) return;
+    setRuntimeError(null);
+    try {
+      await AIQueueChatRun({
+        sessionId: activeSessionId,
+        message,
+        selectedAction: state.selectedAction,
+        idempotencyKey: newContinuationIdempotencyKey(),
+      });
+      dispatch({ type: "resetComposer" });
+      await refreshQueuedRuns();
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [activeSessionId, refreshQueuedRuns, state.input, state.selectedAction]);
+
+  const handleUpdateQueued = useCallback(
+    async (queueID: string, message: string) => {
+      if (!message.trim()) return;
+      setRuntimeError(null);
+      try {
+        await AIUpdateQueuedChatRun(activeSessionId, {
+          id: queueID,
+          message,
+        });
+        await refreshQueuedRuns();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeSessionId, refreshQueuedRuns],
+  );
+
+  const handleMoveQueued = useCallback(
+    async (queueID: string, position: number) => {
+      setRuntimeError(null);
+      try {
+        await AIUpdateQueuedChatRun(activeSessionId, {
+          id: queueID,
+          position,
+          reorder: true,
+        });
+        await refreshQueuedRuns();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeSessionId, refreshQueuedRuns],
+  );
+
+  const handleRemoveQueued = useCallback(
+    async (queueID: string) => {
+      setRuntimeError(null);
+      try {
+        await AIRemoveQueuedChatRun(activeSessionId, queueID);
+        await refreshQueuedRuns();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeSessionId, refreshQueuedRuns],
+  );
 
   const handleStartAgentLogin = useCallback(
     async (provider: AIProviderDescriptor): Promise<AIChatRun | null> => {
@@ -4927,6 +5091,13 @@ export function AIChatPanelContent({
                     onRevokeContinuityCapsule={handleRevokeContinuityCapsule}
                     onRefreshProviders={handleRefreshProviders}
                     onSend={handleSend}
+                    onSteer={handleSteer}
+                    onQueue={handleQueue}
+                    onRedirect={handleRedirect}
+                    queuedRuns={queuedRuns}
+                    onUpdateQueued={handleUpdateQueued}
+                    onMoveQueued={handleMoveQueued}
+                    onRemoveQueued={handleRemoveQueued}
                     onSelectModel={handleModelSelect}
                     onSelectReasoningEffort={(reasoningEffort) =>
                       dispatch({

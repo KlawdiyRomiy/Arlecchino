@@ -46,14 +46,30 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 	if !ok {
 		return AIToolCallResult{}, fmt.Errorf("tool %q is not registered", req.ToolID)
 	}
+	var run AIChatRun
 	if strings.TrimSpace(req.RunID) != "" {
-		if _, err := s.validateToolCallRun(project, req); err != nil {
+		var err error
+		run, err = s.validateToolCallRun(project, req)
+		if err != nil {
 			return AIToolCallResult{}, err
+		}
+		if reason := subagentToolDenied(project, run, descriptor, req); reason != "" {
+			result := newToolCallResult(req, descriptor, AIToolProposal{})
+			result.Status = "blocked"
+			result.Error = reason
+			return s.finishToolCall(project, result, AIToolProposal{}, nil), nil
 		}
 	}
 
 	proposal := toolProposalForCall(descriptor, req, project.ProjectRoot)
+	proposal = s.applyManagedMCPToolProposal(project, req, proposal)
 	proposal = evaluateToolProposal(proposal, s.approvalSummaryForProject(project), project.ProjectRoot)
+	if reason := s.skillCircuitToolDenied(project, req.RunID, req.ToolID); reason != "" {
+		result := newToolCallResult(req, descriptor, proposal)
+		result.Status = "blocked"
+		result.Error = reason
+		return s.finishToolCall(project, result, proposal, nil), nil
+	}
 	if req.Action == AIToolCallActionPreview || descriptor.Kind == AIToolKindContextRead {
 		proposal.AllowedByCurrentPolicy = true
 	}
@@ -68,6 +84,11 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 				}
 			}
 		} else if scope := toolApprovalScopeForAction(req.Action); scope != "" {
+			if managedMCPRequiresPerEgressConsent(req) {
+				// Full Access and run-scoped approvals never authorize a second
+				// remote MCP egress. The approval is consumed by this one call.
+				scope = toolApprovalScopeOnce
+			}
 			grant, err := s.grantToolApproval(project, req, descriptor, scope)
 			if err != nil {
 				approvalGrantErr = err
@@ -135,6 +156,8 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		result = s.executeContextReadTool(project, execReq, result)
 	case "diagnostics.read":
 		result = s.executeDiagnosticsReadTool(project, execReq, result)
+	case "semantic.query":
+		result = s.executeSemanticQueryTool(project, execReq, result)
 	case "file.read_range":
 		result = s.executeFileReadRangeTool(project, execReq, result)
 	case "workspace.grep":
@@ -154,6 +177,8 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 			result.Status = "previewed"
 			result.OutputPreview = strings.TrimSpace(execReq.Arguments["command"])
 		}
+	case "browser.preview":
+		result = s.executeBrowserPreviewTool(ctx, project, execReq, result)
 	case "git.preview":
 		result = s.executeGitPreviewTool(ctx, project, execReq, result)
 	case "memory.search":
@@ -174,6 +199,10 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		result = s.executeMCPExecuteTool(ctx, project, execReq, result)
 	case "subagent.preview":
 		result = s.executeSubagentPreviewTool(project, execReq, result)
+	case "subagent.start_readonly":
+		result = s.executeReadOnlySubagentTool(ctx, project, execReq, result)
+	case "subagent.start_patch":
+		result = s.executePatchArtifactSubagentTool(ctx, project, execReq, result)
 	case "interaction.question":
 		result = s.executeInteractionQuestionTool(project, execReq, result)
 	default:
@@ -181,6 +210,93 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		result.Error = "tool is registered but has no executor"
 	}
 	return s.finishToolCall(project, result, proposal, nil), nil
+}
+
+func subagentToolDenied(project *ProjectSession, run AIChatRun, descriptor AIToolDescriptor, req AIToolCallRequest) string {
+	if strings.TrimSpace(run.Links.SourceSubagentParentRunID) == "" {
+		return ""
+	}
+	readTools := map[string]struct{}{
+		"agent.status.update": {}, "agent.commentary": {}, "context.read": {}, "diagnostics.read": {}, "file.read_range": {}, "workspace.grep": {}, "git.preview": {}, "memory.search": {}, "memory.context": {},
+	}
+	if strings.TrimSpace(run.ProfileID) == "subagent-patch-author" {
+		if _, ok := readTools[descriptor.ID]; ok {
+			return ""
+		}
+		switch descriptor.ID {
+		case "file.edit.preview", "file.create.preview", "file.patch.preview":
+			if subagentOwnsToolPaths(project, run.ID, descriptor.ID, req.Arguments) {
+				return ""
+			}
+			return "patch-artifact subagent may only propose changes inside its declared ownership paths"
+		default:
+			return "patch-artifact subagent may only use bounded reads and owned-path patch previews"
+		}
+	}
+	if _, ok := readTools[descriptor.ID]; ok {
+		return ""
+	}
+	return "read-only subagent runs may only use bounded read tools"
+}
+
+func subagentOwnsToolPaths(project *ProjectSession, childRunID string, toolID string, arguments map[string]string) bool {
+	if project == nil || project.ChatArtifacts == nil {
+		return false
+	}
+	artifact, err := project.ChatArtifacts.Get("subagent-artifact-" + strings.TrimSpace(childRunID))
+	if err != nil {
+		return false
+	}
+	var payload AISubagentRunPayload
+	if json.Unmarshal([]byte(artifact.PayloadJSON), &payload) != nil || payload.ExecutionMode != subagentExecutionPatchArtifact {
+		return false
+	}
+	paths := []string{}
+	switch toolID {
+	case "file.edit.preview", "file.create.preview":
+		paths = append(paths, arguments["path"])
+	case "file.patch.preview":
+		parsed, err := patchPaths(arguments["unifiedDiff"])
+		if err != nil {
+			return false
+		}
+		paths = append(paths, parsed...)
+	}
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		path, ok := normalizePatchPath(path)
+		if !ok || !subagentOwnsPath(payload.OwnedPaths, path) {
+			return false
+		}
+	}
+	return true
+}
+
+func subagentOwnsPath(ownedPaths []string, candidate string) bool {
+	for _, owned := range ownedPaths {
+		owned, ok := normalizePatchPath(owned)
+		if !ok {
+			continue
+		}
+		if candidate == owned || strings.HasPrefix(candidate, owned+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func readOnlySubagentToolDenied(run AIChatRun, descriptor AIToolDescriptor) string {
+	if strings.TrimSpace(run.Links.SourceSubagentParentRunID) == "" || strings.TrimSpace(run.ProfileID) != "review-auditor" {
+		return ""
+	}
+	switch descriptor.ID {
+	case "agent.status.update", "agent.commentary", "context.read", "diagnostics.read", "file.read_range", "workspace.grep", "git.preview", "memory.search", "memory.context":
+		return ""
+	default:
+		return "read-only subagent runs may only use bounded read tools"
+	}
 }
 
 func (s *Service) ListToolAudit(projectID string, limit int) ([]AIToolAuditRecord, error) {
@@ -360,6 +476,11 @@ func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResul
 	result.Audit.ArtifactID = result.ArtifactID
 	result.Audit.OutputPreview = result.OutputPreview
 	result.Audit.Error = result.Error
+	result.Audit.ExitCode = result.ExitCode
+	result.Audit.StartedAt = result.StartedAt
+	result.Audit.FinishedAt = result.FinishedAt
+	result.Audit.DurationMs = result.DurationMs
+	result.Audit.Canceled = result.Canceled
 	result.Audit.AllowedByCurrentPolicy = proposal.AllowedByCurrentPolicy
 	result.Audit.HardDenyReason = proposal.HardDenyReason
 	if isAgentCommunicationToolID(result.ToolID) {
@@ -373,6 +494,7 @@ func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResul
 	}
 	s.emitToolLifecycleArtifact(project, result, proposal, toolLifecycleFinalPhase(result.Status), payload)
 	s.updatePendingApprovalFromToolResult(project, result, proposal)
+	s.skillCircuitAfterToolResult(project, result)
 	if runID != "" {
 		s.emitRunEvent(project, runID, "ai:tool:call-recorded", result)
 	} else {
@@ -536,6 +658,11 @@ func toolLifecycleArtifactPayload(result AIToolCallResult, proposal AIToolPropos
 		"artifactId":    result.ArtifactID,
 		"outputPreview": result.OutputPreview,
 		"error":         result.Error,
+		"exitCode":      result.ExitCode,
+		"startedAt":     result.StartedAt,
+		"finishedAt":    result.FinishedAt,
+		"durationMs":    result.DurationMs,
+		"canceled":      result.Canceled,
 		"arguments":     result.Arguments,
 		"audit":         result.Audit,
 		"proposal": map[string]any{
@@ -640,22 +767,32 @@ func (s *Service) executeTerminalTool(ctx context.Context, project *ProjectSessi
 		result.Error = err.Error()
 		return result
 	}
+	startedAt := time.Now().UTC()
+	result.StartedAt = startedAt.Format(time.RFC3339Nano)
 	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", command)
 	cmd.Dir = cwd
 	output, err := cmd.CombinedOutput()
+	finishedAt := time.Now().UTC()
+	result.FinishedAt = finishedAt.Format(time.RFC3339Nano)
+	result.DurationMs = finishedAt.Sub(startedAt).Milliseconds()
 	result.OutputPreview = string(output)
 	if runCtx.Err() != nil {
-		result.Status = "error"
+		result.Status = "canceled"
+		result.Canceled = true
 		result.Error = runCtx.Err().Error()
 		return result
 	}
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			result.ExitCode = exitErr.ExitCode()
+		}
 		result.Status = "error"
 		result.Error = err.Error()
 		return result
 	}
+	result.ExitCode = 0
 	result.Status = "executed"
 	return result
 }
@@ -726,6 +863,12 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 	if req.ToolID == "diagnostics.read" {
 		proposal.ScopeSummary = "Project-scoped diagnostics read: " + arguments["path"]
 	}
+	if req.ToolID == "semantic.query" {
+		proposal.Kind = AIToolKindContextRead
+		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
+		proposal.RiskLevel = AIToolRiskLow
+		proposal.ScopeSummary = "Project semantic " + firstNonEmpty(arguments["operation"], "query") + ": " + firstNonEmpty(arguments["path"], arguments["query"])
+	}
 	if req.ToolID == "workspace.grep" {
 		proposal.ScopeSummary = "Project-scoped search: " + arguments["pattern"]
 	}
@@ -741,6 +884,15 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 	if req.ToolID == "terminal.preview" && toolCallPerformsExecution(req.Action) {
 		proposal.ApprovalModeRequired = AIApprovalModeFullAccess
 		proposal.RiskLevel = AIToolRiskHigh
+	}
+	if req.ToolID == "browser.preview" {
+		proposal.Kind = AIToolKindNetworkLocal
+		proposal.ScopeSummary = "Loopback browser preview: " + arguments["url"]
+		proposal.ApprovalModeRequired = AIApprovalModeAskEachTime
+		proposal.RiskLevel = AIToolRiskHigh
+		if !browserPreviewURLAllowed(arguments["url"]) {
+			proposal.HardDenyReason = AIToolHardDenyReasonNonLoopbackNetwork
+		}
 	}
 	if req.ToolID == "file.patch.apply" {
 		proposal.ApprovalModeRequired = AIApprovalModeFullAccess
@@ -774,6 +926,11 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 		proposal.ScopeSummary = class.ScopeSummary(proposal.MCPToolName)
 		proposal.ApprovalModeRequired = class.ApprovalMode
 		proposal.RiskLevel = class.RiskLevel
+		if strings.TrimSpace(arguments["serverId"]) != "" {
+			proposal.ScopeSummary = "Managed MCP server " + strings.TrimSpace(arguments["serverId"]) + ": " + proposal.ScopeSummary
+			proposal.ApprovalModeRequired = AIApprovalModeAskEachTime
+			proposal.RiskLevel = AIToolRiskHigh
+		}
 		if class.HardDenyReason != "" {
 			proposal.HardDenyReason = class.HardDenyReason
 		}

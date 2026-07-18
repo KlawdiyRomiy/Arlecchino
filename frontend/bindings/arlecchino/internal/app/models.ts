@@ -1522,6 +1522,53 @@ export class GitCommitInfo {
     }
 }
 
+/**
+ * LSPCallHierarchyResult is a bounded presentation of an actual LSP call
+ * hierarchy edge. It intentionally does not expose opaque server data.
+ */
+export class LSPCallHierarchyResult {
+    "direction": string;
+    "name": string;
+    "detail"?: string;
+    "path": string;
+    "line": number;
+    "char": number;
+    "ranges"?: {"line": number, "char": number}[];
+
+    /** Creates a new LSPCallHierarchyResult instance. */
+    constructor($$source: Partial<LSPCallHierarchyResult> = {}) {
+        if (!("direction" in $$source)) {
+            this["direction"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("line" in $$source)) {
+            this["line"] = 0;
+        }
+        if (!("char" in $$source)) {
+            this["char"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LSPCallHierarchyResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LSPCallHierarchyResult {
+        const $$createField6_0 = $$createType39;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("ranges" in $$parsedSource) {
+            $$parsedSource["ranges"] = $$createField6_0($$parsedSource["ranges"]);
+        }
+        return new LSPCallHierarchyResult($$parsedSource as Partial<LSPCallHierarchyResult>);
+    }
+}
+
 export class LSPCodeAction {
     "title": string;
     "kind"?: string;
@@ -1572,7 +1619,7 @@ export class LSPCommandJSON {
      * Creates a new LSPCommandJSON instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPCommandJSON {
-        const $$createField2_0 = $$createType39;
+        const $$createField2_0 = $$createType40;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("arguments" in $$parsedSource) {
             $$parsedSource["arguments"] = $$createField2_0($$parsedSource["arguments"]);
@@ -1639,7 +1686,7 @@ export class LSPDiagnostic {
      * Creates a new LSPDiagnostic instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPDiagnostic {
-        const $$createField0_0 = $$createType40;
+        const $$createField0_0 = $$createType41;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField0_0($$parsedSource["range"]);
@@ -1663,8 +1710,8 @@ export class LSPDocumentChange {
      * Creates a new LSPDocumentChange instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPDocumentChange {
-        const $$createField0_0 = $$createType42;
-        const $$createField1_0 = $$createType44;
+        const $$createField0_0 = $$createType43;
+        const $$createField1_0 = $$createType45;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("textDocument" in $$parsedSource) {
             $$parsedSource["textDocument"] = $$createField0_0($$parsedSource["textDocument"]);
@@ -1721,8 +1768,8 @@ export class LSPRange {
      * Creates a new LSPRange instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPRange {
-        const $$createField0_0 = $$createType45;
-        const $$createField1_0 = $$createType45;
+        const $$createField0_0 = $$createType46;
+        const $$createField1_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("start" in $$parsedSource) {
             $$parsedSource["start"] = $$createField0_0($$parsedSource["start"]);
@@ -1848,7 +1895,7 @@ export class LSPTextEdit {
      * Creates a new LSPTextEdit instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPTextEdit {
-        const $$createField0_0 = $$createType40;
+        const $$createField0_0 = $$createType41;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField0_0($$parsedSource["range"]);
@@ -1871,8 +1918,8 @@ export class LSPWorkspaceEdit {
      * Creates a new LSPWorkspaceEdit instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPWorkspaceEdit {
-        const $$createField0_0 = $$createType46;
-        const $$createField1_0 = $$createType48;
+        const $$createField0_0 = $$createType47;
+        const $$createField1_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("changes" in $$parsedSource) {
             $$parsedSource["changes"] = $$createField0_0($$parsedSource["changes"]);
@@ -2018,8 +2065,8 @@ export class MCPSettingsStatus {
      * Creates a new MCPSettingsStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): MCPSettingsStatus {
-        const $$createField0_0 = $$createType49;
-        const $$createField1_0 = $$createType51;
+        const $$createField0_0 = $$createType50;
+        const $$createField1_0 = $$createType52;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("settings" in $$parsedSource) {
             $$parsedSource["settings"] = $$createField0_0($$parsedSource["settings"]);
@@ -2116,8 +2163,8 @@ export class NativeContextMenuRequest {
      * Creates a new NativeContextMenuRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): NativeContextMenuRequest {
-        const $$createField6_0 = $$createType53;
-        const $$createField7_0 = $$createType54;
+        const $$createField6_0 = $$createType54;
+        const $$createField7_0 = $$createType55;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("items" in $$parsedSource) {
             $$parsedSource["items"] = $$createField6_0($$parsedSource["items"]);
@@ -2177,7 +2224,7 @@ export class PackagedOSActionResult {
      */
     static createFrom($$source: any = {}): PackagedOSActionResult {
         const $$createField2_0 = $$createType11;
-        const $$createField3_0 = $$createType56;
+        const $$createField3_0 = $$createType57;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("backgroundAction" in $$parsedSource) {
             $$parsedSource["backgroundAction"] = $$createField2_0($$parsedSource["backgroundAction"]);
@@ -2288,8 +2335,8 @@ export class PackagedOSAutoUpdateManifest {
      * Creates a new PackagedOSAutoUpdateManifest instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSAutoUpdateManifest {
-        const $$createField4_0 = $$createType57;
-        const $$createField11_0 = $$createType58;
+        const $$createField4_0 = $$createType58;
+        const $$createField11_0 = $$createType59;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("artifacts" in $$parsedSource) {
             $$parsedSource["artifacts"] = $$createField4_0($$parsedSource["artifacts"]);
@@ -2409,7 +2456,7 @@ export class PackagedOSIntegrationSnapshot {
      * Creates a new PackagedOSIntegrationSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSIntegrationSnapshot {
-        const $$createField7_0 = $$createType60;
+        const $$createField7_0 = $$createType61;
         const $$createField8_0 = $$createType18;
         const $$createField9_0 = $$createType17;
         const $$createField10_0 = $$createType3;
@@ -2502,7 +2549,7 @@ export class PluginCommandDefJS {
      * Creates a new PluginCommandDefJS instance from a string or object.
      */
     static createFrom($$source: any = {}): PluginCommandDefJS {
-        const $$createField7_0 = $$createType62;
+        const $$createField7_0 = $$createType63;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("flags" in $$parsedSource) {
             $$parsedSource["flags"] = $$createField7_0($$parsedSource["flags"]);
@@ -2530,9 +2577,9 @@ export class PrimaryTextEditJSON {
      * Creates a new PrimaryTextEditJSON instance from a string or object.
      */
     static createFrom($$source: any = {}): PrimaryTextEditJSON {
-        const $$createField1_0 = $$createType64;
-        const $$createField2_0 = $$createType64;
-        const $$createField3_0 = $$createType64;
+        const $$createField1_0 = $$createType65;
+        const $$createField2_0 = $$createType65;
+        const $$createField3_0 = $$createType65;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField1_0($$parsedSource["range"]);
@@ -2737,7 +2784,7 @@ export class ProjectEntryTrashRequest {
      * Creates a new ProjectEntryTrashRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): ProjectEntryTrashRequest {
-        const $$createField0_0 = $$createType66;
+        const $$createField0_0 = $$createType67;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("entries" in $$parsedSource) {
             $$parsedSource["entries"] = $$createField0_0($$parsedSource["entries"]);
@@ -3057,7 +3104,7 @@ export class ShellCapabilitiesSnapshot {
      * Creates a new ShellCapabilitiesSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ShellCapabilitiesSnapshot {
-        const $$createField0_0 = $$createType68;
+        const $$createField0_0 = $$createType69;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField0_0($$parsedSource["capabilities"]);
@@ -3178,7 +3225,7 @@ export class SignatureHelpResult {
      * Creates a new SignatureHelpResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureHelpResult {
-        const $$createField0_0 = $$createType70;
+        const $$createField0_0 = $$createType71;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("signatures" in $$parsedSource) {
             $$parsedSource["signatures"] = $$createField0_0($$parsedSource["signatures"]);
@@ -3214,7 +3261,7 @@ export class SignatureInfo {
      * Creates a new SignatureInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureInfo {
-        const $$createField2_0 = $$createType72;
+        const $$createField2_0 = $$createType73;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("parameters" in $$parsedSource) {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
@@ -3289,7 +3336,7 @@ export class TerminalPredictionResponse {
      * Creates a new TerminalPredictionResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): TerminalPredictionResponse {
-        const $$createField0_0 = $$createType74;
+        const $$createField0_0 = $$createType75;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("predictions" in $$parsedSource) {
             $$parsedSource["predictions"] = $$createField0_0($$parsedSource["predictions"]);
@@ -3450,18 +3497,18 @@ export class Wails3PackagedSmokeReport {
      */
     static createFrom($$source: any = {}): Wails3PackagedSmokeReport {
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType54;
-        const $$createField9_0 = $$createType75;
-        const $$createField10_0 = $$createType76;
+        const $$createField7_0 = $$createType55;
+        const $$createField9_0 = $$createType76;
+        const $$createField10_0 = $$createType77;
         const $$createField11_0 = $$createType8;
-        const $$createField12_0 = $$createType77;
-        const $$createField13_0 = $$createType78;
-        const $$createField14_0 = $$createType79;
-        const $$createField15_0 = $$createType80;
-        const $$createField16_0 = $$createType81;
-        const $$createField17_0 = $$createType82;
-        const $$createField18_0 = $$createType83;
-        const $$createField19_0 = $$createType85;
+        const $$createField12_0 = $$createType78;
+        const $$createField13_0 = $$createType79;
+        const $$createField14_0 = $$createType80;
+        const $$createField15_0 = $$createType81;
+        const $$createField16_0 = $$createType82;
+        const $$createField17_0 = $$createType83;
+        const $$createField18_0 = $$createType84;
+        const $$createField19_0 = $$createType86;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("launchArgs" in $$parsedSource) {
             $$parsedSource["launchArgs"] = $$createField6_0($$parsedSource["launchArgs"]);
@@ -3728,9 +3775,9 @@ export class Wails3SmokeNativeDeliveryProbe {
      */
     static createFrom($$source: any = {}): Wails3SmokeNativeDeliveryProbe {
         const $$createField2_0 = $$createType0;
-        const $$createField4_0 = $$createType86;
-        const $$createField5_0 = $$createType86;
-        const $$createField6_0 = $$createType87;
+        const $$createField4_0 = $$createType87;
+        const $$createField5_0 = $$createType87;
+        const $$createField6_0 = $$createType88;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("trackedFailureStates" in $$parsedSource) {
             $$parsedSource["trackedFailureStates"] = $$createField2_0($$parsedSource["trackedFailureStates"]);
@@ -3859,9 +3906,9 @@ export class Wails3SmokeRuntimeAssetsProbe {
      * Creates a new Wails3SmokeRuntimeAssetsProbe instance from a string or object.
      */
     static createFrom($$source: any = {}): Wails3SmokeRuntimeAssetsProbe {
-        const $$createField1_0 = $$createType88;
-        const $$createField2_0 = $$createType88;
-        const $$createField3_0 = $$createType88;
+        const $$createField1_0 = $$createType89;
+        const $$createField2_0 = $$createType89;
+        const $$createField3_0 = $$createType89;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("model" in $$parsedSource) {
             $$parsedSource["model"] = $$createField1_0($$parsedSource["model"]);
@@ -3907,7 +3954,7 @@ export class Wails3SmokeSecondInstanceProbe {
      */
     static createFrom($$source: any = {}): Wails3SmokeSecondInstanceProbe {
         const $$createField2_0 = $$createType0;
-        const $$createField3_0 = $$createType54;
+        const $$createField3_0 = $$createType55;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("args" in $$parsedSource) {
             $$parsedSource["args"] = $$createField2_0($$parsedSource["args"]);
@@ -3984,8 +4031,8 @@ export class WindowLeaseActionResult {
      * Creates a new WindowLeaseActionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseActionResult {
-        const $$createField4_0 = $$createType90;
-        const $$createField5_0 = $$createType91;
+        const $$createField4_0 = $$createType91;
+        const $$createField5_0 = $$createType92;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("record" in $$parsedSource) {
             $$parsedSource["record"] = $$createField4_0($$parsedSource["record"]);
@@ -4050,8 +4097,8 @@ export class WindowLeaseRecord {
      * Creates a new WindowLeaseRecord instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseRecord {
-        const $$createField8_0 = $$createType92;
-        const $$createField12_0 = $$createType54;
+        const $$createField8_0 = $$createType93;
+        const $$createField12_0 = $$createType55;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("returnTarget" in $$parsedSource) {
             $$parsedSource["returnTarget"] = $$createField8_0($$parsedSource["returnTarget"]);
@@ -4140,10 +4187,10 @@ export class WindowLeaseSnapshot {
      * Creates a new WindowLeaseSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseSnapshot {
-        const $$createField5_0 = $$createType93;
+        const $$createField5_0 = $$createType94;
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType94;
-        const $$createField8_0 = $$createType95;
+        const $$createField7_0 = $$createType95;
+        const $$createField8_0 = $$createType96;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedRoles" in $$parsedSource) {
             $$parsedSource["supportedRoles"] = $$createField5_0($$parsedSource["supportedRoles"]);
@@ -4214,59 +4261,60 @@ const $$createType36 = $Create.Nullable($$createType35);
 const $$createType37 = $Create.Array($$createType35);
 const $$createType38 = EditorFileInspection.createFrom;
 const $$createType39 = $Create.Array($Create.Any);
-const $$createType40 = LSPRange.createFrom;
-const $$createType41 = LSPTextDocumentIdentifier.createFrom;
-const $$createType42 = $Create.Nullable($$createType41);
-const $$createType43 = LSPTextEdit.createFrom;
-const $$createType44 = $Create.Array($$createType43);
-const $$createType45 = LSPPosition.createFrom;
-const $$createType46 = $Create.Map($Create.Any, $$createType44);
-const $$createType47 = LSPDocumentChange.createFrom;
-const $$createType48 = $Create.Array($$createType47);
-const $$createType49 = mcp$0.Settings.createFrom;
-const $$createType50 = mcp$0.ToolSettingsEntry.createFrom;
-const $$createType51 = $Create.Array($$createType50);
-const $$createType52 = NativeContextMenuItem.createFrom;
-const $$createType53 = $Create.Array($$createType52);
-const $$createType54 = $Create.Map($Create.Any, $Create.Any);
-const $$createType55 = BackgroundShellActionResult.createFrom;
-const $$createType56 = $Create.Nullable($$createType55);
-const $$createType57 = $Create.Array($$createType4);
-const $$createType58 = $Create.Map($Create.Any, $Create.Any);
-const $$createType59 = PackagedOSAdapter.createFrom;
-const $$createType60 = $Create.Map($Create.Any, $$createType59);
-const $$createType61 = FlagDefJS.createFrom;
-const $$createType62 = $Create.Array($$createType61);
-const $$createType63 = CompletionRangeJSON.createFrom;
-const $$createType64 = $Create.Nullable($$createType63);
-const $$createType65 = ProjectEntryTrashTarget.createFrom;
-const $$createType66 = $Create.Array($$createType65);
-const $$createType67 = ShellCapabilityDescriptor.createFrom;
-const $$createType68 = $Create.Map($Create.Any, $$createType67);
-const $$createType69 = SignatureInfo.createFrom;
-const $$createType70 = $Create.Array($$createType69);
-const $$createType71 = ParameterInfo.createFrom;
-const $$createType72 = $Create.Array($$createType71);
-const $$createType73 = terminal$0.PredictionResult.createFrom;
-const $$createType74 = $Create.Array($$createType73);
-const $$createType75 = ShellCapabilitiesSnapshot.createFrom;
-const $$createType76 = PackagedOSIntegrationSnapshot.createFrom;
-const $$createType77 = Wails3SmokeNativeDeliveryProbe.createFrom;
-const $$createType78 = Wails3SmokeAutoUpdateProbe.createFrom;
-const $$createType79 = Wails3SmokeGateStatus.createFrom;
-const $$createType80 = Wails3SmokeSecondInstanceProbe.createFrom;
-const $$createType81 = Wails3SmokeWindowLeaseSnapshot.createFrom;
-const $$createType82 = Wails3SmokeAppBundleSnapshot.createFrom;
-const $$createType83 = Wails3SmokeRuntimeAssetsProbe.createFrom;
-const $$createType84 = Wails3SmokeCheck.createFrom;
-const $$createType85 = $Create.Array($$createType84);
-const $$createType86 = Wails3SmokeNativeAdapterProbe.createFrom;
-const $$createType87 = Wails3SmokeNativeDockBadgeProbe.createFrom;
-const $$createType88 = Wails3SmokeRuntimeAssetFileProbe.createFrom;
-const $$createType89 = WindowLeaseRecord.createFrom;
-const $$createType90 = $Create.Nullable($$createType89);
-const $$createType91 = WindowLeaseSnapshot.createFrom;
-const $$createType92 = WindowLeaseReturnTarget.createFrom;
-const $$createType93 = $Create.Array($Create.Any);
-const $$createType94 = $Create.Array($$createType89);
-const $$createType95 = $Create.Map($Create.Any, $$createType89);
+const $$createType40 = $Create.Array($Create.Any);
+const $$createType41 = LSPRange.createFrom;
+const $$createType42 = LSPTextDocumentIdentifier.createFrom;
+const $$createType43 = $Create.Nullable($$createType42);
+const $$createType44 = LSPTextEdit.createFrom;
+const $$createType45 = $Create.Array($$createType44);
+const $$createType46 = LSPPosition.createFrom;
+const $$createType47 = $Create.Map($Create.Any, $$createType45);
+const $$createType48 = LSPDocumentChange.createFrom;
+const $$createType49 = $Create.Array($$createType48);
+const $$createType50 = mcp$0.Settings.createFrom;
+const $$createType51 = mcp$0.ToolSettingsEntry.createFrom;
+const $$createType52 = $Create.Array($$createType51);
+const $$createType53 = NativeContextMenuItem.createFrom;
+const $$createType54 = $Create.Array($$createType53);
+const $$createType55 = $Create.Map($Create.Any, $Create.Any);
+const $$createType56 = BackgroundShellActionResult.createFrom;
+const $$createType57 = $Create.Nullable($$createType56);
+const $$createType58 = $Create.Array($$createType4);
+const $$createType59 = $Create.Map($Create.Any, $Create.Any);
+const $$createType60 = PackagedOSAdapter.createFrom;
+const $$createType61 = $Create.Map($Create.Any, $$createType60);
+const $$createType62 = FlagDefJS.createFrom;
+const $$createType63 = $Create.Array($$createType62);
+const $$createType64 = CompletionRangeJSON.createFrom;
+const $$createType65 = $Create.Nullable($$createType64);
+const $$createType66 = ProjectEntryTrashTarget.createFrom;
+const $$createType67 = $Create.Array($$createType66);
+const $$createType68 = ShellCapabilityDescriptor.createFrom;
+const $$createType69 = $Create.Map($Create.Any, $$createType68);
+const $$createType70 = SignatureInfo.createFrom;
+const $$createType71 = $Create.Array($$createType70);
+const $$createType72 = ParameterInfo.createFrom;
+const $$createType73 = $Create.Array($$createType72);
+const $$createType74 = terminal$0.PredictionResult.createFrom;
+const $$createType75 = $Create.Array($$createType74);
+const $$createType76 = ShellCapabilitiesSnapshot.createFrom;
+const $$createType77 = PackagedOSIntegrationSnapshot.createFrom;
+const $$createType78 = Wails3SmokeNativeDeliveryProbe.createFrom;
+const $$createType79 = Wails3SmokeAutoUpdateProbe.createFrom;
+const $$createType80 = Wails3SmokeGateStatus.createFrom;
+const $$createType81 = Wails3SmokeSecondInstanceProbe.createFrom;
+const $$createType82 = Wails3SmokeWindowLeaseSnapshot.createFrom;
+const $$createType83 = Wails3SmokeAppBundleSnapshot.createFrom;
+const $$createType84 = Wails3SmokeRuntimeAssetsProbe.createFrom;
+const $$createType85 = Wails3SmokeCheck.createFrom;
+const $$createType86 = $Create.Array($$createType85);
+const $$createType87 = Wails3SmokeNativeAdapterProbe.createFrom;
+const $$createType88 = Wails3SmokeNativeDockBadgeProbe.createFrom;
+const $$createType89 = Wails3SmokeRuntimeAssetFileProbe.createFrom;
+const $$createType90 = WindowLeaseRecord.createFrom;
+const $$createType91 = $Create.Nullable($$createType90);
+const $$createType92 = WindowLeaseSnapshot.createFrom;
+const $$createType93 = WindowLeaseReturnTarget.createFrom;
+const $$createType94 = $Create.Array($Create.Any);
+const $$createType95 = $Create.Array($$createType90);
+const $$createType96 = $Create.Map($Create.Any, $$createType90);

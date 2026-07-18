@@ -209,7 +209,7 @@ func (a *CodexAdapter) Run(ctx context.Context, req RunRequest, emit func(Event)
 		return UnsupportedResult("agent prompt is empty")
 	}
 
-	sandbox := codexSandboxForAction(req.Action)
+	sandbox := codexSandboxForRun(req)
 	args := codexExecArgs(req, sandbox, codexDisableFeatureArgs(ctx, binary))
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = req.ProjectRoot
@@ -622,6 +622,16 @@ func codexSandboxForAction(action string) string {
 	default:
 		return "read-only"
 	}
+}
+
+// Direct provider-owned writes are allowed only after the host has granted
+// the run temporary Full Access. Build mode alone never widens a Codex
+// sandbox: normal host approval flows must remain authoritative.
+func codexSandboxForRun(req RunRequest) string {
+	if !req.AllowWorkspaceWrite || strings.TrimSpace(req.Action) != "build" {
+		return "read-only"
+	}
+	return codexSandboxForAction(req.Action)
 }
 
 func codexExecArgs(req RunRequest, sandbox string, disableFeatureArgs []string) []string {

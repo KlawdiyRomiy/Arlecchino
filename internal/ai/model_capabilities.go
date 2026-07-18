@@ -32,11 +32,11 @@ func modelCapabilityEvidenceFor(provider providers.AIProviderDescriptor, model p
 		toolSupport = true
 		toolKind = "native"
 		reason = "provider/model advertises native tool calling"
-	} else if providerKindHasOpenAIToolAdapter(provider.Kind) {
+	} else if providerKindHasToolSchemaAdapter(provider.Kind) {
 		source = "adapter"
 		toolSupport = true
 		toolKind = "adapter"
-		reason = "Arlecchino adapter can send OpenAI-compatible tool schemas"
+		reason = "Arlecchino adapter can send the complete host tool schema to this provider transport"
 	}
 
 	structured := model.StructuredOutput || capabilityAllowed(provider.Capabilities, providers.CapabilityStructuredOutput) || toolSupport
@@ -64,9 +64,13 @@ func modelCapabilityEvidenceFor(provider providers.AIProviderDescriptor, model p
 	}
 }
 
-func providerKindHasOpenAIToolAdapter(kind string) bool {
+// providerKindHasToolSchemaAdapter is intentionally transport-wide. A provider
+// may encode host functions as OpenAI tools, Anthropic tools, Gemini function
+// declarations, or Ollama tools, but it must never receive a silently reduced
+// subset solely because of that wire format.
+func providerKindHasToolSchemaAdapter(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "openai", "lm-studio", "llama.cpp", "huggingface-tgi":
+	case "openai", "openai-compatible", "openrouter", "lm-studio", "llama.cpp", "huggingface-tgi", "anthropic", "gemini", "google-gemini", "ollama":
 		return true
 	default:
 		return false

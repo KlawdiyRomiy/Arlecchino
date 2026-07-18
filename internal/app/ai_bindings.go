@@ -14,6 +14,10 @@ func (a *App) ensureAIService() *ai.Service {
 				a.emitEvent(name, payload)
 			},
 			MCPContextProvider: a.aiMCPContextProvider,
+			Diagnostics:        a.aiDiagnosticsProvider,
+			SemanticContext:    a.aiSemanticProvider,
+			BrowserPreview:     a.aiBrowserPreviewExecutor,
+			MCPExecutor:        a.aiMCPToolExecutor,
 		})
 		if a.ctx != nil {
 			if err := a.aiService.Start(a.ctx); err != nil {
@@ -99,6 +103,14 @@ func (a *App) AIGetStatus(ctx context.Context) (ai.AIStatus, error) {
 		}
 	}
 	return service.StatusWithoutProject(), nil
+}
+
+func (a *App) AIExecuteAgentProtocol(ctx context.Context, req ai.AIAgentProtocolRequest) (ai.AIAgentProtocolResponse, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentProtocolResponse{}, err
+	}
+	return a.ensureAIService().ExecuteAgentProtocol(ctx, projectID, req)
 }
 
 func (a *App) AIListProviders() ([]ai.AIProviderDescriptor, error) {
@@ -300,6 +312,209 @@ func (a *App) AICancelChatRun(ctx context.Context, runID string) (ai.AIChatRun, 
 		return ai.AIChatRun{}, err
 	}
 	return a.ensureAIService().CancelChatRun(sessionID, runID)
+}
+
+func (a *App) AISteerChatRun(ctx context.Context, req ai.AISteerChatRunRequest) (ai.AIChatSteerResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIChatSteerResult{}, err
+	}
+	return a.ensureAIService().SteerChatRun(ctx, sessionID, req)
+}
+
+func (a *App) AIQueueChatRun(ctx context.Context, req ai.AIQueueChatRunRequest) (ai.AIQueuedChatRun, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIQueuedChatRun{}, err
+	}
+	return a.ensureAIService().QueueChatRun(sessionID, req)
+}
+
+func (a *App) AIListQueuedChatRuns(ctx context.Context, sessionID string) ([]ai.AIQueuedChatRun, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListQueuedChatRuns(projectID, sessionID)
+}
+
+func (a *App) AIListRunGraph(ctx context.Context, sessionID string) ([]ai.AIRunGraphNode, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListRunGraph(projectID, sessionID)
+}
+
+func (a *App) AIListSkillCircuit(ctx context.Context, runID string) ([]ai.AISkillCircuitController, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListSkillCircuit(projectID, runID)
+}
+
+func (a *App) AIInstallAgentPlugin(ctx context.Context, req ai.AIAgentPluginInstallRequest) (ai.AIAgentPluginRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentPluginRecord{}, err
+	}
+	return a.ensureAIService().InstallAgentPlugin(projectID, req)
+}
+
+func (a *App) AIListAgentPlugins(ctx context.Context) ([]ai.AIAgentPluginRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListAgentPlugins(projectID)
+}
+
+func (a *App) AISetAgentPluginEnabled(ctx context.Context, pluginID string, enabled bool) (ai.AIAgentPluginRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentPluginRecord{}, err
+	}
+	return a.ensureAIService().SetAgentPluginEnabled(projectID, pluginID, enabled)
+}
+
+func (a *App) AIRollbackAgentPlugin(ctx context.Context, pluginID string) (ai.AIAgentPluginRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentPluginRecord{}, err
+	}
+	return a.ensureAIService().RollbackAgentPlugin(projectID, pluginID)
+}
+
+func (a *App) AIListAgentPluginEvents(ctx context.Context, pluginID string, limit int) ([]ai.AIAgentPluginEvent, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListAgentPluginEvents(projectID, pluginID, limit)
+}
+
+func (a *App) AIGetAgentPluginStorage(ctx context.Context, pluginID string, key string) (ai.AIAgentPluginStorageValue, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentPluginStorageValue{}, err
+	}
+	return a.ensureAIService().GetAgentPluginStorage(projectID, pluginID, key)
+}
+
+func (a *App) AIPutAgentPluginStorage(ctx context.Context, value ai.AIAgentPluginStorageValue) (ai.AIAgentPluginStorageValue, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentPluginStorageValue{}, err
+	}
+	return a.ensureAIService().PutAgentPluginStorage(projectID, value)
+}
+
+func (a *App) AIListAgentPluginTools(ctx context.Context) ([]ai.AIAgentPluginToolDefinition, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListAgentPluginTools(projectID)
+}
+
+// AIRunAgentPluginSandbox executes a reviewed plugin only through the
+// capability-scoped out-of-process host bridge. The plugin still cannot
+// bypass the normal tool approval gateway.
+func (a *App) AIRunAgentPluginSandbox(ctx context.Context, pluginID string, req ai.AIAgentPluginRuntimeRequest) (ai.AIAgentPluginRuntimeResult, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIAgentPluginRuntimeResult{}, err
+	}
+	return a.ensureAIService().RunAgentPluginSandbox(ctx, projectID, pluginID, req)
+}
+
+func (a *App) AIUpsertManagedMCPServer(ctx context.Context, server ai.AIMCPServerRecord) (ai.AIMCPServerRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMCPServerRecord{}, err
+	}
+	return a.ensureAIService().UpsertManagedMCPServer(projectID, server)
+}
+
+func (a *App) AIListManagedMCPServers(ctx context.Context) ([]ai.AIMCPServerRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListManagedMCPServers(projectID)
+}
+
+func (a *App) AISetManagedMCPServerEnabled(ctx context.Context, serverID string, enabled bool) (ai.AIMCPServerRecord, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMCPServerRecord{}, err
+	}
+	return a.ensureAIService().SetManagedMCPServerEnabled(projectID, serverID, enabled)
+}
+
+func (a *App) AIDiscoverManagedMCPTools(ctx context.Context, serverID string) (ai.AIMCPManagedDiscoveryResult, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMCPManagedDiscoveryResult{}, err
+	}
+	return a.ensureAIService().DiscoverManagedMCPTools(ctx, projectID, serverID)
+}
+
+func (a *App) AIListManagedMCPTools(ctx context.Context, serverID string) ([]ai.AIMCPManagedTool, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListManagedMCPTools(projectID, serverID)
+}
+
+func (a *App) AISetManagedMCPToolEnabled(ctx context.Context, serverID string, toolName string, enabled bool) (ai.AIMCPManagedTool, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMCPManagedTool{}, err
+	}
+	return a.ensureAIService().SetManagedMCPToolEnabled(projectID, serverID, toolName, enabled)
+}
+
+func (a *App) AIStartSubagentRun(ctx context.Context, req ai.AIStartSubagentRunRequest) (ai.AIStartSubagentRunResult, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIStartSubagentRunResult{}, err
+	}
+	return a.ensureAIService().StartSubagentRun(ctx, projectID, req)
+}
+
+func (a *App) AIStopSubagentRun(ctx context.Context, parentRunID string, childRunID string) (ai.AIChatRun, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIChatRun{}, err
+	}
+	return a.ensureAIService().StopSubagentRun(projectID, parentRunID, childRunID)
+}
+
+func (a *App) AISteerSubagentRun(ctx context.Context, parentRunID string, req ai.AISteerChatRunRequest) (ai.AIChatSteerResult, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIChatSteerResult{}, err
+	}
+	return a.ensureAIService().SteerSubagentRun(ctx, projectID, parentRunID, req)
+}
+
+func (a *App) AIUpdateQueuedChatRun(ctx context.Context, sessionID string, req ai.AIUpdateQueuedChatRunRequest) (ai.AIQueuedChatRun, error) {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIQueuedChatRun{}, err
+	}
+	return a.ensureAIService().UpdateQueuedChatRun(projectID, sessionID, req)
+}
+
+func (a *App) AIRemoveQueuedChatRun(ctx context.Context, sessionID string, queueID string) error {
+	projectID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return err
+	}
+	return a.ensureAIService().RemoveQueuedChatRun(projectID, sessionID, queueID)
 }
 
 func (a *App) AIWriteAgentTerminalInput(ctx context.Context, runID string, data string) error {
@@ -564,6 +779,17 @@ func (a *App) AIProposeMnemonicEntry(ctx context.Context, req ai.AIMnemonicWrite
 		return ai.AIMnemonicWriteProposalResult{}, err
 	}
 	return a.ensureAIService().ProposeMnemonicEntry(sessionID, req)
+}
+
+// AIProposeManagedMCPFactForMnemonic creates an approval-required Mnemonic
+// proposal only after the named managed-MCP egress was recorded for this run.
+// The frontend cannot turn arbitrary model text into a managed-MCP fact.
+func (a *App) AIProposeManagedMCPFactForMnemonic(ctx context.Context, runID, serverID, toolName, reviewedFact, reviewedBy string) (ai.AIMnemonicWriteProposalResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMnemonicWriteProposalResult{}, err
+	}
+	return a.ensureAIService().ProposeManagedMCPFactForMnemonic(sessionID, runID, serverID, toolName, reviewedFact, reviewedBy)
 }
 
 func (a *App) AIApproveMnemonicEntryProposal(ctx context.Context, req ai.AIMnemonicApproveProposalRequest) (ai.AIMnemonicEntry, error) {

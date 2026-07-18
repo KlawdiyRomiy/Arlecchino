@@ -317,12 +317,16 @@ type openAIStreamChunk struct {
 
 func openAIMessagesFromGenerationRequest(req GenerationRequest) []openAIMessage {
 	messages := []openAIMessage{}
+	system := generationSystemText(req)
 	if len(req.Messages) > 0 {
-		if strings.TrimSpace(req.System) != "" && !generationMessagesContainSystem(req.Messages) {
-			messages = append(messages, openAIMessage{Role: "system", Content: req.System})
+		if system != "" {
+			messages = append(messages, openAIMessage{Role: "system", Content: system})
 		}
 		for _, message := range req.Messages {
 			role := normalizedOpenAIMessageRole(message.Role)
+			if role == "system" {
+				continue
+			}
 			content := strings.TrimSpace(message.Content)
 			toolCallID := strings.TrimSpace(message.ToolCallID)
 			name := strings.TrimSpace(message.Name)
@@ -344,22 +348,13 @@ func openAIMessagesFromGenerationRequest(req GenerationRequest) []openAIMessage 
 			return messages
 		}
 	}
-	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, openAIMessage{Role: "system", Content: req.System})
+	if system != "" {
+		messages = append(messages, openAIMessage{Role: "system", Content: system})
 	}
 	if strings.TrimSpace(req.Prompt) != "" {
 		messages = append(messages, openAIMessage{Role: "user", Content: req.Prompt})
 	}
 	return messages
-}
-
-func generationMessagesContainSystem(messages []GenerationMessage) bool {
-	for _, message := range messages {
-		if normalizedOpenAIMessageRole(message.Role) == "system" && strings.TrimSpace(message.Content) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizedOpenAIMessageRole(role string) string {

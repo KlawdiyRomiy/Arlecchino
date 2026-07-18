@@ -188,6 +188,8 @@ func NewApp() *App {
 		},
 		MCPContextProvider: app.aiMCPContextProvider,
 		Diagnostics:        app.aiDiagnosticsProvider,
+		SemanticContext:    app.aiSemanticProvider,
+		BrowserPreview:     app.aiBrowserPreviewExecutor,
 		MCPExecutor:        app.aiMCPToolExecutor,
 	})
 	app.closeConfirmationEnabled.Store(true)
@@ -221,6 +223,8 @@ func (a *App) startup(ctx context.Context) {
 			},
 			MCPContextProvider: a.aiMCPContextProvider,
 			Diagnostics:        a.aiDiagnosticsProvider,
+			SemanticContext:    a.aiSemanticProvider,
+			BrowserPreview:     a.aiBrowserPreviewExecutor,
 			MCPExecutor:        a.aiMCPToolExecutor,
 		})
 	}

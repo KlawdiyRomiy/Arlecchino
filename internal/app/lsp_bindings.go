@@ -24,6 +24,21 @@ type LSPDefinitionResult struct {
 	Char int    `json:"char"`
 }
 
+// LSPCallHierarchyResult is a bounded presentation of an actual LSP call
+// hierarchy edge. It intentionally does not expose opaque server data.
+type LSPCallHierarchyResult struct {
+	Direction string `json:"direction"`
+	Name      string `json:"name"`
+	Detail    string `json:"detail,omitempty"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Char      int    `json:"char"`
+	Ranges    []struct {
+		Line int `json:"line"`
+		Char int `json:"char"`
+	} `json:"ranges,omitempty"`
+}
+
 // SignatureHelpResult represents a signature help result for frontend
 type SignatureHelpResult struct {
 	Signatures      []SignatureInfo `json:"signatures"`
@@ -323,6 +338,53 @@ func (a *App) LSPGoToDefinition(filePath string, content string, line int, chara
 		})
 	}
 
+	return results, nil
+}
+
+// LSPCallHierarchy uses the LSP call-hierarchy protocol for a single bounded
+// document position. It never falls back to lexical search.
+func (a *App) LSPCallHierarchy(filePath string, content string, line int, character int) ([]LSPCallHierarchyResult, error) {
+	manager := a.activeLSPManager()
+	if manager == nil {
+		return nil, fmt.Errorf("LSP manager not available")
+	}
+	language := detectLanguage(filePath)
+	if language == "" {
+		return nil, fmt.Errorf("unsupported language for file: %s", filePath)
+	}
+	opened, err := ensureDocOpen(manager, language, filePath, content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open document: %w", err)
+	}
+	if opened {
+		defer manager.DidCloseTransient(language, filePath)
+	}
+	edges, err := manager.CallHierarchy(language, filePath, line, character)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get call hierarchy: %w", err)
+	}
+	results := make([]LSPCallHierarchyResult, 0, len(edges))
+	for _, edge := range edges {
+		path := normalizeLSPDefinitionPath(edge.Item.URI)
+		if path == "" {
+			continue
+		}
+		result := LSPCallHierarchyResult{
+			Direction: edge.Direction,
+			Name:      edge.Item.Name,
+			Detail:    edge.Item.Detail,
+			Path:      path,
+			Line:      edge.Item.SelectionRange.Start.Line + 1,
+			Char:      edge.Item.SelectionRange.Start.Character,
+		}
+		for _, callRange := range edge.Ranges {
+			result.Ranges = append(result.Ranges, struct {
+				Line int `json:"line"`
+				Char int `json:"char"`
+			}{Line: callRange.Start.Line + 1, Char: callRange.Start.Character})
+		}
+		results = append(results, result)
+	}
 	return results, nil
 }
 

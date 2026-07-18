@@ -342,6 +342,25 @@ type Position struct {
 	Character int `json:"character"`
 }
 
+// CallHierarchyItem and CallHierarchyEdge mirror the LSP call hierarchy
+// protocol. They are intentionally compact so consumers can expose bounded
+// structural facts without presenting lexical search as a semantic hierarchy.
+type CallHierarchyItem struct {
+	Name           string          `json:"name"`
+	Kind           int             `json:"kind"`
+	Detail         string          `json:"detail,omitempty"`
+	URI            string          `json:"uri"`
+	Range          Range           `json:"range"`
+	SelectionRange Range           `json:"selectionRange"`
+	Data           json.RawMessage `json:"data,omitempty"`
+}
+
+type CallHierarchyEdge struct {
+	Direction string            `json:"direction"`
+	Item      CallHierarchyItem `json:"item"`
+	Ranges    []Range           `json:"ranges,omitempty"`
+}
+
 // HoverResult represents the result of a hover request
 type HoverResult struct {
 	Contents string `json:"contents"`
@@ -3213,6 +3232,44 @@ func (m *Manager) GoToDefinition(language, filePath string, line, column int) ([
 	return server.GoToDefinition(filePath, line, column)
 }
 
+// CallHierarchy returns real LSP incoming/outgoing calls for the symbol at a
+// position. A server that does not implement the capability returns its LSP
+// error; callers must not substitute lexical search as call hierarchy.
+func (m *Manager) CallHierarchy(language, filePath string, line, column int) ([]CallHierarchyEdge, error) {
+	resolvedLanguage, ok := m.resolveServerLanguage(language)
+	if !ok {
+		server, err := m.ensureStarted(language)
+		if err != nil {
+			return nil, nil
+		}
+		syncLanguage := language
+		if configured, configuredOK := m.resolveConfiguredLanguage(language); configuredOK {
+			syncLanguage = configured
+		}
+		defer m.maybeCheckServerResources(syncLanguage, server, "call_hierarchy")
+		if err := m.ensureDocSyncedForRequest(context.Background(), syncLanguage, filePath, server); err != nil {
+			return nil, err
+		}
+		return server.CallHierarchy(filePath, line, column)
+	}
+
+	m.mu.RLock()
+	server, found := m.servers[resolvedLanguage]
+	m.mu.RUnlock()
+	if !found || server == nil || !server.running || !server.isProcessAlive() {
+		started, err := m.ensureStarted(resolvedLanguage)
+		if err != nil {
+			return nil, nil
+		}
+		server = started
+	}
+	defer m.maybeCheckServerResources(resolvedLanguage, server, "call_hierarchy")
+	if err := m.ensureDocSyncedForRequest(context.Background(), resolvedLanguage, filePath, server); err != nil {
+		return nil, err
+	}
+	return server.CallHierarchy(filePath, line, column)
+}
+
 // Hover returns hover information for a symbol at the given position
 func (m *Manager) Hover(language, filePath string, line, column int) (string, error) {
 	resolvedLanguage, ok := m.resolveServerLanguage(language)
@@ -4660,6 +4717,82 @@ func (s *Server) GoToDefinition(filePath string, line, column int) ([]Location, 
 	}
 
 	return nil, nil
+}
+
+func (s *Server) CallHierarchy(filePath string, line, column int) ([]CallHierarchyEdge, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": "file://" + filePath},
+		"position":     map[string]any{"line": line, "character": column},
+	}
+	resp, err := s.request("textDocument/prepareCallHierarchy", params)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("call hierarchy preparation error: %s", resp.Error.Message)
+	}
+	var roots []CallHierarchyItem
+	if err := json.Unmarshal(resp.Result, &roots); err != nil {
+		return nil, fmt.Errorf("invalid call hierarchy preparation response: %w", err)
+	}
+	edges := make([]CallHierarchyEdge, 0, len(roots)*2)
+	for _, root := range roots {
+		incoming, incomingErr := s.callHierarchyIncoming(root)
+		if incomingErr != nil {
+			return nil, incomingErr
+		}
+		edges = append(edges, incoming...)
+		outgoing, outgoingErr := s.callHierarchyOutgoing(root)
+		if outgoingErr != nil {
+			return nil, outgoingErr
+		}
+		edges = append(edges, outgoing...)
+	}
+	return edges, nil
+}
+
+func (s *Server) callHierarchyIncoming(item CallHierarchyItem) ([]CallHierarchyEdge, error) {
+	resp, err := s.request("callHierarchy/incomingCalls", map[string]any{"item": item})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("incoming call hierarchy error: %s", resp.Error.Message)
+	}
+	var calls []struct {
+		From       CallHierarchyItem `json:"from"`
+		FromRanges []Range           `json:"fromRanges"`
+	}
+	if err := json.Unmarshal(resp.Result, &calls); err != nil {
+		return nil, fmt.Errorf("invalid incoming call hierarchy response: %w", err)
+	}
+	edges := make([]CallHierarchyEdge, 0, len(calls))
+	for _, call := range calls {
+		edges = append(edges, CallHierarchyEdge{Direction: "incoming", Item: call.From, Ranges: call.FromRanges})
+	}
+	return edges, nil
+}
+
+func (s *Server) callHierarchyOutgoing(item CallHierarchyItem) ([]CallHierarchyEdge, error) {
+	resp, err := s.request("callHierarchy/outgoingCalls", map[string]any{"item": item})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("outgoing call hierarchy error: %s", resp.Error.Message)
+	}
+	var calls []struct {
+		To         CallHierarchyItem `json:"to"`
+		FromRanges []Range           `json:"fromRanges"`
+	}
+	if err := json.Unmarshal(resp.Result, &calls); err != nil {
+		return nil, fmt.Errorf("invalid outgoing call hierarchy response: %w", err)
+	}
+	edges := make([]CallHierarchyEdge, 0, len(calls))
+	for _, call := range calls {
+		edges = append(edges, CallHierarchyEdge{Direction: "outgoing", Item: call.To, Ranges: call.FromRanges})
+	}
+	return edges, nil
 }
 
 // Hover returns hover information for a symbol at the given position

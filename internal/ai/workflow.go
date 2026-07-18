@@ -192,15 +192,17 @@ func (s *Service) SubmitQuestionAnswer(ctx context.Context, projectID string, re
 		return AIQuestionAnswerResult{}, err
 	}
 	s.emitChatArtifactChanged(project, artifact, "ai:chat:question-updated")
-	nextRun, err := s.StartChatRun(ctx, project.ID, AIChatRunRequest{
+	nextRun, err := s.startChatRun(ctx, project.ID, AIChatRunRequest{
 		SessionID:     run.SessionID,
 		Action:        run.Action,
 		ProfileID:     run.ProfileID,
 		RuntimeFamily: run.RuntimeFamily,
 		ProviderID:    run.ProviderID,
 		Model:         run.Model,
-		Prompt:        buildQuestionAnswerContinuationPrompt(run, payload, answer),
 		Links:         linksForQuestionAnswerContinuation(run),
+	}, []AIChatRunInput{
+		newUserFollowUpRunInput(answer, run.ID),
+		newHiddenWorkflowRunInput(buildQuestionAnswerContinuationPrompt(payload), run.ID),
 	})
 	if err != nil {
 		return AIQuestionAnswerResult{}, err
@@ -245,18 +247,12 @@ func selectedQuestionAnswer(payload AIInteractionQuestionPayload, req AIQuestion
 	return "", "", fmt.Errorf("question option %q was not found", optionID)
 }
 
-func buildQuestionAnswerContinuationPrompt(run AIChatRun, question AIInteractionQuestionPayload, answer string) string {
+func buildQuestionAnswerContinuationPrompt(question AIInteractionQuestionPayload) string {
 	return strings.TrimSpace(strings.Join([]string{
-		"Continue the current AI Chat run after the user answered a clarifying question.",
-		"",
-		"Original request:",
-		run.UserPrompt,
-		"",
+		"Continue the linked run after the user's separate follow-up answer to a clarifying question.",
+		"The user answer is a direct instruction and takes priority over this workflow procedure.",
 		"Question:",
 		question.Prompt,
-		"",
-		"Answer:",
-		answer,
 	}, "\n"))
 }
 
@@ -372,17 +368,18 @@ func (s *Service) AcceptPlan(ctx context.Context, projectID string, req AIAccept
 		run, err := s.GetChatRun(project.ID, payload.AcceptedBuildRunID)
 		return AIWorkflowRunResult{Run: run, Artifact: artifact, Status: string(payload.State), Started: false}, err
 	}
-	buildRun, err := s.StartChatRun(ctx, project.ID, AIChatRunRequest{
+	buildRun, err := s.startChatRun(ctx, project.ID, AIChatRunRequest{
 		SessionID:     planRun.SessionID,
 		Action:        AIChatActionBuild,
 		ProfileID:     "build-reviewer",
 		RuntimeFamily: planRun.RuntimeFamily,
 		ProviderID:    planRun.ProviderID,
 		Model:         planRun.Model,
-		Prompt:        buildAcceptedPlanPrompt(planRun),
 		Links: AIChatRunLinks{
 			SourcePlanRunID: planRun.ID,
 		},
+	}, []AIChatRunInput{
+		newWorkflowRunInput(buildAcceptedPlanPrompt(), "Plan accepted — Build started", planRun.ID),
 	})
 	if err != nil {
 		return AIWorkflowRunResult{}, err
@@ -402,16 +399,8 @@ func (s *Service) AcceptPlan(ctx context.Context, projectID string, req AIAccept
 	return AIWorkflowRunResult{Run: buildRun, Artifact: artifact, Status: string(payload.State), Started: true}, nil
 }
 
-func buildAcceptedPlanPrompt(planRun AIChatRun) string {
-	return strings.TrimSpace(strings.Join([]string{
-		"Build the accepted plan. Keep the implementation scoped to the plan and preserve existing approval, artifact, verification, and audit rules.",
-		"",
-		"Original request:",
-		planRun.UserPrompt,
-		"",
-		"Accepted plan:",
-		planRun.Response,
-	}, "\n"))
+func buildAcceptedPlanPrompt() string {
+	return "Build the accepted linked plan. Keep the implementation scoped to that plan and preserve existing approval, artifact, verification, and audit rules."
 }
 
 func (s *Service) RequestPlanRevision(ctx context.Context, projectID string, req AIRequestPlanRevisionRequest) (AIWorkflowRunResult, error) {
@@ -435,18 +424,23 @@ func (s *Service) RequestPlanRevision(ctx context.Context, projectID string, req
 		return AIWorkflowRunResult{}, fmt.Errorf("plan run %q cannot be revised from state %q", req.PlanRunID, payload.State)
 	}
 	reason := sanitizedDisplayText(req.Reason)
-	revisionRun, err := s.StartChatRun(ctx, project.ID, AIChatRunRequest{
+	revisionInputs := []AIChatRunInput{
+		newHiddenWorkflowRunInput(buildPlanRevisionPrompt(), planRun.ID),
+	}
+	if reason != "" {
+		revisionInputs = append([]AIChatRunInput{newUserFollowUpRunInput(reason, planRun.ID)}, revisionInputs...)
+	}
+	revisionRun, err := s.startChatRun(ctx, project.ID, AIChatRunRequest{
 		SessionID:     planRun.SessionID,
 		Action:        AIChatActionPlan,
 		ProfileID:     "plan-architect",
 		RuntimeFamily: planRun.RuntimeFamily,
 		ProviderID:    planRun.ProviderID,
 		Model:         planRun.Model,
-		Prompt:        buildPlanRevisionPrompt(planRun, reason),
 		Links: AIChatRunLinks{
 			SourcePlanRunID: planRun.ID,
 		},
-	})
+	}, revisionInputs)
 	if err != nil {
 		return AIWorkflowRunResult{}, err
 	}
@@ -466,19 +460,8 @@ func (s *Service) RequestPlanRevision(ctx context.Context, projectID string, req
 	return AIWorkflowRunResult{Run: revisionRun, Artifact: artifact, Status: string(payload.State), Started: true}, nil
 }
 
-func buildPlanRevisionPrompt(planRun AIChatRun, reason string) string {
-	return strings.TrimSpace(strings.Join([]string{
-		"Revise the implementation plan. The previous plan was rejected or needs changes.",
-		"",
-		"Original request:",
-		planRun.UserPrompt,
-		"",
-		"Previous plan:",
-		planRun.Response,
-		"",
-		"Revision request:",
-		firstNonEmpty(reason, "Change the plan and propose a better approach."),
-	}, "\n"))
+func buildPlanRevisionPrompt() string {
+	return "Revise the linked implementation plan. The user's separate follow-up gives the requested changes; keep repository rules, safety policy, and mode constraints in force."
 }
 
 func (s *Service) StartLinkedReview(ctx context.Context, projectID string, req AIStartLinkedReviewRequest) (AIWorkflowRunResult, error) {
@@ -499,7 +482,6 @@ func (s *Service) StartLinkedReview(ctx context.Context, projectID string, req A
 	if existing, ok := s.findLinkedReviewRun(project, buildRun.ID); ok {
 		return AIWorkflowRunResult{Run: existing, Status: "existing", Started: false}, nil
 	}
-	reviewPrompt := s.buildLinkedReviewPrompt(project, buildRun)
 	reviewRun, err := s.startChatRun(ctx, project.ID, AIChatRunRequest{
 		SessionID:     buildRun.SessionID,
 		Action:        AIChatActionReview,
@@ -507,13 +489,14 @@ func (s *Service) StartLinkedReview(ctx context.Context, projectID string, req A
 		RuntimeFamily: buildRun.RuntimeFamily,
 		ProviderID:    buildRun.ProviderID,
 		Model:         buildRun.Model,
-		Prompt:        reviewPrompt,
 		Links: AIChatRunLinks{
 			SourcePlanRunID:         buildRun.Links.SourcePlanRunID,
 			SourceBuildRunID:        buildRun.ID,
 			AutoReviewForBuildRunID: buildRun.ID,
 		},
-	}, linkedReviewDisplayPrompt(buildRun))
+	}, []AIChatRunInput{
+		newWorkflowRunInput(buildLinkedReviewPrompt(), "Linked review started", buildRun.ID),
+	})
 	if err != nil {
 		return AIWorkflowRunResult{}, err
 	}
@@ -648,23 +631,6 @@ func (s *Service) findLinkedReviewRun(project *ProjectSession, buildRunID string
 	return AIChatRun{}, false
 }
 
-func (s *Service) buildLinkedReviewPrompt(project *ProjectSession, buildRun AIChatRun) string {
-	planText := ""
-	if planRunID := strings.TrimSpace(buildRun.Links.SourcePlanRunID); planRunID != "" {
-		if planRun, err := s.GetChatRun(project.ID, planRunID); err == nil {
-			planText = planRun.Response
-		}
-	}
-	return strings.TrimSpace(strings.Join([]string{
-		"Review the completed Build run against the accepted plan. Stay read-only. Lead with concrete findings, missing verification, and mismatches. If there are no issues, say that clearly.",
-		"",
-		"Build request:",
-		buildRun.UserPrompt,
-		"",
-		"Build result:",
-		buildRun.Response,
-		"",
-		"Accepted plan:",
-		firstNonEmpty(planText, "No linked plan text was found."),
-	}, "\n"))
+func buildLinkedReviewPrompt() string {
+	return "Review the completed linked Build run against its accepted plan. Stay read-only. Lead with concrete findings, missing verification, and mismatches. If there are no issues, say that clearly."
 }

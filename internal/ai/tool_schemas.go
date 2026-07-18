@@ -12,6 +12,7 @@ const (
 	providerToolAgentStatusUpdate   = "agent_status_update"
 	providerToolAgentCommentary     = "agent_commentary"
 	providerToolDiagnosticsRead     = "diagnostics_read"
+	providerToolSemanticQuery       = "semantic_query"
 	providerToolFileReadRange       = "file_read_range"
 	providerToolWorkspaceGrep       = "workspace_grep"
 	providerToolGitPreview          = "git_preview"
@@ -19,11 +20,14 @@ const (
 	providerToolMemoryContext       = "memory_context"
 	providerToolMemoryProposeSave   = "memory_propose_save"
 	providerToolTerminalPreview     = "terminal_preview"
+	providerToolBrowserPreview      = "browser_preview"
 	providerToolFileEditPreview     = "file_edit_preview"
 	providerToolFileCreatePreview   = "file_create_preview"
 	providerToolFilePatchPreview    = "file_patch_preview"
 	providerToolMCPExecute          = "mcp_execute"
 	providerToolSubagentPreview     = "subagent_preview"
+	providerToolSubagentStart       = "subagent_start_readonly"
+	providerToolSubagentStartPatch  = "subagent_start_patch"
 	providerToolInteractionQuestion = "interaction_question"
 )
 
@@ -144,7 +148,7 @@ func buildUsesFastCurrentFileEditToolset(req AIChatRunRequest) bool {
 	if req.Action != AIChatActionBuild {
 		return false
 	}
-	if strings.TrimSpace(req.ProfileID) == "subagent-runner" {
+	if strings.TrimSpace(req.ProfileID) == "subagent-runner" || strings.TrimSpace(req.ProfileID) == "subagent-patch-author" {
 		return false
 	}
 	if len(strings.TrimSpace(req.Prompt)) > 260 {
@@ -289,6 +293,46 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 			},
 		},
 		{
+			Name:        providerToolSemanticQuery,
+			Description: "Read bounded semantic code evidence through the IDE host. Supported operations are symbols, definition, references, diagnostics, and call_hierarchy. The returned source explicitly identifies LSP, indexer, or an honest unavailable/fallback result.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"operation"},
+				"properties": map[string]any{
+					"operation": map[string]any{
+						"type":        "string",
+						"enum":        []string{"symbols", "definition", "references", "diagnostics", "call_hierarchy"},
+						"description": "Semantic operation to perform.",
+					},
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Symbol or text query for symbols, references, or call hierarchy.",
+					},
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Project-relative file path for definition or diagnostics.",
+					},
+					"line": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"description": "1-based line for definition.",
+					},
+					"character": map[string]any{
+						"type":        "integer",
+						"minimum":     0,
+						"description": "0-based character for definition.",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"maximum":     100,
+						"description": "Maximum bounded result count.",
+					},
+				},
+			},
+		},
+		{
 			Name:        providerToolFileReadRange,
 			Description: "Read a bounded, line-numbered range from a project text file. Use before targeted edits when the exact anchor is not already in context.",
 			Parameters: map[string]any{
@@ -425,6 +469,25 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 		})
 	}
 	if req.Action == AIChatActionBuild {
+		tools = append(tools, providers.GenerationTool{
+			Name:        providerToolBrowserPreview,
+			Description: "Propose opening a local browser preview only for a loopback http(s) URL. This is not browser automation or general web access: Arlecchino requires an explicit approval and records whether screenshot evidence is actually available.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"url"},
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "Loopback http(s) URL such as http://127.0.0.1:3000. External domains are rejected.",
+					},
+					"title": map[string]any{
+						"type":        "string",
+						"description": "Optional short preview title.",
+					},
+				},
+			},
+		})
 		tools = append(tools,
 			providers.GenerationTool{
 				Name:        providerToolMemoryProposeSave,
@@ -548,25 +611,46 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 		)
 		if req.ProfileID == "subagent-runner" {
 			tools = append(tools, providers.GenerationTool{
-				Name:        providerToolSubagentPreview,
-				Description: "Create an isolated background-agent preview artifact with scoped context. This does not mutate files or launch unreviewed background work.",
+				Name:        providerToolSubagentStart,
+				Description: "Propose an isolated read-only child run with scoped context and a structured evidence result. It cannot modify the worktree, run terminal commands, use MCP, or inherit Build permissions. Arlecchino requires approval before it starts.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
-					"required":             []string{"prompt"},
+					"required":             []string{"objective"},
 					"properties": map[string]any{
-						"prompt": map[string]any{
+						"objective": map[string]any{
 							"type":        "string",
-							"description": "Concrete scoped task for the background agent preview.",
+							"description": "Concrete scoped task for the read-only child run.",
 						},
-						"action": map[string]any{
+						"role": map[string]any{
 							"type":        "string",
-							"enum":        []string{"ask", "debug", "plan", "build"},
-							"description": "Mode for the isolated preview. Defaults to plan.",
+							"description": "Optional concise read-only role, such as researcher or reviewer.",
 						},
-						"profileId": map[string]any{
+					},
+				},
+			})
+			tools = append(tools, providers.GenerationTool{
+				Name:        providerToolSubagentStartPatch,
+				Description: "Propose an isolated patch-artifact child run. The child may draft reviewable patch artifacts only for its declared project-relative ownership paths; it cannot apply them, execute terminal commands, use MCP, or mutate the parent worktree. Arlecchino requires approval before it starts.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"required":             []string{"objective", "ownedPaths"},
+					"properties": map[string]any{
+						"objective": map[string]any{
 							"type":        "string",
-							"description": "Optional subagent profile id.",
+							"description": "Concrete scoped implementation task for the child.",
+						},
+						"ownedPaths": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"minItems":    1,
+							"maxItems":    maxSubagentOwnedPaths,
+							"description": "Exact project-relative files or directories owned by this child.",
+						},
+						"role": map[string]any{
+							"type":        "string",
+							"description": "Optional concise implementation role.",
 						},
 					},
 				},
@@ -580,6 +664,10 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 				"additionalProperties": false,
 				"required":             []string{"tool", "arguments"},
 				"properties": map[string]any{
+					"serverId": map[string]any{
+						"type":        "string",
+						"description": "Optional managed MCP server id. A managed server and its specific tool must be health-checked, enabled, and separately approved before execution.",
+					},
 					"tool": map[string]any{
 						"type":        "string",
 						"description": "MCP tool name, for example ide_ui.open_file_panel, ide_control.capabilities, or agent_memory.search.",
@@ -647,6 +735,8 @@ func toolIDForProviderToolName(name string) string {
 		return "agent.commentary"
 	case providerToolDiagnosticsRead:
 		return "diagnostics.read"
+	case providerToolSemanticQuery:
+		return "semantic.query"
 	case providerToolFileReadRange:
 		return "file.read_range"
 	case providerToolWorkspaceGrep:
@@ -661,6 +751,8 @@ func toolIDForProviderToolName(name string) string {
 		return "memory.propose_save"
 	case providerToolTerminalPreview:
 		return "terminal.preview"
+	case providerToolBrowserPreview:
+		return "browser.preview"
 	case providerToolFileEditPreview:
 		return "file.edit.preview"
 	case providerToolFileCreatePreview:
@@ -671,6 +763,10 @@ func toolIDForProviderToolName(name string) string {
 		return "mcp.execute"
 	case providerToolSubagentPreview:
 		return "subagent.preview"
+	case providerToolSubagentStart:
+		return "subagent.start_readonly"
+	case providerToolSubagentStartPatch:
+		return "subagent.start_patch"
 	case providerToolInteractionQuestion:
 		return "interaction.question"
 	default:
@@ -686,6 +782,8 @@ func providerToolNameForToolID(toolID string) string {
 		return providerToolAgentCommentary
 	case "diagnostics.read":
 		return providerToolDiagnosticsRead
+	case "semantic.query":
+		return providerToolSemanticQuery
 	case "file.read_range":
 		return providerToolFileReadRange
 	case "workspace.grep":
@@ -700,6 +798,8 @@ func providerToolNameForToolID(toolID string) string {
 		return providerToolMemoryProposeSave
 	case "terminal.preview":
 		return providerToolTerminalPreview
+	case "browser.preview":
+		return providerToolBrowserPreview
 	case "file.edit.preview":
 		return providerToolFileEditPreview
 	case "file.create.preview":
@@ -710,6 +810,10 @@ func providerToolNameForToolID(toolID string) string {
 		return providerToolMCPExecute
 	case "subagent.preview":
 		return providerToolSubagentPreview
+	case "subagent.start_readonly":
+		return providerToolSubagentStart
+	case "subagent.start_patch":
+		return providerToolSubagentStartPatch
 	case "interaction.question":
 		return providerToolInteractionQuestion
 	default:
@@ -774,6 +878,8 @@ func normalizeProviderToolArguments(toolID string, arguments map[string]string) 
 		applyToolArgumentAlias(normalized, "kind", "type")
 	case "diagnostics.read":
 		normalizeDiagnosticsReadToolArguments(normalized)
+	case "semantic.query":
+		normalizeSemanticQueryToolArguments(normalized)
 	case "file.read_range":
 		normalizeReadRangeToolArguments(normalized)
 	case "workspace.grep":
@@ -782,6 +888,9 @@ func normalizeProviderToolArguments(toolID string, arguments map[string]string) 
 		applyToolArgumentAlias(normalized, "op", "operation", "action")
 	case "terminal.preview":
 		normalizeTerminalPreviewToolArguments(normalized)
+	case "browser.preview":
+		applyToolArgumentAlias(normalized, "url", "endpoint", "href")
+		applyToolArgumentAlias(normalized, "title", "name", "label")
 	case "file.edit.preview":
 		normalizeEditPreviewToolArguments(normalized)
 	case "file.create.preview":
@@ -790,9 +899,17 @@ func normalizeProviderToolArguments(toolID string, arguments map[string]string) 
 		applyToolArgumentAlias(normalized, "unifiedDiff", "unified_diff", "diff", "patch")
 	case "mcp.execute":
 		normalizeMCPExecuteToolArguments(normalized)
+		applyToolArgumentAlias(normalized, "serverId", "server_id", "server")
 	case "subagent.preview":
 		applyToolArgumentAlias(normalized, "prompt", "task", "query", "instruction")
 		applyToolArgumentAlias(normalized, "profileId", "profile_id", "profile")
+	case "subagent.start_readonly":
+		applyToolArgumentAlias(normalized, "objective", "prompt", "task", "query", "instruction")
+		applyToolArgumentAlias(normalized, "role", "agentRole", "agent_role")
+	case "subagent.start_patch":
+		applyToolArgumentAlias(normalized, "objective", "prompt", "task", "query", "instruction")
+		applyToolArgumentAlias(normalized, "role", "agentRole", "agent_role")
+		applyToolArgumentAlias(normalized, "ownedPaths", "owned_paths", "paths", "files")
 	case "interaction.question":
 		applyToolArgumentAlias(normalized, "prompt", "question", "message")
 	}
@@ -802,6 +919,15 @@ func normalizeProviderToolArguments(toolID string, arguments map[string]string) 
 func normalizeDiagnosticsReadToolArguments(arguments map[string]string) {
 	applyToolArgumentAlias(arguments, "path", "file_path", "filePath", "filepath", "file", "target_file", "targetFile")
 	applyToolArgumentAlias(arguments, "language", "lang", "languageId", "language_id")
+	applyToolArgumentAlias(arguments, "limit", "max", "count")
+}
+
+func normalizeSemanticQueryToolArguments(arguments map[string]string) {
+	applyToolArgumentAlias(arguments, "operation", "op", "kind", "action")
+	applyToolArgumentAlias(arguments, "query", "symbol", "name", "search")
+	applyToolArgumentAlias(arguments, "path", "file_path", "filePath", "file", "target_file")
+	applyToolArgumentAlias(arguments, "line", "startLine", "start_line")
+	applyToolArgumentAlias(arguments, "character", "char", "column")
 	applyToolArgumentAlias(arguments, "limit", "max", "count")
 }
 

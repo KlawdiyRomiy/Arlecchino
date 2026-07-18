@@ -25,6 +25,8 @@ import (
 type EventEmitter func(name string, payload any)
 type MCPContextProvider func(projectRoot string) (AIMCPContextPlane, error)
 type DiagnosticsProvider func(projectRoot string, filePath string, language string, limit int) (string, error)
+type SemanticContextProvider func(projectRoot string, req AISemanticQueryRequest) (AISemanticQueryResult, error)
+type BrowserPreviewExecutor func(ctx context.Context, projectRoot string, req AIBrowserPreviewRequest) (AIBrowserPreviewResult, error)
 type MCPToolExecutor func(ctx context.Context, projectRoot string, toolName string, arguments map[string]any) (any, error)
 
 type ServiceOptions struct {
@@ -33,6 +35,8 @@ type ServiceOptions struct {
 	Emit               EventEmitter
 	MCPContextProvider MCPContextProvider
 	Diagnostics        DiagnosticsProvider
+	SemanticContext    SemanticContextProvider
+	BrowserPreview     BrowserPreviewExecutor
 	MCPExecutor        MCPToolExecutor
 }
 
@@ -46,6 +50,8 @@ type Service struct {
 	emit                 EventEmitter
 	mcpContext           MCPContextProvider
 	diagnostics          DiagnosticsProvider
+	semantic             SemanticContextProvider
+	browserPreview       BrowserPreviewExecutor
 	mcpExecutor          MCPToolExecutor
 	providers            map[string]providers.Provider
 	descriptors          map[string]providers.AIProviderDescriptor
@@ -55,6 +61,10 @@ type Service struct {
 	retiredRuns          map[string]struct{}
 	runCancels           map[string]context.CancelFunc
 	runDone              map[string]chan struct{}
+	liveRunControllers   map[string]agents.LiveRunController
+	steerFallbacks       map[string]pendingSteerFallback
+	chatSteerMu          sync.Mutex
+	chatQueueMu          sync.Mutex
 	agentInputs          map[string]func([]byte) error
 	agentResizes         map[string]func(uint16, uint16) error
 	authSessions         map[string]*AIProviderAuthSession
@@ -95,6 +105,12 @@ type ProjectSession struct {
 	Egress                *EgressLedger
 	ChatHistory           *ChatHistoryLedger
 	ChatArtifacts         *ChatArtifactLedger
+	ChatSteers            *ChatSteerLedger
+	ChatQueue             *ChatQueueLedger
+	RunGraph              *RunGraphLedger
+	SkillCircuit          *SkillCircuitLedger
+	AgentPlugins          *AgentPluginLedger
+	ManagedMCP            *ManagedMCPLedger
 	ToolAudit             *ToolAuditLedger
 	RunTimeline           *RunTimelineLedger
 	ToolApprovalGrants    *ToolApprovalGrantLedger
@@ -113,6 +129,8 @@ func NewService(options ServiceOptions) *Service {
 		emit:               options.Emit,
 		mcpContext:         options.MCPContextProvider,
 		diagnostics:        options.Diagnostics,
+		semantic:           options.SemanticContext,
+		browserPreview:     options.BrowserPreview,
 		mcpExecutor:        options.MCPExecutor,
 		providers:          map[string]providers.Provider{},
 		descriptors:        map[string]providers.AIProviderDescriptor{},
@@ -122,6 +140,8 @@ func NewService(options ServiceOptions) *Service {
 		retiredRuns:        map[string]struct{}{},
 		runCancels:         map[string]context.CancelFunc{},
 		runDone:            map[string]chan struct{}{},
+		liveRunControllers: map[string]agents.LiveRunController{},
+		steerFallbacks:     map[string]pendingSteerFallback{},
 		agentInputs:        map[string]func([]byte) error{},
 		agentResizes:       map[string]func(uint16, uint16) error{},
 		authSessions:       map[string]*AIProviderAuthSession{},
@@ -165,6 +185,8 @@ func (s *Service) Close() error {
 	s.mu.Lock()
 	s.runCancels = map[string]context.CancelFunc{}
 	s.runDone = map[string]chan struct{}{}
+	s.liveRunControllers = map[string]agents.LiveRunController{}
+	s.steerFallbacks = map[string]pendingSteerFallback{}
 	s.agentInputs = map[string]func([]byte) error{}
 	s.agentResizes = map[string]func(uint16, uint16) error{}
 	s.runs = map[string]*AIChatRun{}
@@ -246,6 +268,42 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		_ = store.Close()
 		return nil, err
 	}
+	chatSteers, err := openChatSteerLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	chatQueue, err := openChatQueueLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	runGraph, err := openRunGraphLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	skillCircuit, err := openSkillCircuitLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	agentPlugins, err := openAgentPluginLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	managedMCP, err := openManagedMCPLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	toolAudit, err := openToolAuditLedger(projectRoot)
 	if err != nil {
 		_ = skillStore.Close()
@@ -291,6 +349,12 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		Egress:                ledger,
 		ChatHistory:           chatHistory,
 		ChatArtifacts:         chatArtifacts,
+		ChatSteers:            chatSteers,
+		ChatQueue:             chatQueue,
+		RunGraph:              runGraph,
+		SkillCircuit:          skillCircuit,
+		AgentPlugins:          agentPlugins,
+		ManagedMCP:            managedMCP,
 		ToolAudit:             toolAudit,
 		RunTimeline:           runTimeline,
 		ToolApprovalGrants:    toolApprovalGrants,
@@ -1049,8 +1113,19 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		snapshot.DataCategories = append(snapshot.DataCategories, "terminal_input")
 		addContextItemDisclosure(&snapshot, AIContextItemKindTerminal, "Terminal input", req.TerminalWorkDir, "terminal", true, true, len(req.TerminalInput), "")
 	}
-	if req.IncludeMCP && s.mcpContext != nil {
-		if plane, err := s.mcpContext(project.ProjectRoot); err == nil {
+	if req.IncludeMCP {
+		plane := AIMCPContextPlane{}
+		hasPlane := false
+		if s.mcpContext != nil {
+			if externalPlane, err := s.mcpContext(project.ProjectRoot); err == nil {
+				plane, hasPlane = externalPlane, true
+			}
+		}
+		if managedPlane, managedAvailable := managedMCPMetadataPlane(project); managedAvailable {
+			plane = mergeMCPMetadataPlanes(plane, managedPlane)
+			hasPlane = true
+		}
+		if hasPlane {
 			snapshot.MCPContext = &plane
 			if plane.Available {
 				snapshot.DataCategories = append(snapshot.DataCategories, "mcp_tool_metadata")
@@ -1115,12 +1190,15 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 	} else if req.IncludeMnemonic {
 		addContextItemDisclosure(&snapshot, AIContextItemKindMnemonic, "Mnemonic", "", "mnemonic", true, false, 0, "disabled")
 	}
-	if req.IncludeSkills && project.Skills != nil && project.Mnemonic != nil && project.Mnemonic.Enabled() {
-		items, _ := project.Skills.Context(skills.ContextRequest{
-			WorkspaceRootHash: snapshot.ProjectPathHash,
-			AgentSurface:      string(snapshot.Capability),
-			Limit:             6,
-		})
+	if req.IncludeSkills && project.Skills != nil {
+		items := s.skillCircuitContext(project, req, snapshot.ProjectPathHash)
+		if len(items) == 0 && req.RunID == "" {
+			items, _ = project.Skills.Context(skills.ContextRequest{
+				WorkspaceRootHash: snapshot.ProjectPathHash,
+				AgentSurface:      string(snapshot.Capability),
+				Limit:             6,
+			})
+		}
 		for _, item := range items {
 			snapshot.Skills = append(snapshot.Skills, fromSkillContext(item))
 		}
@@ -2407,6 +2485,8 @@ func (s *Service) retireRuns(waiters []runWaiter) {
 		delete(s.runs, waiter.runID)
 		delete(s.runCancels, waiter.runID)
 		delete(s.runDone, waiter.runID)
+		delete(s.liveRunControllers, waiter.runID)
+		delete(s.steerFallbacks, waiter.runID)
 		delete(s.agentInputs, waiter.runID)
 		delete(s.agentResizes, waiter.runID)
 

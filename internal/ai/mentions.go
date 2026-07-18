@@ -188,7 +188,6 @@ func skillMentionCandidates(project *ProjectSession, query, group, insertPrefix 
 	if project == nil || project.Skills == nil {
 		return nil
 	}
-	mnemonicEnabled := project.Mnemonic != nil && project.Mnemonic.Enabled()
 	records, err := project.Skills.List(100)
 	if err != nil {
 		return nil
@@ -199,7 +198,7 @@ func skillMentionCandidates(project *ProjectSession, query, group, insertPrefix 
 		if !ok {
 			continue
 		}
-		disabledReason := skillMentionDisabledReason(record, mnemonicEnabled)
+		disabledReason := skillMentionDisabledReason(record)
 		if disabledReason != "" && !includeDisabled {
 			continue
 		}
@@ -226,10 +225,7 @@ func skillMentionCandidates(project *ProjectSession, query, group, insertPrefix 
 	return out
 }
 
-func skillMentionDisabledReason(record skills.Record, mnemonicEnabled bool) string {
-	if !mnemonicEnabled {
-		return "disabled"
-	}
+func skillMentionDisabledReason(record skills.Record) string {
 	if record.SourceKind != skills.SourceProject {
 		return "not trusted"
 	}
@@ -470,7 +466,7 @@ func (s *Service) materializeMentionFile(project *ProjectSession, snapshot *AICo
 
 func (s *Service) materializeMentionSkill(project *ProjectSession, snapshot *AIContextSnapshot, item AIContextItemRequest) {
 	label := firstNonEmpty(item.Label, item.ID, "Skill")
-	if project.Skills == nil || project.Mnemonic == nil || !project.Mnemonic.Enabled() {
+	if project.Skills == nil {
 		addContextItemDisclosure(snapshot, AIContextItemKindSkill, label, item.Path, mentionSource, true, false, 0, "disabled")
 		return
 	}

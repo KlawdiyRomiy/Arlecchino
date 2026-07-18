@@ -33,20 +33,23 @@ type codexRPCError struct {
 }
 
 type codexAppServerSession struct {
-	cmd         *exec.Cmd
-	stdin       io.WriteCloser
-	emit        func(Event)
-	runID       string
-	writeMu     sync.Mutex
-	pendingMu   sync.Mutex
-	pending     map[string]chan codexRPCMessage
-	nextID      int64
-	transcript  transcriptBuffer
-	observer    *codexAppServerObserver
-	processMu   sync.Mutex
-	processErr  error
-	processSet  bool
-	processDone chan error
+	cmd                *exec.Cmd
+	stdin              io.WriteCloser
+	emit               func(Event)
+	runID              string
+	writeMu            sync.Mutex
+	pendingMu          sync.Mutex
+	pending            map[string]chan codexRPCMessage
+	nextID             int64
+	transcript         transcriptBuffer
+	observer           *codexAppServerObserver
+	processMu          sync.Mutex
+	processErr         error
+	processSet         bool
+	processDone        chan error
+	controlMu          sync.Mutex
+	closed             bool
+	interruptRequested bool
 }
 
 type codexAppServerObserver struct {
@@ -109,6 +112,9 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 		observer:    newCodexAppServerObserver(req.RunID, emit),
 		processDone: make(chan error, 1),
 	}
+	if req.RegisterLiveRunController != nil {
+		defer req.RegisterLiveRunController(req.RunID, nil)
+	}
 	defer session.shutdown()
 	go func() {
 		session.processDone <- cmd.Wait()
@@ -137,11 +143,11 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 		return session.errorResult("Codex app-server initialize failed.", err, startedAt)
 	}
 
-	sandbox := codexSandboxForAction(req.Action)
+	sandbox := codexSandboxForRun(req)
 	threadResult, err := session.request(preflightCtx, "thread/start", map[string]any{
 		"cwd":               req.ProjectRoot,
 		"sandbox":           sandbox,
-		"approvalPolicy":    "never",
+		"approvalPolicy":    codexAppServerApprovalPolicy(req),
 		"approvalsReviewer": "user",
 		"baseInstructions":  "Arlecchino is the host runtime. Do not treat provider-native approvals, direct writes, or raw prose as Arlecchino approval.",
 		"model":             codexModelForRequest(req.Model),
@@ -165,6 +171,9 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 	if turnID := stringFromPath(turnResult, "turn", "id"); turnID != "" {
 		session.observer.setTurnID(turnID)
 	}
+	if req.RegisterLiveRunController != nil {
+		req.RegisterLiveRunController(req.RunID, session)
+	}
 	threadID, turnID := session.observer.ids()
 	emit(Event{
 		RunID:  req.RunID,
@@ -176,7 +185,7 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 			"protocol":        codexAppServerProtocolVersion,
 			"threadId":        threadID,
 			"turnId":          turnID,
-			"sandboxPolicy":   codexSandboxForAction(req.Action),
+			"sandboxPolicy":   codexSandboxForRun(req),
 			"reasoningEffort": reasoningEffort,
 			"argvPrompt":      false,
 		},
@@ -416,17 +425,93 @@ func (s *codexAppServerSession) handleServerRequest(msg codexRPCMessage) {
 }
 
 func (s *codexAppServerSession) interruptTurn(ctx context.Context) error {
-	threadID, turnID := s.observer.ids()
-	if threadID == "" || turnID == "" {
+	if s == nil {
 		return nil
 	}
+	s.controlMu.Lock()
+	if s.closed || s.interruptRequested || s.observer.isCompleted() {
+		s.controlMu.Unlock()
+		return nil
+	}
+	threadID, turnID := s.observer.ids()
+	if threadID == "" || turnID == "" {
+		s.controlMu.Unlock()
+		return nil
+	}
+	// Mark the turn unavailable before sending the RPC. A simultaneous steer
+	// must not wait for, or be accepted after, cancellation.
+	s.interruptRequested = true
+	s.controlMu.Unlock()
+
 	interruptCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := s.request(interruptCtx, "turn/interrupt", map[string]any{"threadId": threadID, "turnId": turnID})
 	return err
 }
 
+func (s *codexAppServerSession) Interrupt(ctx context.Context) error {
+	return s.interruptTurn(ctx)
+}
+
+func (s *codexAppServerSession) Capabilities() RuntimeCapabilities {
+	return RuntimeCapabilities{SupportsNativeSteer: true, SupportsInterrupt: true}
+}
+
+func (s *codexAppServerSession) Alive() bool {
+	if s == nil {
+		return false
+	}
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	return !s.closed && !s.interruptRequested && !s.observer.isCompleted()
+}
+
+// Steer uses the current Codex app-server v2 contract: threadId,
+// expectedTurnId, and a UserInput array. expectedTurnId is a server-enforced
+// precondition, so a completed or superseded turn cannot receive stale input.
+func (s *codexAppServerSession) Steer(ctx context.Context, req SteerRequest) (SteerResult, error) {
+	if strings.TrimSpace(req.Message) == "" {
+		return SteerResult{}, fmt.Errorf("steer message is empty")
+	}
+	s.controlMu.Lock()
+	if s.closed || s.interruptRequested || s.observer.isCompleted() {
+		s.controlMu.Unlock()
+		return SteerResult{State: "rejected", Capability: "native"}, fmt.Errorf("Codex app-server turn is no longer active")
+	}
+	threadID, turnID := s.observer.ids()
+	if threadID == "" || turnID == "" {
+		s.controlMu.Unlock()
+		return SteerResult{State: "rejected", Capability: "native"}, fmt.Errorf("Codex app-server turn is not ready for steering")
+	}
+	s.controlMu.Unlock()
+
+	params := codexAppServerSteerParams(threadID, turnID, req.Message, req.IdempotencyKey)
+	result, err := s.request(ctx, "turn/steer", params)
+	if err != nil {
+		return SteerResult{State: "rejected", Capability: "native"}, err
+	}
+	nextTurnID := stringFromPath(result, "turnId")
+	if nextTurnID == "" {
+		return SteerResult{State: "rejected", Capability: "native"}, fmt.Errorf("Codex app-server steer response did not include a turn id")
+	}
+
+	// Do not convert a late turn/steer response into success after a host
+	// interrupt. interruptTurn deliberately remains callable while this RPC is
+	// in flight, so cancellation can always win the race.
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	if s.closed || s.interruptRequested || s.observer.isCompleted() {
+		return SteerResult{State: "rejected", Capability: "native"}, fmt.Errorf("Codex app-server turn was interrupted before steer confirmation")
+	}
+	s.observer.setTurnID(nextTurnID)
+	return SteerResult{State: "applied", Capability: "native", TurnID: nextTurnID}, nil
+}
+
 func (s *codexAppServerSession) shutdown() {
+	s.controlMu.Lock()
+	s.closed = true
+	s.interruptRequested = true
+	s.controlMu.Unlock()
 	_ = s.stdin.Close()
 	s.signalProcessGroup(syscall.SIGTERM)
 	if s.waitForProcess(2 * time.Second) {
@@ -647,6 +732,15 @@ func (o *codexAppServerObserver) ids() (string, string) {
 	return o.threadID, o.turnID
 }
 
+func (o *codexAppServerObserver) isCompleted() bool {
+	if o == nil {
+		return true
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.completed
+}
+
 func (o *codexAppServerObserver) appendMessageDelta(text string) {
 	if text == "" {
 		return
@@ -743,12 +837,31 @@ func codexAppServerTurnParams(req RunRequest, threadID string) map[string]any {
 	return map[string]any{
 		"threadId":       threadID,
 		"cwd":            req.ProjectRoot,
-		"approvalPolicy": "never",
+		"approvalPolicy": codexAppServerApprovalPolicy(req),
 		"input":          []map[string]any{codexAppServerTextInput(req.Prompt)},
 		"model":          codexModelForRequest(req.Model),
 		"effort":         codexAppServerReasoningEffortForRequest(req.ReasoningEffort),
-		"sandboxPolicy":  codexAppServerSandboxPolicy(req.Action, req.ProjectRoot),
+		"sandboxPolicy":  codexAppServerSandboxPolicyForRun(req),
 	}
+}
+
+func codexAppServerApprovalPolicy(req RunRequest) string {
+	if req.AllowWorkspaceWrite && strings.TrimSpace(req.Action) == "build" {
+		return "never"
+	}
+	return "on-request"
+}
+
+func codexAppServerSteerParams(threadID string, expectedTurnID string, message string, clientUserMessageID string) map[string]any {
+	params := map[string]any{
+		"threadId":       threadID,
+		"expectedTurnId": expectedTurnID,
+		"input":          []map[string]any{codexAppServerTextInput(message)},
+	}
+	if clientUserMessageID = strings.TrimSpace(clientUserMessageID); clientUserMessageID != "" {
+		params["clientUserMessageId"] = clientUserMessageID
+	}
+	return params
 }
 
 func codexAppServerTextInput(prompt string) map[string]any {
@@ -757,6 +870,13 @@ func codexAppServerTextInput(prompt string) map[string]any {
 		"text":          prompt,
 		"text_elements": []map[string]any{},
 	}
+}
+
+func codexAppServerSandboxPolicyForRun(req RunRequest) map[string]any {
+	if codexSandboxForRun(req) == "workspace-write" {
+		return codexAppServerSandboxPolicy("build", req.ProjectRoot)
+	}
+	return codexAppServerSandboxPolicy("ask", req.ProjectRoot)
 }
 
 func codexAppServerSandboxPolicy(action string, root string) map[string]any {

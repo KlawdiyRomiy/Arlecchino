@@ -249,7 +249,7 @@ func (p *AnthropicProvider) Generate(ctx context.Context, req GenerationRequest,
 	request := anthropicMessageRequest{
 		Model:       model,
 		MaxTokens:   maxTokens,
-		System:      strings.TrimSpace(req.System),
+		System:      generationSystemText(req),
 		Messages:    anthropicMessagesFromGenerationRequest(req),
 		Temperature: req.Temperature,
 		Tools:       anthropicToolsFromGenerationRequest(req.Tools),

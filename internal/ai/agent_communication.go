@@ -79,10 +79,8 @@ func agentCommunicationSkillPrompt(req AIChatRunRequest) string {
 	if isMinimalChatRequest(req) {
 		return ""
 	}
-	return "Built-in skill: " + builtinAgentRuntimeSkillID + ". " +
-		"Arlecchino records baseline Agent Runtime phases independently of the selected provider. When agent_status_update is available, use it to enrich private structured runtime state without adding chat text. " +
-		"Built-in skill: " + builtinAgentCommentarySkillID + ". " +
-		"When agent_commentary is available, use it for concise visible progress updates after meaningful milestones. Batch communication with the nearest productive tool call; never spend a provider turn only on status or on a pre-final update. The host owns verification and completion phases. " +
+	return "When structured runtime-status or progress-commentary functions are available, use them only for meaningful state changes and concise user-safe milestones. " +
+		"Batch communication with the nearest productive tool call; never spend a provider turn only on status or on a pre-final update. The host owns verification and completion phases. " +
 		"Do not narrate every read or tool call, do not duplicate host commentary in normal response text, and do not use either tool for a trivial one-answer reply. " +
 		"The final answer itself must always be ordinary visible assistant content."
 }

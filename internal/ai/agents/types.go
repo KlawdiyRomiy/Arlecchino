@@ -171,19 +171,52 @@ func knownEndpointClass(value string) bool {
 }
 
 type RunRequest struct {
-	RunID           string
-	SessionID       string
-	ProjectRoot     string
-	Action          string
-	Prompt          string
-	Model           string
-	ReasoningEffort string
-	RuntimeFamily   string
-	Transport       string
-	Rows            uint16
-	Cols            uint16
-	DataCategories  []string
-	RegisterInput   func(runID string, write func([]byte) error, resize func(uint16, uint16) error)
+	RunID                     string
+	SessionID                 string
+	ProjectRoot               string
+	Action                    string
+	Prompt                    string
+	Model                     string
+	ReasoningEffort           string
+	RuntimeFamily             string
+	Transport                 string
+	Rows                      uint16
+	Cols                      uint16
+	DataCategories            []string
+	AllowWorkspaceWrite       bool
+	RegisterInput             func(runID string, write func([]byte) error, resize func(uint16, uint16) error)
+	RegisterLiveRunController func(runID string, controller LiveRunController)
+}
+
+// RuntimeCapabilities describe controls which are actually available for a
+// currently running adapter session. They are deliberately separate from the
+// provider descriptor: a configured adapter may still be unable to expose a
+// live controller for a particular turn.
+type RuntimeCapabilities struct {
+	SupportsNativeSteer bool
+	SupportsQueue       bool
+	SupportsInterrupt   bool
+}
+
+type SteerRequest struct {
+	Message        string
+	IdempotencyKey string
+}
+
+type SteerResult struct {
+	State      string
+	Capability string
+	TurnID     string
+}
+
+// LiveRunController is registered only after an external runtime has created
+// a live turn. The Service owns the public API and lifecycle; adapters only
+// bridge their provider-native control protocol.
+type LiveRunController interface {
+	Capabilities() RuntimeCapabilities
+	Steer(ctx context.Context, req SteerRequest) (SteerResult, error)
+	Interrupt(ctx context.Context) error
+	Alive() bool
 }
 
 type AuthRequest struct {

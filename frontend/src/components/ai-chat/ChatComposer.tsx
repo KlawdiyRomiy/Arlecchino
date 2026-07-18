@@ -26,6 +26,7 @@ import type {
   AIContextContinuationPlan,
   AIContextSnapshot,
   AIModelCapabilityDescriptor,
+  AIQueuedChatRun,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
   AIChatAction,
@@ -108,7 +109,16 @@ interface ChatComposerProps {
   onRevokeContinuityCapsule: (capsuleId: string) => void;
   onSend: () => void;
   onCancel: () => void;
+  queuedRuns?: AIQueuedChatRun[];
+  onSteer: () => void;
+  onQueue: () => void;
+  onRedirect: () => void;
+  onUpdateQueued: (queueId: string, message: string) => void;
+  onMoveQueued: (queueId: string, position: number) => void;
+  onRemoveQueued: (queueId: string) => void;
 }
+
+type ContinuationAction = "steer" | "queue" | "redirect";
 
 const actionIndex = (action: AIChatAction): number => {
   const index = modeOrder.indexOf(action);
@@ -360,6 +370,13 @@ export function ChatComposer({
   onRevokeContinuityCapsule,
   onSend,
   onCancel,
+  queuedRuns = [],
+  onSteer,
+  onQueue,
+  onRedirect,
+  onUpdateQueued,
+  onMoveQueued,
+  onRemoveQueued,
 }: ChatComposerProps) {
   const reduceMotion = useReducedMotion();
   const modeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -376,6 +393,9 @@ export function ChatComposer({
   const [mentionIndex, setMentionIndex] = useState(-1);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [continuationAction, setContinuationAction] =
+    useState<ContinuationAction>("steer");
+  const [queueDrafts, setQueueDrafts] = useState<Record<string, string>>({});
   const actionDescriptors =
     actions.length > 0
       ? sortActionDescriptors(actions)
@@ -469,6 +489,9 @@ export function ChatComposer({
   }, []);
 
   useEffect(() => {
+    if (!wasRunningRef.current && running) {
+      setContinuationAction("steer");
+    }
     if (wasRunningRef.current && !running) {
       closeMentionPicker();
       setModeMenuOpen(false);
@@ -476,6 +499,32 @@ export function ChatComposer({
     }
     wasRunningRef.current = running;
   }, [closeMentionPicker, running]);
+
+  useEffect(() => {
+    setQueueDrafts((current) => {
+      const known = new Set(queuedRuns.map((item) => item.id));
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([queueID]) => known.has(queueID)),
+      );
+      return Object.keys(next).length === Object.keys(current).length
+        ? current
+        : next;
+    });
+  }, [queuedRuns]);
+
+  const submitContinuation = useCallback(() => {
+    if (!input.trim()) return;
+    switch (continuationAction) {
+      case "queue":
+        onQueue();
+        return;
+      case "redirect":
+        onRedirect();
+        return;
+      default:
+        onSteer();
+    }
+  }, [continuationAction, input, onQueue, onRedirect, onSteer]);
 
   const openAttachmentPicker = useCallback(() => {
     if (activeMention?.source === "attachment") {
@@ -731,7 +780,11 @@ export function ChatComposer({
         : modPressed && !event.altKey;
     if (!shouldSend) return;
     event.preventDefault();
-    if (canSend) onSend();
+    if (canSend) {
+      onSend();
+    } else if (running) {
+      submitContinuation();
+    }
   };
 
   return (
@@ -863,6 +916,64 @@ export function ChatComposer({
               );
             })}
           </div>
+        ) : null}
+        {queuedRuns.length > 0 ? (
+          <section
+            className="ai-chat-composer__queue"
+            aria-label="Queued follow-ups"
+          >
+            <div className="ai-chat-composer__queue-heading">
+              <span>Queued follow-ups</span>
+              <small>{queuedRuns.length}</small>
+            </div>
+            {queuedRuns.map((item, index) => {
+              const draft = queueDrafts[item.id] ?? item.message;
+              return (
+                <div className="ai-chat-composer__queue-row" key={item.id}>
+                  <input
+                    aria-label={`Queued follow-up ${index + 1}`}
+                    value={draft}
+                    onChange={(event) =>
+                      setQueueDrafts((current) => ({
+                        ...current,
+                        [item.id]: event.target.value,
+                      }))
+                    }
+                    onBlur={() => {
+                      if (draft.trim() && draft.trim() !== item.message) {
+                        onUpdateQueued(item.id, draft);
+                      }
+                    }}
+                  />
+                  <div className="ai-chat-composer__queue-actions">
+                    <button
+                      type="button"
+                      aria-label="Move queued follow-up earlier"
+                      disabled={index === 0}
+                      onClick={() => onMoveQueued(item.id, index - 1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Move queued follow-up later"
+                      disabled={index === queuedRuns.length - 1}
+                      onClick={() => onMoveQueued(item.id, index + 1)}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Remove queued follow-up"
+                      onClick={() => onRemoveQueued(item.id)}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
         ) : null}
         <textarea
           ref={textareaRef}
@@ -1117,14 +1228,50 @@ export function ChatComposer({
               <Paperclip size={18} />
             </button>
             {running ? (
-              <button
-                className="ai-chat-send-button is-stop"
-                type="button"
-                title="Stop run"
-                onClick={onCancel}
-              >
-                <Square size={17} />
-              </button>
+              <>
+                <div
+                  className="ai-chat-composer__continuation-actions"
+                  role="group"
+                  aria-label="Active-run message action"
+                >
+                  {(
+                    [
+                      ["steer", "Steer"],
+                      ["queue", "Queue"],
+                      ["redirect", "Redirect"],
+                    ] as const
+                  ).map(([action, label]) => (
+                    <button
+                      key={action}
+                      className={
+                        continuationAction === action ? "is-selected" : ""
+                      }
+                      type="button"
+                      onClick={() => setContinuationAction(action)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="ai-chat-send-button"
+                  data-testid="ai-chat-continue"
+                  type="button"
+                  disabled={!input.trim()}
+                  title={`Send as ${continuationAction}`}
+                  onClick={submitContinuation}
+                >
+                  <Send size={18} />
+                </button>
+                <button
+                  className="ai-chat-send-button is-stop"
+                  type="button"
+                  title="Stop run"
+                  onClick={onCancel}
+                >
+                  <Square size={17} />
+                </button>
+              </>
             ) : (
               <button
                 className="ai-chat-send-button"

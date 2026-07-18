@@ -106,6 +106,8 @@ func (s *Service) ClearChatRuns(projectID string) error {
 			delete(s.retiredRuns, runID)
 			delete(s.runCancels, runID)
 			delete(s.runDone, runID)
+			delete(s.liveRunControllers, runID)
+			delete(s.steerFallbacks, runID)
 			delete(s.agentInputs, runID)
 			delete(s.agentResizes, runID)
 		}
@@ -118,6 +120,26 @@ func (s *Service) ClearChatRuns(projectID string) error {
 	}
 	if project != nil && project.ChatArtifacts != nil {
 		if err := project.ChatArtifacts.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ChatSteers != nil {
+		if err := project.ChatSteers.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ChatQueue != nil {
+		if err := project.ChatQueue.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.RunGraph != nil {
+		if err := project.RunGraph.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.SkillCircuit != nil {
+		if err := project.SkillCircuit.Clear(); err != nil {
 			return err
 		}
 	}
@@ -207,9 +229,29 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 			return err
 		}
 	}
+	if project != nil && project.ChatSteers != nil {
+		if err := project.ChatSteers.DeleteSession(sessionID); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ChatQueue != nil {
+		if err := project.ChatQueue.ReplaceSession(sessionID, nil); err != nil {
+			return err
+		}
+	}
 	ids := runIDList(runIDs)
 	if project != nil && project.RunTimeline != nil {
 		if err := project.RunTimeline.DeleteRuns(ids); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.RunGraph != nil {
+		if err := project.RunGraph.DeleteRuns(ids); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.SkillCircuit != nil {
+		if err := project.SkillCircuit.DeleteRuns(ids); err != nil {
 			return err
 		}
 	}
@@ -464,11 +506,54 @@ func (s *Service) buildChatRunEnvelopeWithTimelineAndEgress(project *ProjectSess
 		MnemonicInclusion:   mnemonic,
 		Timeline:            timeline,
 		AgentRuntime:        run.AgentRuntime,
+		Inputs:              chatRunInputs(run),
+		Steers:              s.chatRunSteers(project, run.ID),
+		Graph:               s.runGraphNode(project, run.ID),
+		SkillCircuit:        s.skillCircuitControllers(project, run.ID),
 		Links:               run.Links,
 		Revision:            run.Revision,
 		CreatedAt:           run.CreatedAt,
 		UpdatedAt:           run.UpdatedAt,
 	}
+}
+
+func (s *Service) skillCircuitControllers(project *ProjectSession, runID string) []AISkillCircuitController {
+	if project == nil || project.SkillCircuit == nil || strings.TrimSpace(runID) == "" {
+		return []AISkillCircuitController{}
+	}
+	controllers, err := project.SkillCircuit.ListByRun(runID)
+	if err != nil {
+		return []AISkillCircuitController{}
+	}
+	return controllers
+}
+
+func (s *Service) runGraphNode(project *ProjectSession, runID string) *AIRunGraphNode {
+	if project == nil || project.RunGraph == nil || strings.TrimSpace(runID) == "" {
+		return nil
+	}
+	node, ok, err := project.RunGraph.Get(runID)
+	if err != nil || !ok {
+		return nil
+	}
+	return &node
+}
+
+func (s *Service) chatRunSteers(project *ProjectSession, runID string) []AIChatRunSteer {
+	if project == nil || project.ChatSteers == nil || strings.TrimSpace(runID) == "" {
+		return []AIChatRunSteer{}
+	}
+	steers, err := project.ChatSteers.ListByRun(runID)
+	if err != nil {
+		return []AIChatRunSteer{}
+	}
+	for index := range steers {
+		// The durable record keeps the original steer text so the continuation
+		// can be delivered to a live runtime. Envelopes are an audit/UI surface,
+		// therefore never expose secret-looking values verbatim.
+		steers[index].Text, _ = sanitizeText(steers[index].Text, AIRedactionSummary{})
+	}
+	return steers
 }
 
 func (s *Service) emitRunEnvelope(projectID string, runID string) {

@@ -56,7 +56,7 @@ func (s *Service) contextBudgetForSnapshot(project *ProjectSession, snapshot AIC
 		if compaction, ok := latestIncludedCompactionCapsule(snapshot.Continuity); ok {
 			history = s.chatHistoryForPromptAfter(project, "", snapshot.SessionID, chatPromptHistoryLimit, compaction.CreatedAt)
 		}
-		inputTokens = estimateTokensFromText(buildExternalAgentPrompt(chatReq, snapshot, summarizeContextSnapshot(snapshot), history))
+		inputTokens = estimateTokensFromText(buildExternalAgentPromptWithInputs(chatReq, snapshot, summarizeContextSnapshot(snapshot), history, []AIChatRunInput{newUserRunInput(snapshot.Prompt)}))
 	} else {
 		history := s.chatHistoryForPrompt(project, "", snapshot.SessionID, chatPromptHistoryLimit)
 		if compaction, ok := latestIncludedCompactionCapsule(snapshot.Continuity); ok {
@@ -64,9 +64,9 @@ func (s *Service) contextBudgetForSnapshot(project *ProjectSession, snapshot AIC
 		}
 		generationReq := providers.GenerationRequest{
 			Capability:      providers.CapabilityChat,
-			Prompt:          buildChatPromptFromSnapshot(snapshot, history),
+			Prompt:          buildChatPromptFromSnapshot(snapshot, history, []AIChatRunInput{newUserRunInput(snapshot.Prompt)}),
 			System:          chatSystemPrompt(chatReq),
-			Messages:        buildChatMessagesFromSnapshot(snapshot, history),
+			Messages:        buildChatMessagesFromSnapshot(snapshot, history, []AIChatRunInput{newUserRunInput(snapshot.Prompt)}),
 			Model:           model,
 			ReasoningEffort: chatReq.ReasoningEffort,
 			MaxTokens:       defaultChatMaxTokens(chatReq.Action),

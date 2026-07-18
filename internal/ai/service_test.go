@@ -1074,7 +1074,7 @@ description: Candidate AI chat skill.
 	}
 }
 
-func TestSuggestChatMentionSkillsDisabledWhenMnemonicDisabled(t *testing.T) {
+func TestSuggestChatMentionSkillsRemainAvailableWhenMnemonicDisabled(t *testing.T) {
 	projectRoot := t.TempDir()
 	skillDir := filepath.Join(projectRoot, ".arlecchino", "skills", "ai-demo")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
@@ -1113,7 +1113,7 @@ description: Trusted compact AI chat skill.
 	}
 	for _, candidate := range candidates {
 		if candidate.Kind == AIChatMentionKindSkill && candidate.ContextItem != nil && candidate.ContextItem.ID == "project:ai-demo" {
-			if candidate.DisabledReason != "disabled" {
+			if candidate.DisabledReason != "" {
 				t.Fatalf("skill disabled reason = %q", candidate.DisabledReason)
 			}
 			return

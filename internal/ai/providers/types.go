@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -123,6 +124,22 @@ type GenerationMessage struct {
 	ToolCallID string               `json:"toolCallId,omitempty"`
 	Name       string               `json:"name,omitempty"`
 	ToolCalls  []GenerationToolCall `json:"toolCalls,omitempty"`
+}
+
+func generationSystemText(req GenerationRequest) string {
+	parts := []string{}
+	if system := strings.TrimSpace(req.System); system != "" {
+		parts = append(parts, system)
+	}
+	for _, message := range req.Messages {
+		if strings.ToLower(strings.TrimSpace(message.Role)) != "system" {
+			continue
+		}
+		if content := strings.TrimSpace(message.Content); content != "" {
+			parts = append(parts, content)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 type GenerationTool struct {

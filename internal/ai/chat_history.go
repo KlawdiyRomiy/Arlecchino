@@ -16,6 +16,31 @@ type ChatHistoryLedger struct {
 	path string
 }
 
+type persistedChatRun struct {
+	AIChatRun
+	InputContents []string `json:"inputContents,omitempty"`
+}
+
+func persistedChatRunFrom(run AIChatRun) persistedChatRun {
+	run.Inputs = chatRunInputs(run)
+	contents := make([]string, len(run.Inputs))
+	for index := range run.Inputs {
+		contents[index] = run.Inputs[index].Content
+	}
+	return persistedChatRun{AIChatRun: run, InputContents: contents}
+}
+
+func (p persistedChatRun) chatRun() AIChatRun {
+	run := p.AIChatRun
+	for index := range run.Inputs {
+		if index < len(p.InputContents) {
+			run.Inputs[index].Content = p.InputContents[index]
+		}
+	}
+	run.Inputs = chatRunInputs(run)
+	return run
+}
+
 func openChatHistoryLedger(projectRoot string) (*ChatHistoryLedger, error) {
 	dir := filepath.Join(projectRoot, ".arlecchino", "ai")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -155,9 +180,12 @@ func (l *ChatHistoryLedger) readAllLocked() ([]AIChatRun, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 4096), 16*1024*1024)
 	for scanner.Scan() {
-		var run AIChatRun
-		if err := json.Unmarshal(scanner.Bytes(), &run); err == nil && run.ID != "" {
-			runs = append(runs, run)
+		var persisted persistedChatRun
+		if err := json.Unmarshal(scanner.Bytes(), &persisted); err == nil {
+			run := persisted.chatRun()
+			if run.ID != "" {
+				runs = append(runs, run)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -188,7 +216,7 @@ func (l *ChatHistoryLedger) writeAllLocked(runs []AIChatRun) error {
 		if strings.TrimSpace(run.ID) == "" {
 			continue
 		}
-		if err := encoder.Encode(run); err != nil {
+		if err := encoder.Encode(persistedChatRunFrom(run)); err != nil {
 			_ = file.Close()
 			return err
 		}
@@ -214,6 +242,7 @@ func normalizeChatSessionID(sessionID string) string {
 func normalizeLoadedChatRun(projectID string, run AIChatRun) AIChatRun {
 	run.ProjectSessionID = normalizeProjectID(projectID)
 	run.SessionID = normalizeChatSessionID(run.SessionID)
+	run.Inputs = chatRunInputs(run)
 	if run.Revision <= 0 {
 		run.Revision = 1
 	}

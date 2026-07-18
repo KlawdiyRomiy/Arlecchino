@@ -425,6 +425,8 @@ type AIContextCompactionResult struct {
 
 type AIContextRequest struct {
 	RequestID             string                 `json:"requestId,omitempty"`
+	RunID                 string                 `json:"runId,omitempty"`
+	TaskEpoch             int64                  `json:"taskEpoch,omitempty"`
 	DocumentVersion       string                 `json:"documentVersion,omitempty"`
 	SessionID             string                 `json:"sessionId,omitempty"`
 	Capability            AIProviderCapability   `json:"capability"`
@@ -575,6 +577,46 @@ type AISkillContext struct {
 	ActivatedAt        string   `json:"activatedAt,omitempty"`
 	LastUsedAt         string   `json:"lastUsedAt,omitempty"`
 	DecayDeadline      string   `json:"decayDeadline,omitempty"`
+}
+
+type AISkillCircuitState string
+
+const (
+	AISkillCircuitStateCandidate AISkillCircuitState = "candidate"
+	AISkillCircuitStateActive    AISkillCircuitState = "active"
+	AISkillCircuitStateResident  AISkillCircuitState = "resident"
+	AISkillCircuitStateDecaying  AISkillCircuitState = "decaying"
+	AISkillCircuitStateStale     AISkillCircuitState = "stale"
+	AISkillCircuitStateExpired   AISkillCircuitState = "expired"
+	AISkillCircuitStateDismissed AISkillCircuitState = "dismissed"
+	AISkillCircuitStateDisabled  AISkillCircuitState = "disabled"
+	AISkillCircuitStateRejected  AISkillCircuitState = "rejected"
+)
+
+// AISkillCircuitController is host-side data. Its checks are interpreted by
+// policy gates and are never executable third-party hook code.
+type AISkillCircuitController struct {
+	ID                  string              `json:"id"`
+	RunID               string              `json:"runId"`
+	SessionID           string              `json:"sessionId"`
+	ProjectSessionID    string              `json:"projectSessionId,omitempty"`
+	SkillID             string              `json:"skillId"`
+	Name                string              `json:"name"`
+	SourceKind          string              `json:"sourceKind"`
+	TrustState          string              `json:"trustState"`
+	ContentHash         string              `json:"contentHash"`
+	DigestVersion       int                 `json:"digestVersion"`
+	TaskEpoch           int64               `json:"taskEpoch"`
+	State               AISkillCircuitState `json:"state"`
+	MatchReason         string              `json:"matchReason,omitempty"`
+	Scope               string              `json:"scope"`
+	AllowedModes        []AIChatAction      `json:"allowedModes,omitempty"`
+	MandatoryChecks     []string            `json:"mandatoryChecks,omitempty"`
+	ContextRestrictions []string            `json:"contextRestrictions,omitempty"`
+	ToolRestrictions    []string            `json:"toolRestrictions,omitempty"`
+	Included            bool                `json:"included"`
+	CreatedAt           string              `json:"createdAt"`
+	UpdatedAt           string              `json:"updatedAt"`
 }
 
 type AIMnemonicEntry struct {
@@ -910,10 +952,152 @@ type AIChatRunNotice struct {
 	NotificationID string `json:"notificationId,omitempty"`
 }
 
+type AIChatInputOrigin string
+
+const (
+	AIChatInputOriginUserRequest         AIChatInputOrigin = "user_request"
+	AIChatInputOriginUserFollowUp        AIChatInputOrigin = "user_follow_up"
+	AIChatInputOriginWorkflowInstruction AIChatInputOrigin = "workflow_instruction"
+	AIChatInputOriginSteer               AIChatInputOrigin = "steer"
+	AIChatInputOriginToolContinuation    AIChatInputOrigin = "tool_continuation"
+)
+
+type AIChatInputDisplayKind string
+
+const (
+	AIChatInputDisplayKindUserBubble AIChatInputDisplayKind = "user_bubble"
+	AIChatInputDisplayKindActivity   AIChatInputDisplayKind = "activity"
+	AIChatInputDisplayKindHidden     AIChatInputDisplayKind = "hidden"
+)
+
+// AIChatRunInput keeps the product origin distinct from the provider transport
+// role. Content is persisted by ChatHistoryLedger but intentionally omitted
+// from Wails payloads; UI consumers receive only its safe presentation fields.
+type AIChatRunInput struct {
+	Origin         AIChatInputOrigin      `json:"origin"`
+	Content        string                 `json:"-"`
+	DisplayKind    AIChatInputDisplayKind `json:"displayKind"`
+	DisplaySummary string                 `json:"displaySummary,omitempty"`
+	ParentRunID    string                 `json:"parentRunId,omitempty"`
+	CorrelationID  string                 `json:"correlationId,omitempty"`
+	UserVisible    bool                   `json:"userVisible"`
+}
+
+type AIChatSteerState string
+
+const (
+	AIChatSteerStateReceived        AIChatSteerState = "received"
+	AIChatSteerStateForwarded       AIChatSteerState = "forwarded"
+	AIChatSteerStateFallbackPending AIChatSteerState = "fallback_pending"
+	AIChatSteerStateApplied         AIChatSteerState = "applied"
+	AIChatSteerStateRejected        AIChatSteerState = "rejected"
+)
+
+type AIChatRunSteer struct {
+	ID                string           `json:"id"`
+	TargetRunID       string           `json:"targetRunId"`
+	SessionID         string           `json:"sessionId"`
+	ProjectSessionID  string           `json:"projectSessionId,omitempty"`
+	Text              string           `json:"text,omitempty"`
+	Disposition       string           `json:"disposition"`
+	State             AIChatSteerState `json:"state"`
+	Sequence          int              `json:"sequence"`
+	ExpectedRevision  int64            `json:"expectedRevision"`
+	AppliedByRuntime  bool             `json:"appliedByRuntime"`
+	ContinuationRunID string           `json:"continuationRunId,omitempty"`
+	Capability        string           `json:"capability,omitempty"`
+	Error             string           `json:"error,omitempty"`
+	IdempotencyKey    string           `json:"idempotencyKey,omitempty"`
+	CreatedAt         string           `json:"createdAt"`
+	UpdatedAt         string           `json:"updatedAt"`
+}
+
+type AISteerChatRunRequest struct {
+	RunID            string       `json:"runId"`
+	Message          string       `json:"message"`
+	ExpectedRevision int64        `json:"expectedRevision"`
+	IdempotencyKey   string       `json:"idempotencyKey"`
+	Disposition      string       `json:"disposition,omitempty"`
+	SelectedAction   AIChatAction `json:"selectedAction,omitempty"`
+}
+
+type AIChatSteerResult struct {
+	RunID             string           `json:"runId"`
+	SteerID           string           `json:"steerId"`
+	State             AIChatSteerState `json:"state"`
+	ContinuationRunID string           `json:"continuationRunId,omitempty"`
+	Capability        string           `json:"capability"`
+	Revision          int64            `json:"revision"`
+}
+
+type AIQueueChatRunRequest struct {
+	SessionID      string       `json:"sessionId,omitempty"`
+	Message        string       `json:"message"`
+	SelectedAction AIChatAction `json:"selectedAction,omitempty"`
+	IdempotencyKey string       `json:"idempotencyKey"`
+}
+
+type AIUpdateQueuedChatRunRequest struct {
+	ID       string `json:"id"`
+	Message  string `json:"message,omitempty"`
+	Position int    `json:"position,omitempty"`
+	Reorder  bool   `json:"reorder,omitempty"`
+}
+
+type AIQueuedChatRun struct {
+	ID               string       `json:"id"`
+	SessionID        string       `json:"sessionId"`
+	ProjectSessionID string       `json:"projectSessionId,omitempty"`
+	Message          string       `json:"message"`
+	SelectedAction   AIChatAction `json:"selectedAction"`
+	Position         int          `json:"position"`
+	Status           string       `json:"status"`
+	IdempotencyKey   string       `json:"idempotencyKey,omitempty"`
+	ReservedByRunID  string       `json:"reservedByRunId,omitempty"`
+	CreatedAt        string       `json:"createdAt"`
+	UpdatedAt        string       `json:"updatedAt"`
+}
+
 type AIChatRunLinks struct {
-	SourcePlanRunID         string `json:"sourcePlanRunId,omitempty"`
-	SourceBuildRunID        string `json:"sourceBuildRunId,omitempty"`
-	AutoReviewForBuildRunID string `json:"autoReviewForBuildRunId,omitempty"`
+	SourcePlanRunID           string `json:"sourcePlanRunId,omitempty"`
+	SourceBuildRunID          string `json:"sourceBuildRunId,omitempty"`
+	AutoReviewForBuildRunID   string `json:"autoReviewForBuildRunId,omitempty"`
+	SourceQueueItemID         string `json:"sourceQueueItemId,omitempty"`
+	SourceQueueRunID          string `json:"sourceQueueRunId,omitempty"`
+	SourceSubagentParentRunID string `json:"sourceSubagentParentRunId,omitempty"`
+	SubagentID                string `json:"subagentId,omitempty"`
+}
+
+type AIRunGraphSource string
+
+const (
+	AIRunGraphSourceUser     AIRunGraphSource = "user"
+	AIRunGraphSourceWorkflow AIRunGraphSource = "workflow"
+	AIRunGraphSourceSteer    AIRunGraphSource = "steer"
+	AIRunGraphSourceQueue    AIRunGraphSource = "queue"
+	AIRunGraphSourceTool     AIRunGraphSource = "tool"
+	AIRunGraphSourceSubagent AIRunGraphSource = "subagent"
+)
+
+// AIRunGraphNode is the durable, prompt-independent relationship record for a
+// run. It deliberately carries operational metadata only, never hidden model
+// reasoning or raw tool payloads.
+type AIRunGraphNode struct {
+	RunID            string           `json:"runId"`
+	ParentRunID      string           `json:"parentRunId,omitempty"`
+	RootRunID        string           `json:"rootRunId"`
+	ProjectSessionID string           `json:"projectSessionId,omitempty"`
+	SessionID        string           `json:"sessionId"`
+	Source           AIRunGraphSource `json:"source"`
+	TaskEpoch        int64            `json:"taskEpoch"`
+	Action           AIChatAction     `json:"action"`
+	Status           string           `json:"status"`
+	Revision         int64            `json:"revision"`
+	CorrelationID    string           `json:"correlationId,omitempty"`
+	ProviderID       string           `json:"providerId,omitempty"`
+	Model            string           `json:"model,omitempty"`
+	CreatedAt        string           `json:"createdAt"`
+	UpdatedAt        string           `json:"updatedAt"`
 }
 
 type AIChatRunEnvelope struct {
@@ -942,6 +1126,10 @@ type AIChatRunEnvelope struct {
 	MnemonicInclusion   AIMnemonicInclusionSummary `json:"mnemonicInclusion"`
 	Timeline            []AIRunTimelineEvent       `json:"timeline,omitempty"`
 	AgentRuntime        *AIExternalAgentRunSummary `json:"agentRuntime,omitempty"`
+	Inputs              []AIChatRunInput           `json:"inputs,omitempty"`
+	Steers              []AIChatRunSteer           `json:"steers,omitempty"`
+	Graph               *AIRunGraphNode            `json:"graph,omitempty"`
+	SkillCircuit        []AISkillCircuitController `json:"skillCircuit,omitempty"`
 	Links               AIChatRunLinks             `json:"links"`
 	Revision            int64                      `json:"revision"`
 	CreatedAt           string                     `json:"createdAt"`
@@ -967,6 +1155,7 @@ type AIChatRun struct {
 	ToolProposals     []AIToolProposal           `json:"toolProposals,omitempty"`
 	EgressRecordID    string                     `json:"egressRecordId,omitempty"`
 	AgentRuntime      *AIExternalAgentRunSummary `json:"agentRuntime,omitempty"`
+	Inputs            []AIChatRunInput           `json:"inputs,omitempty"`
 	Links             AIChatRunLinks             `json:"links"`
 	FirstTokenAt      string                     `json:"firstTokenAt,omitempty"`
 	MnemonicRequested bool                       `json:"mnemonicRequested"`
@@ -1034,6 +1223,7 @@ const (
 	AIChatRunArtifactAgentTerminal       AIChatRunArtifactKind = "agent_terminal"
 	AIChatRunArtifactAgentWorktree       AIChatRunArtifactKind = "agent_worktree"
 	AIChatRunArtifactRuntimeEvidence     AIChatRunArtifactKind = "runtime_build_evidence"
+	AIChatRunArtifactBrowser             AIChatRunArtifactKind = "browser_preview"
 )
 
 type AIChatRunArtifact struct {
@@ -1232,6 +1422,11 @@ type AIToolAuditRecord struct {
 	HardDenyReason         AIToolHardDenyReason `json:"hardDenyReason,omitempty"`
 	OutputPreview          string               `json:"outputPreview,omitempty"`
 	Error                  string               `json:"error,omitempty"`
+	ExitCode               int                  `json:"exitCode,omitempty"`
+	StartedAt              string               `json:"startedAt,omitempty"`
+	FinishedAt             string               `json:"finishedAt,omitempty"`
+	DurationMs             int64                `json:"durationMs,omitempty"`
+	Canceled               bool                 `json:"canceled,omitempty"`
 	CreatedAt              string               `json:"createdAt"`
 }
 
@@ -1245,6 +1440,11 @@ type AIToolCallResult struct {
 	OutputPreview string            `json:"outputPreview,omitempty"`
 	Arguments     map[string]string `json:"arguments,omitempty"`
 	Error         string            `json:"error,omitempty"`
+	ExitCode      int               `json:"exitCode,omitempty"`
+	StartedAt     string            `json:"startedAt,omitempty"`
+	FinishedAt    string            `json:"finishedAt,omitempty"`
+	DurationMs    int64             `json:"durationMs,omitempty"`
+	Canceled      bool              `json:"canceled,omitempty"`
 	Audit         AIToolAuditRecord `json:"audit"`
 	CreatedAt     string            `json:"createdAt"`
 }
@@ -1398,6 +1598,242 @@ type AIBackgroundAgentPreviewResult struct {
 	Artifact AIChatRunArtifact               `json:"artifact"`
 	Payload  AIBackgroundAgentPreviewPayload `json:"payload"`
 	Status   string                          `json:"status"`
+}
+
+type AIStartSubagentRunRequest struct {
+	ParentRunID   string       `json:"parentRunId"`
+	Objective     string       `json:"objective"`
+	Role          string       `json:"role,omitempty"`
+	ProfileID     string       `json:"profileId,omitempty"`
+	MaxTokens     int          `json:"maxTokens,omitempty"`
+	DeadlineMs    int          `json:"deadlineMs,omitempty"`
+	Action        AIChatAction `json:"action,omitempty"`
+	ExecutionMode string       `json:"executionMode,omitempty"`
+	OwnedPaths    []string     `json:"ownedPaths,omitempty"`
+}
+
+// AISubagentContextCapsule is the immutable, inspectable parent snapshot a
+// child receives. It deliberately carries only disclosed run data, never
+// provider reasoning or mutable parent-session history.
+type AISubagentContextCapsule struct {
+	ID              string           `json:"id"`
+	ParentRunID     string           `json:"parentRunId"`
+	ParentRevision  int64            `json:"parentRevision"`
+	ParentAction    AIChatAction     `json:"parentAction"`
+	ContextSummary  AIContextSummary `json:"contextSummary"`
+	InputSummary    string           `json:"inputSummary,omitempty"`
+	ResponseSummary string           `json:"responseSummary,omitempty"`
+	CreatedAt       string           `json:"createdAt"`
+}
+
+type AISubagentEvidence struct {
+	Kind    string `json:"kind"`
+	Subject string `json:"subject"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// AISubagentStructuredEvidence is the only child completion payload exposed
+// to a parent synthesis. It excludes hidden chain-of-thought by design.
+type AISubagentStructuredEvidence struct {
+	Findings         []string             `json:"findings,omitempty"`
+	Evidence         []AISubagentEvidence `json:"evidence,omitempty"`
+	VerificationGaps []string             `json:"verificationGaps,omitempty"`
+}
+
+type AISubagentRunPayload struct {
+	ParentRunID        string                        `json:"parentRunId"`
+	ChildRunID         string                        `json:"childRunId"`
+	Objective          string                        `json:"objective"`
+	Role               string                        `json:"role"`
+	ReadOnly           bool                          `json:"readOnly"`
+	ExecutionMode      string                        `json:"executionMode"`
+	OwnedPaths         []string                      `json:"ownedPaths,omitempty"`
+	ContextCapsule     AISubagentContextCapsule      `json:"contextCapsule"`
+	ContextSummary     AIContextSummary              `json:"contextSummary"`
+	DeadlineMs         int                           `json:"deadlineMs,omitempty"`
+	StructuredEvidence bool                          `json:"structuredEvidence"`
+	Evidence           *AISubagentStructuredEvidence `json:"evidence,omitempty"`
+	Status             string                        `json:"status"`
+}
+
+type AIStartSubagentRunResult struct {
+	ChildRun AIChatRun            `json:"childRun"`
+	Artifact AIChatRunArtifact    `json:"artifact"`
+	Payload  AISubagentRunPayload `json:"payload"`
+}
+
+type AIAgentPluginCapability string
+
+const (
+	AIAgentPluginCapabilityContextRead  AIAgentPluginCapability = "context.read"
+	AIAgentPluginCapabilityToolPropose  AIAgentPluginCapability = "tool.propose"
+	AIAgentPluginCapabilityStatusWidget AIAgentPluginCapability = "status.widget"
+	AIAgentPluginCapabilityStorage      AIAgentPluginCapability = "storage"
+	AIAgentPluginCapabilityEvents       AIAgentPluginCapability = "events.read"
+)
+
+type AIAgentPluginManifest struct {
+	ID              string                    `json:"id"`
+	Version         string                    `json:"version"`
+	Publisher       string                    `json:"publisher"`
+	PublisherKey    string                    `json:"publisherKey"`
+	Signature       string                    `json:"signature"`
+	APIVersion      string                    `json:"apiVersion"`
+	Capabilities    []AIAgentPluginCapability `json:"capabilities"`
+	Runner          AIAgentPluginRunner       `json:"runner,omitempty"`
+	ToolDefinitions []AIToolDescriptor        `json:"toolDefinitions,omitempty"`
+	WidgetIDs       []string                  `json:"widgetIds,omitempty"`
+}
+
+// AIAgentPluginRunner is part of the signed manifest. The executable is run
+// out-of-process and speaks the host's capability-scoped JSONL protocol; it
+// never receives direct IDE credentials or in-process APIs.
+type AIAgentPluginRunner struct {
+	Command        []string `json:"command,omitempty"`
+	SHA256         string   `json:"sha256,omitempty"`
+	TimeoutSeconds int      `json:"timeoutSeconds,omitempty"`
+}
+
+type AIAgentPluginInstallRequest struct {
+	Manifest       AIAgentPluginManifest `json:"manifest"`
+	ReviewAccepted bool                  `json:"reviewAccepted"`
+}
+
+type AIAgentPluginRecord struct {
+	Manifest          AIAgentPluginManifest   `json:"manifest"`
+	PreviousManifests []AIAgentPluginManifest `json:"previousManifests,omitempty"`
+	State             string                  `json:"state"`
+	Reviewed          bool                    `json:"reviewed"`
+	Enabled           bool                    `json:"enabled"`
+	Reason            string                  `json:"reason,omitempty"`
+	InstalledAt       string                  `json:"installedAt"`
+	UpdatedAt         string                  `json:"updatedAt"`
+}
+
+type AIAgentPluginEvent struct {
+	ID        string `json:"id"`
+	PluginID  string `json:"pluginId"`
+	Type      string `json:"type"`
+	RunID     string `json:"runId,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type AIAgentPluginStorageValue struct {
+	PluginID  string `json:"pluginId"`
+	Key       string `json:"key"`
+	ValueJSON string `json:"valueJson"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+type AIAgentPluginToolDefinition struct {
+	PluginID   string           `json:"pluginId"`
+	Descriptor AIToolDescriptor `json:"descriptor"`
+	State      string           `json:"state"`
+	Reason     string           `json:"reason,omitempty"`
+}
+
+type AIMCPServerTransport string
+
+const (
+	AIMCPServerTransportStdio AIMCPServerTransport = "stdio"
+	AIMCPServerTransportHTTP  AIMCPServerTransport = "http"
+	AIMCPServerTransportSSE   AIMCPServerTransport = "sse"
+)
+
+type AIMCPServerRecord struct {
+	ID                  string               `json:"id"`
+	Name                string               `json:"name"`
+	Transport           AIMCPServerTransport `json:"transport"`
+	Command             []string             `json:"command,omitempty"`
+	Endpoint            string               `json:"endpoint,omitempty"`
+	AuthSecretRef       string               `json:"authSecretRef,omitempty"`
+	Enabled             bool                 `json:"enabled"`
+	ConsentRequired     bool                 `json:"consentRequired"`
+	Health              string               `json:"health"`
+	HealthReason        string               `json:"healthReason,omitempty"`
+	LastHealthCheckedAt string               `json:"lastHealthCheckedAt,omitempty"`
+	ProtocolVersion     string               `json:"protocolVersion,omitempty"`
+	DiscoveredAt        string               `json:"discoveredAt,omitempty"`
+	CreatedAt           string               `json:"createdAt"`
+	UpdatedAt           string               `json:"updatedAt"`
+}
+
+type AIMCPManagedTool struct {
+	ServerID        string          `json:"serverId"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description,omitempty"`
+	InputSchemaJSON string          `json:"inputSchemaJson,omitempty"`
+	RiskLevel       AIToolRiskLevel `json:"riskLevel"`
+	ApprovalMode    AIApprovalMode  `json:"approvalMode"`
+	Enabled         bool            `json:"enabled"`
+	MetadataOnly    bool            `json:"metadataOnly"`
+	DiscoveredAt    string          `json:"discoveredAt"`
+	UpdatedAt       string          `json:"updatedAt"`
+}
+
+type AIMCPManagedDiscoveryResult struct {
+	Server AIMCPServerRecord  `json:"server"`
+	Tools  []AIMCPManagedTool `json:"tools"`
+	Status string             `json:"status"`
+	Error  string             `json:"error,omitempty"`
+}
+
+type AISemanticQueryRequest struct {
+	Operation string `json:"operation"`
+	Query     string `json:"query,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	Character int    `json:"character,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type AISemanticQueryResult struct {
+	Operation string `json:"operation"`
+	Source    string `json:"source"`
+	Summary   string `json:"summary"`
+	Payload   string `json:"payload,omitempty"`
+}
+
+type AIBrowserPreviewRequest struct {
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
+type AIBrowserPreviewResult struct {
+	URL                string `json:"url"`
+	PreviewID          string `json:"previewId,omitempty"`
+	ScreenshotCaptured bool   `json:"screenshotCaptured"`
+	Summary            string `json:"summary"`
+}
+
+const ArlecchinoAgentProtocolV1 = "arlecchino-agent-protocol/v1"
+
+type AIAgentProtocolRequest struct {
+	Version          string       `json:"version"`
+	Operation        string       `json:"operation"`
+	SessionID        string       `json:"sessionId,omitempty"`
+	RunID            string       `json:"runId,omitempty"`
+	Prompt           string       `json:"prompt,omitempty"`
+	Action           AIChatAction `json:"action,omitempty"`
+	ExpectedRevision int64        `json:"expectedRevision,omitempty"`
+	IdempotencyKey   string       `json:"idempotencyKey,omitempty"`
+}
+
+type AIAgentProtocolResponse struct {
+	Version   string             `json:"version"`
+	Operation string             `json:"operation"`
+	Run       *AIChatRun         `json:"run,omitempty"`
+	Steer     *AIChatSteerResult `json:"steer,omitempty"`
+	Queue     *AIQueuedChatRun   `json:"queue,omitempty"`
+}
+
+type AIAgentProtocolEvent struct {
+	Version string `json:"version"`
+	Type    string `json:"type"`
+	RunID   string `json:"runId,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Payload any    `json:"payload,omitempty"`
 }
 
 type AIChatRunRequest struct {

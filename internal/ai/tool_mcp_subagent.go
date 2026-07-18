@@ -72,6 +72,18 @@ func (s *Service) executeMCPExecuteTool(ctx context.Context, project *ProjectSes
 		result.OutputPreview = preview
 		return result
 	}
+	serverID := strings.TrimSpace(req.Arguments["serverId"])
+	if serverID != "" {
+		output, managedErr := s.executeManagedMCPTool(ctx, project, req, serverID, toolName, arguments)
+		result.OutputPreview, _ = sanitizedManagedMCPJSON(output)
+		if managedErr != nil {
+			result.Status = "error"
+			result.Error = sanitizedDisplayText(managedErr.Error())
+			return result
+		}
+		result.Status = "executed"
+		return result
+	}
 	if s == nil || s.mcpExecutor == nil {
 		result.Status = "blocked"
 		result.Error = "MCP execution is not wired into the AI service"
@@ -131,6 +143,71 @@ func (s *Service) executeSubagentPreviewTool(project *ProjectSession, req AITool
 	result.ArtifactID = preview.Artifact.ID
 	result.OutputPreview = preview.Artifact.Summary
 	return result
+}
+
+func (s *Service) executeReadOnlySubagentTool(ctx context.Context, project *ProjectSession, req AIToolCallRequest, result AIToolCallResult) AIToolCallResult {
+	if req.Action != AIToolCallActionExecute {
+		result.Status = "previewed"
+		result.OutputPreview = sanitizedDisplayText(firstNonEmpty(req.Arguments["objective"], req.Arguments["prompt"]))
+		return result
+	}
+	started, err := s.StartSubagentRun(ctx, project.ID, AIStartSubagentRunRequest{
+		ParentRunID:   req.RunID,
+		Objective:     req.Arguments["objective"],
+		Role:          req.Arguments["role"],
+		ExecutionMode: subagentExecutionReadOnly,
+	})
+	if err != nil {
+		result.Status = "blocked"
+		result.Error = err.Error()
+		return result
+	}
+	result.Status = "executed"
+	result.ArtifactID = started.Artifact.ID
+	result.OutputPreview = "Read-only child run started: " + started.ChildRun.ID
+	return result
+}
+
+func (s *Service) executePatchArtifactSubagentTool(ctx context.Context, project *ProjectSession, req AIToolCallRequest, result AIToolCallResult) AIToolCallResult {
+	if req.Action != AIToolCallActionExecute {
+		result.Status = "previewed"
+		result.OutputPreview = sanitizedDisplayText(firstNonEmpty(req.Arguments["objective"], req.Arguments["prompt"]))
+		return result
+	}
+	ownedPaths, err := subagentOwnedPathsFromToolArguments(req.Arguments["ownedPaths"])
+	if err != nil {
+		result.Status = "blocked"
+		result.Error = err.Error()
+		return result
+	}
+	started, err := s.StartSubagentRun(ctx, project.ID, AIStartSubagentRunRequest{
+		ParentRunID:   req.RunID,
+		Objective:     req.Arguments["objective"],
+		Role:          req.Arguments["role"],
+		ExecutionMode: subagentExecutionPatchArtifact,
+		OwnedPaths:    ownedPaths,
+	})
+	if err != nil {
+		result.Status = "blocked"
+		result.Error = err.Error()
+		return result
+	}
+	result.Status = "executed"
+	result.ArtifactID = started.Artifact.ID
+	result.OutputPreview = "Patch-artifact child run started: " + started.ChildRun.ID
+	return result
+}
+
+func subagentOwnedPathsFromToolArguments(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("patch-artifact subagent requires ownedPaths")
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		return nil, fmt.Errorf("ownedPaths must be an array of project-relative paths: %w", err)
+	}
+	return normalizeSubagentOwnedPaths(paths)
 }
 
 func mcpToolArguments(arguments map[string]string) (map[string]any, error) {

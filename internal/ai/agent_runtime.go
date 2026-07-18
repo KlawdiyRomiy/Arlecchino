@@ -511,21 +511,25 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	if compaction, ok := latestIncludedCompactionCapsule(snapshot.Continuity); ok {
 		history = s.chatHistoryForPromptAfter(project, runID, req.SessionID, chatPromptHistoryLimit, compaction.CreatedAt)
 	}
-	agentPrompt := buildExternalAgentPrompt(req, snapshot, contextSummary, history)
+	inputs, links := s.modelInputsForRun(project, runID)
+	history = filterChatHistoryForLinkedRuns(history, links)
+	agentPrompt := buildExternalAgentPromptWithInputs(req, snapshot, contextSummary, history, inputs)
 	result := adapter.Run(ctx, agents.RunRequest{
-		RunID:           runID,
-		SessionID:       normalizeChatSessionID(req.SessionID),
-		ProjectRoot:     project.ProjectRoot,
-		Action:          string(req.Action),
-		Prompt:          agentPrompt,
-		Model:           firstNonEmpty(req.Model, descriptor.DefaultModel),
-		ReasoningEffort: req.ReasoningEffort,
-		RuntimeFamily:   runtimeFamily,
-		Transport:       transport,
-		Rows:            34,
-		Cols:            116,
-		DataCategories:  snapshot.DataCategories,
-		RegisterInput:   s.registerAgentTerminalIO,
+		RunID:                     runID,
+		SessionID:                 normalizeChatSessionID(req.SessionID),
+		ProjectRoot:               project.ProjectRoot,
+		Action:                    string(req.Action),
+		Prompt:                    agentPrompt,
+		Model:                     firstNonEmpty(req.Model, descriptor.DefaultModel),
+		ReasoningEffort:           req.ReasoningEffort,
+		RuntimeFamily:             runtimeFamily,
+		Transport:                 transport,
+		Rows:                      34,
+		Cols:                      116,
+		DataCategories:            snapshot.DataCategories,
+		AllowWorkspaceWrite:       s.externalAgentWorkspaceWriteAllowed(project, req),
+		RegisterInput:             s.registerAgentTerminalIO,
+		RegisterLiveRunController: s.registerLiveRunController,
 	}, func(event agents.Event) {
 		s.handleAgentRuntimeEvent(project, runID, event)
 	})
@@ -680,6 +684,24 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		return
 	}
 	s.finishAgentRunCompleted(project, runID, req, descriptor, record, result, transcriptID, diffArtifact)
+}
+
+func (s *Service) externalAgentWorkspaceWriteAllowed(project *ProjectSession, req AIChatRunRequest) bool {
+	if project == nil || req.Action != AIChatActionBuild {
+		return false
+	}
+	approval := s.approvalSummaryForProject(project)
+	if !approval.FullAccessActive {
+		return false
+	}
+	allowed := map[AIToolKind]bool{}
+	for _, kind := range approval.AllowedToolKinds {
+		allowed[kind] = true
+	}
+	// A provider-owned coding runtime can mutate through either patch APIs or
+	// shell commands. Grant its workspace-write sandbox only when the host's
+	// explicit Full Access scope includes both capabilities.
+	return allowed[AIToolKindFileWrite] && allowed[AIToolKindTerminal]
 }
 
 func (s *Service) blockExternalAgentConsent(project *ProjectSession, runID string, req AIChatRunRequest, snapshot AIContextSnapshot, descriptor providers.AIProviderDescriptor) {
@@ -1468,7 +1490,11 @@ func agentFailureCodeForResult(result agents.Result) string {
 }
 
 func buildExternalAgentPrompt(req AIChatRunRequest, snapshot AIContextSnapshot, summary AIContextSummary, history []AIChatRun) string {
-	contextPrompt := buildChatPromptFromSnapshot(snapshot, history)
+	return buildExternalAgentPromptWithInputs(req, snapshot, summary, history, []AIChatRunInput{newUserRunInput(req.Prompt)})
+}
+
+func buildExternalAgentPromptWithInputs(req AIChatRunRequest, snapshot AIContextSnapshot, summary AIContextSummary, history []AIChatRun, inputs []AIChatRunInput) string {
+	contextPrompt := buildChatPromptFromSnapshot(snapshot, history, inputs)
 	var b strings.Builder
 	b.WriteString("You are running as a structured external agent runtime inside Arlecchino AI Chat.\n")
 	b.WriteString("Mode: ")

@@ -18,11 +18,13 @@ import type {
   AIChatRun,
   AIChatRunArtifact,
   AIChatRunEnvelope,
+  AIChatRunInput,
   AIContextItemDisclosure,
   AIQuestionAnswerRequest,
   AIToolProposal,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
+  AIChatInputDisplayKind,
   AIChatRunArtifactKind,
   AIContextItemKind,
 } from "../../../bindings/arlecchino/internal/ai/models";
@@ -268,6 +270,35 @@ function contextItemsForRun(
   const items =
     run?.contextSummary?.contextItems ?? envelope.contextSummary?.contextItems;
   return items ?? [];
+}
+
+export function activityInputsForRun(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+): AIChatRunInput[] {
+  const inputs = run?.inputs ?? envelope.inputs ?? [];
+  return inputs.filter(
+    (input) =>
+      input.displayKind ===
+        AIChatInputDisplayKind.AIChatInputDisplayKindActivity &&
+      input.userVisible &&
+      Boolean(input.displaySummary?.trim()),
+  );
+}
+
+function steerStatusLabel(state: string): string {
+  switch (state) {
+    case "forwarded":
+      return "Steer forwarded to the active runtime";
+    case "fallback_pending":
+      return "Steer accepted; waiting to restart";
+    case "applied":
+      return "Steer applied";
+    case "rejected":
+      return "Steer was not accepted";
+    default:
+      return "Steer received";
+  }
 }
 
 function iconForMentionItem(kind: AIContextItemKind) {
@@ -912,6 +943,9 @@ export function RunCard({
       ? "No assistant text recorded."
       : "";
   const contextItems = contextItemsForRun(envelope, run);
+  const activityInputs = activityInputsForRun(envelope, run);
+  const steers = envelope.steers ?? [];
+  const skillCircuit = envelope.skillCircuit ?? [];
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
   const patchArtifacts = artifacts.filter(
     (artifact) =>
@@ -958,7 +992,8 @@ export function RunCard({
     Boolean(envelope.agentRuntime) ||
     timelineEvents.length > 0 ||
     running ||
-    Boolean(runtimeNotice);
+    Boolean(runtimeNotice) ||
+    skillCircuit.length > 0;
   const runDetailsActionClass = [
     "ai-chat-message-action",
     detailsOpen ? "is-active" : "",
@@ -1279,6 +1314,42 @@ export function RunCard({
                 </time>
               ) : null}
             </div>
+            {activityInputs.length > 0 ? (
+              <div
+                className="ai-chat-input-activity-stack"
+                aria-label="Workflow activity"
+                aria-live={active ? "polite" : undefined}
+              >
+                {activityInputs.map((input, index) => (
+                  <div
+                    className="ai-chat-input-activity"
+                    data-origin={input.origin}
+                    key={`${input.origin}-${input.parentRunId || ""}-${input.correlationId || ""}-${index}`}
+                  >
+                    <span aria-hidden="true" />
+                    <p>{input.displaySummary}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {steers.length > 0 ? (
+              <div
+                className="ai-chat-steer-activity-stack"
+                aria-label="Run steering activity"
+                aria-live={active ? "polite" : undefined}
+              >
+                {steers.map((steer) => (
+                  <div
+                    className="ai-chat-steer-activity"
+                    data-state={steer.state}
+                    key={steer.id}
+                  >
+                    <span>{steerStatusLabel(steer.state)}</span>
+                    {steer.text ? <p>{steer.text}</p> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {commentary.length > 0 ? (
               <div
                 className="ai-chat-commentary-stack"
@@ -1504,6 +1575,41 @@ export function RunCard({
                   onClick={(event) => event.stopPropagation()}
                 >
                   <AgentRunProgress announce={active} envelope={envelope} />
+                  {skillCircuit.length > 0 ? (
+                    <section
+                      className="ai-chat-skill-circuit"
+                      aria-label="Skill residency circuit"
+                    >
+                      <div className="ai-chat-skill-circuit__head">
+                        <strong>Skill circuit</strong>
+                        <span>{skillCircuit.length}</span>
+                      </div>
+                      {skillCircuit.map((controller) => (
+                        <div
+                          className="ai-chat-skill-circuit__item"
+                          data-state={controller.state}
+                          key={controller.id}
+                        >
+                          <div>
+                            <strong>
+                              {controller.name || controller.skillId}
+                            </strong>
+                            <small>
+                              epoch {controller.taskEpoch} · {controller.state}
+                            </small>
+                          </div>
+                          {controller.matchReason ? (
+                            <p>{controller.matchReason}</p>
+                          ) : null}
+                          {(controller.mandatoryChecks?.length ?? 0) > 0 ? (
+                            <small>
+                              {controller.mandatoryChecks?.join(" · ")}
+                            </small>
+                          ) : null}
+                        </div>
+                      ))}
+                    </section>
+                  ) : null}
                   {runtimeNotice ? (
                     <div
                       className="ai-chat-agent-inspector__notice"

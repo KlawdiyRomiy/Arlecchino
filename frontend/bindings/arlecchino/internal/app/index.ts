@@ -42,6 +42,7 @@ export {
     FileEntry,
     FlagDefJS,
     GitCommitInfo,
+    LSPCallHierarchyResult,
     LSPCodeAction,
     LSPCommandJSON,
     LSPDefinitionResult,

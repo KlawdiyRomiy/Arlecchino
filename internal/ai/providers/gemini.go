@@ -250,8 +250,8 @@ func (p *GeminiProvider) Generate(ctx context.Context, req GenerationRequest, si
 		Tools:      geminiToolsFromGenerationRequest(req.Tools),
 		ToolConfig: geminiToolConfig(req.ToolChoice, req.Tools),
 	}
-	if strings.TrimSpace(req.System) != "" {
-		request.SystemInstruction = &geminiContent{Parts: []geminiPart{{Text: strings.TrimSpace(req.System)}}}
+	if system := generationSystemText(req); system != "" {
+		request.SystemInstruction = &geminiContent{Parts: []geminiPart{{Text: system}}}
 	}
 	if req.Stream && sink != nil {
 		return p.generateStreaming(ctx, model, request, sink)

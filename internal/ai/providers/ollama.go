@@ -455,12 +455,16 @@ func ollamaMessagesNeedChat(messages []GenerationMessage) bool {
 
 func ollamaMessagesFromGenerationRequest(req GenerationRequest) []ollamaChatMessage {
 	messages := []ollamaChatMessage{}
+	system := generationSystemText(req)
 	if len(req.Messages) > 0 {
-		if strings.TrimSpace(req.System) != "" && !generationMessagesContainSystem(req.Messages) {
-			messages = append(messages, ollamaChatMessage{Role: "system", Content: req.System})
+		if system != "" {
+			messages = append(messages, ollamaChatMessage{Role: "system", Content: system})
 		}
 		for _, message := range req.Messages {
 			role := normalizedOpenAIMessageRole(message.Role)
+			if role == "system" {
+				continue
+			}
 			content := strings.TrimSpace(message.Content)
 			toolCalls := ollamaToolCallsFromGenerationToolCalls(message.ToolCalls)
 			toolName := strings.TrimSpace(message.Name)
@@ -480,8 +484,8 @@ func ollamaMessagesFromGenerationRequest(req GenerationRequest) []ollamaChatMess
 			return messages
 		}
 	}
-	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, ollamaChatMessage{Role: "system", Content: req.System})
+	if system != "" {
+		messages = append(messages, ollamaChatMessage{Role: "system", Content: system})
 	}
 	if strings.TrimSpace(req.Prompt) != "" {
 		messages = append(messages, ollamaChatMessage{Role: "user", Content: req.Prompt})
