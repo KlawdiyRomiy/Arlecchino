@@ -33,6 +33,7 @@ import { recordIDEContextEvent } from "./ideContextLedgerStore";
 const fileRefreshDebounceMs = 320;
 const contentFileRefreshDebounceMs = 2500;
 const fileMarkerRefreshDebounceMs = 1200;
+const criticalModeRefreshDebounceMs = 4000;
 const fallbackPollIntervalMs = 15000;
 const gitMetadataCacheTtlMs = 30000;
 const gitMarkerCacheTtlMs = 3000;
@@ -310,7 +311,8 @@ const syncFallbackPolling = (
       get().projectPath === projectPath &&
       get().activeConsumers > 0 &&
       document.visibilityState !== "hidden" &&
-      refreshInFlight === null
+      refreshInFlight === null &&
+      usePerformanceStore.getState().mode !== "critical"
     ) {
       void get().refresh();
     }
@@ -329,8 +331,16 @@ const scheduleRefresh = (
   }
   refreshTimer = window.setTimeout(() => {
     refreshTimer = null;
-    if (usePerformanceStore.getState().panelMotionActive) {
+    const performanceState = usePerformanceStore.getState();
+    if (performanceState.panelMotionActive) {
       scheduleRefresh(get);
+      return;
+    }
+    // Huge projects under indexing/fs-event pressure: git status on a large
+    // repo is expensive, so watcher-driven refreshes back off until the
+    // adaptive governor relaxes. Explicit user actions still refresh directly.
+    if (performanceState.mode === "critical") {
+      scheduleRefresh(get, criticalModeRefreshDebounceMs);
       return;
     }
     if (refreshInFlight && refreshInFlightProjectPath === get().projectPath) {

@@ -12,10 +12,7 @@ import { usePerformanceStore } from "./performanceStore";
 export type DiagnosticsSeverity = "error" | "warning" | "info";
 export type DiagnosticsSeverityFilter = "all" | DiagnosticsSeverity;
 export type DiagnosticsRuntimeState =
-  | "idle"
-  | "ready"
-  | "unavailable"
-  | "error";
+  "idle" | "ready" | "unavailable" | "error";
 
 export interface DiagnosticsPosition {
   line: number;
@@ -109,6 +106,7 @@ interface DiagnosticsState {
   currentGeneration: number;
   runtimeStatus: DiagnosticsRuntimeStatus;
   ingestDiagnosticsEvent: (event: DiagnosticsEventPayload) => void;
+  ingestDiagnosticsEvents: (events: DiagnosticsEventPayload[]) => void;
   ingestDiagnosticsStatusEvent: (event: DiagnosticsStatusEventPayload) => void;
   setProjectScope: (projectPath: string | null, generation?: number) => void;
   setFileDiagnostics: (
@@ -534,6 +532,8 @@ let diagnosticsEventsBoundWaiters: Array<() => void> = [];
 let diagnosticsMotionSubscriptionStarted = false;
 let pendingDiagnosticsStatusEvent: DiagnosticsStatusEventPayload | null = null;
 const pendingDiagnosticsEvents = new Map<string, DiagnosticsEventPayload>();
+const diagnosticsDeferredFlushDelayMs = 48;
+let diagnosticsDeferredFlushTimer: number | null = null;
 const diagnosticPayloadMatchesCurrentSession = (
   payload: DiagnosticsEventPayload | DiagnosticsStatusEventPayload,
 ) => {
@@ -564,24 +564,43 @@ const flushDeferredDiagnosticsEvents = () => {
     return;
   }
 
-  const events = Array.from(pendingDiagnosticsEvents.values());
+  const events = Array.from(pendingDiagnosticsEvents.values()).filter((event) =>
+    diagnosticPayloadMatchesCurrentSession(event),
+  );
   const statusEvent = pendingDiagnosticsStatusEvent;
   pendingDiagnosticsEvents.clear();
   pendingDiagnosticsStatusEvent = null;
 
-  events.forEach((event) => {
-    if (diagnosticPayloadMatchesCurrentSession(event)) {
-      useDiagnosticsStore.getState().ingestDiagnosticsEvent(event);
-    }
-  });
+  if (events.length > 0) {
+    useDiagnosticsStore.getState().ingestDiagnosticsEvents(events);
+  }
   if (statusEvent && diagnosticPayloadMatchesCurrentSession(statusEvent)) {
     useDiagnosticsStore.getState().ingestDiagnosticsStatusEvent(statusEvent);
   }
 };
 
+const scheduleDiagnosticsDeferredFlush = () => {
+  if (diagnosticsDeferredFlushTimer !== null || typeof window === "undefined") {
+    return;
+  }
+
+  diagnosticsDeferredFlushTimer = window.setTimeout(() => {
+    diagnosticsDeferredFlushTimer = null;
+    if (usePerformanceStore.getState().panelMotionActive) {
+      // The motion-end subscription drains the queue once panels settle.
+      return;
+    }
+    flushDeferredDiagnosticsEvents();
+  }, diagnosticsDeferredFlushDelayMs);
+};
+
 const clearDeferredDiagnosticsQueues = () => {
   pendingDiagnosticsEvents.clear();
   pendingDiagnosticsStatusEvent = null;
+  if (diagnosticsDeferredFlushTimer !== null) {
+    window.clearTimeout(diagnosticsDeferredFlushTimer);
+    diagnosticsDeferredFlushTimer = null;
+  }
 };
 
 const ensureDiagnosticsMotionSubscription = () => {
@@ -601,11 +620,24 @@ const ingestDiagnosticsEventWithMotionBarrier = (
   event: DiagnosticsEventPayload,
 ) => {
   ensureDiagnosticsMotionSubscription();
-  if (usePerformanceStore.getState().panelMotionActive) {
+  const performanceState = usePerformanceStore.getState();
+  if (performanceState.panelMotionActive) {
     pendingDiagnosticsEvents.set(
       getDiagnosticsEventCoalescingKey(event),
       event,
     );
+    return;
+  }
+
+  // Under memory/CPU pressure (huge projects, indexing bursts) coalesce the
+  // per-file LSP storm into a single batched store update per flush window.
+  // In the normal mode events keep flowing synchronously for instant feedback.
+  if (performanceState.mode !== "normal") {
+    pendingDiagnosticsEvents.set(
+      getDiagnosticsEventCoalescingKey(event),
+      event,
+    );
+    scheduleDiagnosticsDeferredFlush();
     return;
   }
 
@@ -735,6 +767,164 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       }
       const items = event.items;
       get().setFileDiagnostics(filePath, event.language ?? "", items);
+    },
+
+    ingestDiagnosticsEvents: (events) => {
+      if (events.length === 0) {
+        return;
+      }
+      if (events.length === 1) {
+        get().ingestDiagnosticsEvent(events[0]);
+        return;
+      }
+
+      const { activeProjectPath, currentGeneration } = get();
+      const pending: Array<{
+        filePath: string;
+        language: string;
+        items: DiagnosticsEventItem[];
+      }> = [];
+      let generationBump = 0;
+
+      for (const event of events) {
+        const filePath = resolveFilePath(event);
+        if (filePath === "") {
+          continue;
+        }
+        const eventProjectPath =
+          typeof event.projectPath === "string" && event.projectPath !== ""
+            ? event.projectPath
+            : null;
+        const eventGeneration = normalizeGeneration(event.generation);
+
+        if (
+          activeProjectPath &&
+          !matchesProjectPath(filePath, activeProjectPath)
+        ) {
+          continue;
+        }
+        if (
+          activeProjectPath &&
+          eventProjectPath &&
+          eventProjectPath !== activeProjectPath
+        ) {
+          continue;
+        }
+        if (
+          currentGeneration > 0 &&
+          eventGeneration > 0 &&
+          eventGeneration < currentGeneration
+        ) {
+          continue;
+        }
+        if (!Array.isArray(event.items)) {
+          continue;
+        }
+
+        if (
+          activeProjectPath &&
+          eventGeneration > 0 &&
+          (currentGeneration === 0 || eventGeneration > currentGeneration)
+        ) {
+          generationBump = Math.max(generationBump, eventGeneration);
+        }
+        pending.push({
+          filePath,
+          language: event.language ?? "",
+          items: event.items,
+        });
+      }
+
+      if (activeProjectPath && generationBump > 0) {
+        get().setProjectScope(activeProjectPath, generationBump);
+      }
+      if (pending.length === 0) {
+        return;
+      }
+      if (pending.length === 1) {
+        get().setFileDiagnostics(
+          pending[0].filePath,
+          pending[0].language,
+          pending[0].items,
+        );
+        return;
+      }
+
+      // Apply the whole burst in a single set(): both maps are cloned once
+      // and subscribers are notified once, no matter how many files changed.
+      set((state) => {
+        let nextByFileLanguage: Map<
+          string,
+          Map<string, DiagnosticsFileGroup>
+        > | null = null;
+        let nextByFile: Map<string, DiagnosticsFileGroup> | null = null;
+        let nextSummary = state.projectSummary;
+
+        for (const entry of pending) {
+          const languageKey = normalizeDiagnosticsLanguage(entry.language);
+          const sourceByFileLanguage =
+            nextByFileLanguage ?? state.byFileLanguage;
+          const previousFileBuckets = sourceByFileLanguage.get(entry.filePath);
+          const previousLanguageGroup = previousFileBuckets?.get(languageKey);
+          const nextLanguageGroup =
+            entry.items.length > 0
+              ? createFileGroup(entry.filePath, languageKey, entry.items)
+              : undefined;
+
+          if (fileGroupsEqual(previousLanguageGroup, nextLanguageGroup)) {
+            continue;
+          }
+
+          if (nextByFileLanguage === null) {
+            nextByFileLanguage = new Map(state.byFileLanguage);
+            nextByFile = new Map(state.byFile);
+          }
+
+          const nextFileBuckets = new Map<string, DiagnosticsFileGroup>(
+            previousFileBuckets ?? [],
+          );
+          if (entry.items.length === 0) {
+            nextFileBuckets.delete(languageKey);
+          } else {
+            nextFileBuckets.set(languageKey, nextLanguageGroup!);
+          }
+
+          if (nextFileBuckets.size === 0) {
+            nextByFileLanguage.delete(entry.filePath);
+          } else {
+            nextByFileLanguage.set(entry.filePath, nextFileBuckets);
+          }
+
+          const previousAggregate = nextByFile!.get(entry.filePath) ?? null;
+          const nextAggregate =
+            nextFileBuckets.size > 0
+              ? aggregateLanguageBucketsForFile(entry.filePath, nextFileBuckets)
+              : null;
+          if (nextAggregate) {
+            nextByFile!.set(entry.filePath, nextAggregate);
+          } else {
+            nextByFile!.delete(entry.filePath);
+          }
+
+          nextSummary = summarizeFileChange(
+            nextSummary,
+            previousAggregate,
+            nextAggregate,
+            entry.filePath,
+            state.activeProjectPath,
+          );
+        }
+
+        if (nextByFileLanguage === null) {
+          return state;
+        }
+
+        return {
+          byFileLanguage: nextByFileLanguage,
+          byFile: nextByFile!,
+          projectSummary: nextSummary,
+        };
+      });
     },
 
     ingestDiagnosticsStatusEvent: (event) => {
