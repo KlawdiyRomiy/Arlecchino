@@ -3545,7 +3545,9 @@ export function AIChatPanelContent({
         await AISteerChatRun({
           runId: run.id,
           message,
-          expectedRevision: run.revision,
+          // Live run revisions advance with streaming/progress events; sending
+          // a stale snapshot here rejects valid steer/redirect requests.
+          expectedRevision: 0,
           idempotencyKey: newContinuationIdempotencyKey(),
           disposition,
           selectedAction: state.selectedAction,

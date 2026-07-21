@@ -501,10 +501,22 @@ func (s *Service) consumeQueuedChatRun(project *ProjectSession, terminal AIChatR
 	}
 	item := items[reserved]
 	s.recordQueueTimeline(project, terminal.SessionID, "queue_consumed", item.ID, "Queued follow-up reserved for execution")
+	profileID := ""
+	workflowID := ""
+	if terminal.Action == item.SelectedAction {
+		profileID = terminal.ProfileID
+		workflowID = terminal.WorkflowID
+	}
 	next, err := s.StartChatRun(context.Background(), project.ID, AIChatRunRequest{
-		SessionID: item.SessionID,
-		Action:    item.SelectedAction,
-		Prompt:    item.Message,
+		SessionID:       item.SessionID,
+		Action:          item.SelectedAction,
+		ProfileID:       profileID,
+		WorkflowID:      workflowID,
+		Prompt:          item.Message,
+		RuntimeFamily:   terminal.RuntimeFamily,
+		ProviderID:      terminal.ProviderID,
+		Model:           terminal.Model,
+		ReasoningEffort: terminal.ReasoningEffort,
 		Links: AIChatRunLinks{
 			SourceQueueItemID: item.ID,
 			SourceQueueRunID:  terminal.ID,
