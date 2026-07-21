@@ -200,15 +200,6 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	viewMenu.AddSeparator()
 	a.addMenuAction(viewMenu, "Close Fullscreen Panel", "panel.closeFullscreen", shortcuts)
 	a.addMenuAction(viewMenu, "Reopen Closed Panel", "panel.reopenClosed", shortcuts)
-	a.addMenuAction(viewMenu, "Enter Full Screen", "window.toggleFullscreen", shortcuts)
-
-	if aiPanelEnabled {
-		aiMenu := appMenu.AddSubmenu("AI")
-		a.addMenuAction(aiMenu, "Stop Agent", "ai.stopAgent", shortcuts)
-	}
-
-	sourceControlMenu := appMenu.AddSubmenu("Source Control")
-	a.addMenuAction(sourceControlMenu, "Commit...", "git.commit", shortcuts)
 
 	windowMenu := appMenu.AddSubmenu("Window")
 	windowMenu.Add("Minimize").SetAccelerator("cmd+m").OnClick(func(_ *application.Context) {
