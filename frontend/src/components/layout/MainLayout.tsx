@@ -11,6 +11,8 @@ import { useReducedMotion } from "framer-motion";
 import { useShallow } from "zustand/react/shallow";
 import { TopBar } from "./TopBar";
 import { StatusBar } from "./StatusBar";
+import { AmbientFieldCanvas } from "./AmbientFieldCanvas";
+import { BrowserRail } from "./BrowserRail";
 import { MainLayoutPanelRenderer } from "./MainLayoutPanelRenderer";
 import { MainPanelWorkspace } from "./MainPanelWorkspace";
 import { PanelDropZone } from "./PanelDropZone";
@@ -780,6 +782,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     });
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const setUiScale = useEditorSettingsStore((state) => state.setUiScale);
+  const browserSidebarEnabled = useEditorSettingsStore(
+    (state) => state.browserSidebarEnabled,
+  );
   const zenModeEnabled = useEditorSettingsStore(
     (state) => state.zenModeEnabled,
   );
@@ -6512,7 +6517,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     position: "relative",
     overflow: "clip",
     minHeight: 0,
-    backgroundColor: "var(--bg-blackprint)",
+    // Slightly translucent so the ambient field layer reads through around
+    // the editor card; the card itself stays fully opaque for text contrast.
+    backgroundColor:
+      "color-mix(in srgb, var(--bg-blackprint) 88%, transparent)",
   };
 
   const editorAreaStyle: React.CSSProperties = {
@@ -7682,6 +7690,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           </div>
 
           <div style={mainAreaStyle}>
+            <AmbientFieldCanvas />
+            {browserSidebarEnabled ? (
+              <BrowserRail
+                projectPath={activeProjectPath}
+                panels={{
+                  explorer: panels.explorer,
+                  git: panels.git,
+                  problems: panels.problems,
+                  terminal: tuiModeActive ? true : panels.terminal,
+                  aiChat: aiPanelEnabled && panels.aiChat,
+                }}
+                aiChatAvailable={aiPanelEnabled}
+                onToggleExplorer={() =>
+                  togglePanelFromExplicitAction("explorer")
+                }
+                onToggleGit={() => togglePanelFromExplicitAction("git")}
+                onToggleProblems={openProblemsFromStatusBar}
+                onToggleTerminal={() =>
+                  togglePanelFromExplicitAction("terminal")
+                }
+                onToggleAIChat={() => togglePanelFromExplicitAction("aiChat")}
+                onOpenCommandBar={openCommandDispatcher}
+              />
+            ) : null}
             <MainPanelWorkspace
               panelWorkspaceRef={panelWorkspaceRef}
               workspaceLayoutMotionEnabled={workspaceLayoutMotionEnabled}

@@ -31,6 +31,7 @@ import {
 } from "../hooks/useDependencyGraph";
 import { getThemeColors, radius } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
+import { DependencyGraphCanvas } from "./DependencyGraphCanvas";
 import { SetNativeWindowControlsOccluded } from "../wails/app";
 
 const SelectCtx = createContext<(path: string, line?: number) => void>(
@@ -354,6 +355,7 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
           proOptions={{ hideAttribution: true }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
+          <DependencyGraphCanvas nodes={nodes} edges={edges} />
           <Controls showInteractive={false} />
           <MiniMap
             style={{

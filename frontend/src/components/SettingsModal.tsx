@@ -1165,6 +1165,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     zenModeEnabled,
     zenModeHideTopbar,
     zenModeHideStatusbar,
+    browserSidebarEnabled,
     projectWindowMode,
     appIconAppearance,
     aiPanelEnabled,
@@ -1194,6 +1195,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setZenModeEnabled,
     setZenModeHideTopbar,
     setZenModeHideStatusbar,
+    setBrowserSidebarEnabled,
     setProjectWindowMode,
     setAppIconAppearance,
     setAIPanelEnabled,
@@ -3613,6 +3615,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     {customThemeImport.status.message}
                                   </div>
                                 )}
+                              </div>
+                            </SettingSection>
+
+                            <SettingSection title="Workspace Chrome">
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Browser sidebar"
+                                  description="Arc-inspired vertical rail with pinned tabs, space identity, and panel shortcuts. Panels stay floating and detachable."
+                                  checked={browserSidebarEnabled}
+                                  onCheckedChange={setBrowserSidebarEnabled}
+                                  badge="Beta"
+                                  settingId="browser-sidebar"
+                                  highlighted={
+                                    highlightedSettingId === "browser-sidebar"
+                                  }
+                                />
                               </div>
                             </SettingSection>
 

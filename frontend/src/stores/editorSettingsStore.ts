@@ -133,6 +133,7 @@ interface EditorSettingsState {
   zenModeEnabled: boolean;
   zenModeHideTopbar: boolean;
   zenModeHideStatusbar: boolean;
+  browserSidebarEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
   appIconAppearance: AppIconAppearance;
   aiPanelEnabled: boolean;
@@ -167,6 +168,7 @@ interface EditorSettingsState {
   setZenModeEnabled: (value: boolean) => void;
   setZenModeHideTopbar: (value: boolean) => void;
   setZenModeHideStatusbar: (value: boolean) => void;
+  setBrowserSidebarEnabled: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   setAppIconAppearance: (value: AppIconAppearance) => void;
   setAIPanelEnabled: (value: boolean) => void;
@@ -209,6 +211,7 @@ const DEFAULT_CONFIRM_BEFORE_CLOSE = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_ZEN_MODE_HIDE_TOPBAR = false;
 const DEFAULT_ZEN_MODE_HIDE_STATUSBAR = false;
+const DEFAULT_BROWSER_SIDEBAR_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
 const DEFAULT_AI_PANEL_ENABLED = true;
@@ -259,6 +262,7 @@ type PersistedEditorSettingsState = Partial<
     | "zenModeEnabled"
     | "zenModeHideTopbar"
     | "zenModeHideStatusbar"
+    | "browserSidebarEnabled"
     | "projectWindowMode"
     | "appIconAppearance"
     | "aiPanelEnabled"
@@ -475,6 +479,10 @@ const sanitizePersistedEditorSettings = (
     nextState.zenModeHideStatusbar = persistedState.zenModeHideStatusbar;
   }
 
+  if (typeof persistedState.browserSidebarEnabled === "boolean") {
+    nextState.browserSidebarEnabled = persistedState.browserSidebarEnabled;
+  }
+
   const projectWindowMode = migratedProjectWindowMode(
     persistedState.projectWindowMode ??
       persistedState.projectSwitchShortcutBehavior,
@@ -545,6 +553,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       zenModeHideTopbar: DEFAULT_ZEN_MODE_HIDE_TOPBAR,
       zenModeHideStatusbar: DEFAULT_ZEN_MODE_HIDE_STATUSBAR,
+      browserSidebarEnabled: DEFAULT_BROWSER_SIDEBAR_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
       appIconAppearance: DEFAULT_APP_ICON_APPEARANCE,
       aiPanelEnabled: DEFAULT_AI_PANEL_ENABLED,
@@ -681,6 +690,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setZenModeHideStatusbar: (value: boolean) =>
         set(() => ({ zenModeHideStatusbar: value })),
+
+      setBrowserSidebarEnabled: (value: boolean) =>
+        set(() => ({ browserSidebarEnabled: value })),
 
       setProjectWindowMode: (value) =>
         set(() => ({ projectWindowMode: value })),

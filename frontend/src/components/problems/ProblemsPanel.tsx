@@ -591,7 +591,11 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
         onClick={() => setSeverityFilter("error")}
         aria-label="Show errors"
         aria-pressed={severityFilter === "error"}
-        className={summaryFilterPillClass}
+        className={
+          projectSummary.errors > 0
+            ? `${summaryFilterPillClass} status-capsule-live`
+            : summaryFilterPillClass
+        }
         style={summaryFilterPillStyle("error", severityFilter === "error")}
       >
         <AlertCircle size={12} />

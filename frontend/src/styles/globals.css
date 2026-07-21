@@ -296,6 +296,220 @@
   --transition-fast: 0.15s ease;
   --transition-normal: 0.3s ease;
   --transition-slow: 0.5s ease;
+
+  /* Motion tokens: single source of truth for redesign motion.
+     --motion-ease-spring mirrors SHELL_MOTION_EASE in motionContracts.ts. */
+  --motion-duration-fast: 120ms;
+  --motion-duration-normal: 220ms;
+  --motion-duration-slow: 360ms;
+  --motion-ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Animated custom property for live status capsules: rotating the angle of a
+   conic-gradient border is compositor-only and costs nothing per frame. */
+@property --status-glow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes status-glow-rotate {
+  to {
+    --status-glow-angle: 360deg;
+  }
+}
+
+/* Live status capsule: a slowly rotating conic highlight behind the capsule
+   content, visible in peripheral vision without reading the numbers. Rendered
+   via a pseudo-element so layout is untouched. */
+.status-capsule-live {
+  position: relative;
+  isolation: isolate;
+}
+
+.status-capsule-live::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--status-glow-angle),
+    transparent 0deg,
+    var(--status-glow-color, var(--status-error)) 60deg,
+    transparent 140deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.75;
+  pointer-events: none;
+  animation: status-glow-rotate 3.2s linear infinite;
+  z-index: -1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-capsule-live::before {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Browser rail (experimental Arc-inspired sidebar chrome)
+   --------------------------------------------------------------------------- */
+
+.browser-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 52px;
+  flex-shrink: 0;
+  height: 100%;
+  padding: 8px 0 10px;
+  gap: 4px;
+  background: var(--browser-rail-bg);
+  border-right: 1px solid var(--browser-rail-border);
+  overflow: hidden;
+}
+
+.browser-rail-space {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  border: 1px solid var(--browser-rail-active-border);
+  background: linear-gradient(
+    150deg,
+    var(--space-gradient-from),
+    var(--space-gradient-to)
+  );
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-spring),
+    box-shadow var(--motion-duration-fast) ease;
+}
+
+.browser-rail-space:hover {
+  transform: scale(1.06);
+  box-shadow: 0 4px 14px -6px var(--browser-rail-active-border);
+}
+
+.browser-rail-divider {
+  width: 22px;
+  height: 1px;
+  background: var(--browser-rail-border);
+  margin: 4px 0;
+  flex-shrink: 0;
+}
+
+.browser-rail-tabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  scrollbar-width: none;
+  padding: 2px 0;
+}
+
+.browser-rail-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.browser-rail-tab {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color var(--motion-duration-fast) ease,
+    color var(--motion-duration-fast) ease,
+    border-color var(--motion-duration-fast) ease,
+    transform var(--motion-duration-fast) var(--motion-ease-spring);
+}
+
+.browser-rail-tab:hover {
+  background: var(--browser-rail-hover);
+  color: var(--text-primary);
+}
+
+.browser-rail-tab:active {
+  transform: scale(0.92);
+}
+
+.browser-rail-tab.is-active {
+  background: var(--browser-rail-active);
+  border-color: var(--browser-rail-active-border);
+  color: var(--text-primary);
+}
+
+.browser-rail-tab-file {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.browser-rail-tab-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-warning);
+  box-shadow: 0 0 0 1.5px var(--browser-rail-bg);
+}
+
+.browser-rail-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+/* Ambient material layer: fixed full-window canvas behind panels. */
+.ambient-field-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ambient-field-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 15% 0%, var(--ambient-accent), transparent 60%),
+    radial-gradient(100% 80% at 90% 100%, var(--ambient-wash), transparent 55%);
 }
 
 html,
