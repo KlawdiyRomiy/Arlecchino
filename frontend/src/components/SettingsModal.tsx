@@ -113,7 +113,7 @@ import {
 } from "./ui/motionContracts";
 
 const settingsPanelClass =
-  "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[var(--surface-1)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)]";
+  "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[var(--surface-1)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)] [contain:layout_paint_style]";
 const settingsInsetClass =
   "overflow-hidden rounded-[22px] border border-[var(--border-subtle)] bg-[var(--surface-2)]";
 const settingsPillClass =
@@ -1165,7 +1165,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     zenModeEnabled,
     zenModeHideTopbar,
     zenModeHideStatusbar,
-    browserSidebarEnabled,
     projectWindowMode,
     appIconAppearance,
     aiPanelEnabled,
@@ -1195,7 +1194,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setZenModeEnabled,
     setZenModeHideTopbar,
     setZenModeHideStatusbar,
-    setBrowserSidebarEnabled,
     setProjectWindowMode,
     setAppIconAppearance,
     setAIPanelEnabled,
@@ -3615,22 +3613,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     {customThemeImport.status.message}
                                   </div>
                                 )}
-                              </div>
-                            </SettingSection>
-
-                            <SettingSection title="Workspace Chrome">
-                              <div className={settingsPanelClass}>
-                                <SwitchRow
-                                  title="Browser sidebar"
-                                  description="Arc-inspired vertical rail with pinned tabs, space identity, and panel shortcuts. Panels stay floating and detachable."
-                                  checked={browserSidebarEnabled}
-                                  onCheckedChange={setBrowserSidebarEnabled}
-                                  badge="Beta"
-                                  settingId="browser-sidebar"
-                                  highlighted={
-                                    highlightedSettingId === "browser-sidebar"
-                                  }
-                                />
                               </div>
                             </SettingSection>
 

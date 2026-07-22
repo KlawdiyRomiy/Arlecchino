@@ -203,7 +203,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
 
   return (
     <div
-      className="z-50 flex h-10 select-none items-center rounded-t-[18px] border-t border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3 py-1.5 tracking-[0.08em] tabular-nums"
+      className="z-50 flex h-11 select-none items-center bg-transparent px-3 pb-1.5 tracking-[0.08em] tabular-nums"
       data-testid="statusbar"
     >
       <div className="flex items-center gap-2">

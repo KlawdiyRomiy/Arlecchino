@@ -438,18 +438,6 @@ const createThemeCssVariables = (
     "--accent-primary-soft": options.accentPrimarySoft ?? colors.bgHover,
     "--accent-brand": options.accentBrand,
     "--accent-brand-soft": options.accentBrandSoft,
-    // Browser-rail chrome + per-space identity gradient. OKLCH mixing keeps
-    // perceptual saturation even for low-chroma (monochrome) themes.
-    "--space-gradient-from": `color-mix(in oklch, ${options.accentBrand} ${dark ? 34 : 20}%, ${colors.bgPanel})`,
-    "--space-gradient-to": `color-mix(in oklch, ${options.accentBrand} ${dark ? 10 : 5}%, ${colors.bg})`,
-    "--browser-rail-bg": `color-mix(in srgb, ${colors.bgSecondary} 92%, transparent)`,
-    "--browser-rail-border": colors.borderSubtle,
-    "--browser-rail-hover": colors.bgHover,
-    "--browser-rail-active": `color-mix(in srgb, ${options.accentBrand} ${dark ? 24 : 14}%, ${colors.bgPanel})`,
-    "--browser-rail-active-border": `color-mix(in srgb, ${options.accentBrand} ${dark ? 44 : 34}%, transparent)`,
-    // Ambient material layer: hue sources for the background field shader.
-    "--ambient-accent": `color-mix(in oklch, ${options.accentBrand} ${dark ? 26 : 14}%, transparent)`,
-    "--ambient-wash": `color-mix(in srgb, ${colors.bgSecondary} ${dark ? 55 : 70}%, transparent)`,
     "--focus-ring": options.focusRing,
     "--focus-ring-strong": options.focusRingStrong,
     "--border-focus": options.borderFocus,

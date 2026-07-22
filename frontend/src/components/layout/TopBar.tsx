@@ -1138,7 +1138,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <div
-      className="relative z-50 flex h-14 min-w-0 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
+      className="relative z-50 flex h-14 min-w-0 items-center gap-2 bg-transparent px-3"
       style={topBarDragStyle}
       data-testid="topbar"
     >
