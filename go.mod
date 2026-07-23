@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.4
 
 require (
-	github.com/RoaringBitmap/roaring/v2 v2.21.0
+	github.com/RoaringBitmap/roaring/v2 v2.22.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charlievieth/fastwalk v1.0.14
 	github.com/charmbracelet/x/ansi v0.11.7
@@ -23,7 +23,6 @@ require (
 	github.com/yalue/onnxruntime_go v1.31.0
 	go.lsp.dev/jsonrpc2 v1.0.1
 	go.lsp.dev/protocol v1.0.1
-	go.uber.org/goleak v1.3.0
 	mvdan.cc/sh/v3 v3.13.1
 )
 
