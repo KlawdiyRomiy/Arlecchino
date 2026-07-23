@@ -1,14 +1,13 @@
 import { useCallback, useMemo, type CSSProperties } from "react";
 
-import { beginInteractiveSurfaceMotionWindow } from "../../stores/performanceStore";
+import {
+  beginInteractiveSurfaceMotionWindow,
+  shouldReduceInteractiveMotion,
+  usePerformanceStore,
+} from "../../stores/performanceStore";
 
 export type InteractiveSurfaceMotionKind =
-  | "menu"
-  | "dropdown"
-  | "popover"
-  | "dialog"
-  | "modal"
-  | "panel";
+  "menu" | "dropdown" | "popover" | "dialog" | "modal" | "panel";
 
 const INTERACTIVE_SURFACE_MOTION_DURATIONS_MS: Record<
   InteractiveSurfaceMotionKind,
@@ -91,17 +90,28 @@ export const useInteractiveSurfaceMotion = (
 ) => {
   const duration = resolveMotionDuration(kindOrDuration);
   const { preserveTransform = false, reduceMotion = false } = options;
+  const adaptiveMotionReduced = usePerformanceStore((state) =>
+    shouldReduceInteractiveMotion(state.snapshot),
+  );
+  const effectiveReduceMotion = reduceMotion || adaptiveMotionReduced;
   const markMotionStart = useCallback(() => {
+    if (effectiveReduceMotion) {
+      return;
+    }
     beginInteractiveSurfaceMotionWindow(duration);
-  }, [duration]);
+  }, [duration, effectiveReduceMotion]);
   const surfaceStyle = useMemo(
     () =>
       getInteractiveSurfaceMotionStyle({
         preserveTransform,
-        reduceMotion,
+        reduceMotion: effectiveReduceMotion,
       }),
-    [preserveTransform, reduceMotion],
+    [effectiveReduceMotion, preserveTransform],
   );
 
-  return { markMotionStart, surfaceStyle };
+  return {
+    markMotionStart,
+    reduceMotion: effectiveReduceMotion,
+    surfaceStyle,
+  };
 };

@@ -96,6 +96,10 @@ const resolveMode = (
   return "normal";
 };
 
+export const shouldReduceInteractiveMotion = (
+  snapshot: PerformanceBudgetSnapshot,
+): boolean => snapshot.frameGapMs >= 34 || resolveMode(snapshot) !== "normal";
+
 const clampPressure = (value: number) => Math.max(0, Math.min(160, value));
 
 const defaultPanelMotionWindowMs = 420;

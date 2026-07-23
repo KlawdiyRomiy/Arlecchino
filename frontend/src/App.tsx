@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { MotionConfig } from "framer-motion";
 import WelcomeScreen from "./components/WelcomeScreen";
 import {
   CloseConfirmationDialog,
@@ -26,6 +27,7 @@ import {
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
 import {
+  shouldReduceInteractiveMotion,
   startAdaptivePerformanceMonitor,
   usePerformanceStore,
 } from "./stores/performanceStore";
@@ -195,6 +197,10 @@ const App: React.FC = () => {
   const isDetachedHost = isDetachedAppletHostRoute();
   const welcomeScreenVisible =
     ready && !isDetachedHost && !(activeId && activeProject);
+  const adaptiveMotionReduced = usePerformanceStore((state) =>
+    shouldReduceInteractiveMotion(state.snapshot),
+  );
+  const motionPreference = adaptiveMotionReduced ? "always" : "user";
 
   useEffect(() => startAdaptivePerformanceMonitor(), []);
 
@@ -993,88 +999,96 @@ const App: React.FC = () => {
   if (!ready) {
     if (isDetachedHost) {
       return (
-        <>
+        <MotionConfig reducedMotion={motionPreference}>
           <DetachedAppletHost
             currentTheme={currentTheme}
             currentUiScale={effectiveUiScale}
           />
           <AppNotificationStack />
-        </>
+        </MotionConfig>
       );
     }
 
     return (
+      <MotionConfig reducedMotion={motionPreference}>
+        <div
+          data-testid="app-shell"
+          data-file-drop-target
+          style={appShellStyle}
+        >
+          <div
+            data-testid="app-scaled-surface"
+            style={buildScaledSurfaceStyle(effectiveUiScale)}
+          >
+            <div aria-hidden="true" style={appSurfaceBackgroundStyle} />
+          </div>
+          <MCPApprovalDialog />
+          <AppNotificationStack />
+          {closeConfirmationDialog}
+        </div>
+      </MotionConfig>
+    );
+  }
+
+  if (isDetachedHost) {
+    return (
+      <MotionConfig reducedMotion={motionPreference}>
+        <DetachedAppletHost
+          currentTheme={currentTheme}
+          currentUiScale={effectiveUiScale}
+        />
+        <AppNotificationStack />
+      </MotionConfig>
+    );
+  }
+
+  return (
+    <MotionConfig reducedMotion={motionPreference}>
       <div data-testid="app-shell" data-file-drop-target style={appShellStyle}>
         <div
           data-testid="app-scaled-surface"
           style={buildScaledSurfaceStyle(effectiveUiScale)}
         >
           <div aria-hidden="true" style={appSurfaceBackgroundStyle} />
+          <ProjectSwitchTransition
+            layoutKey={activeProjectPath ?? "__welcome__"}
+            direction={activeProject ? switchDirection : 0}
+          >
+            {activeId && activeProject ? (
+              <PluginModalProvider key={activeProject.path}>
+                <CommandRegistryProvider>
+                  <MainLayout
+                    key={activeProject.path}
+                    onFileOpen={handleFileOpen}
+                    onBackToWelcome={handleBackToWelcome}
+                    onProjectOpen={handleProjectOpen}
+                    onSwitchProject={handleSwitchProject}
+                    onCloseProject={handleCloseProject}
+                    onDetachProject={handleDetachProject}
+                    onReorderProjects={handleReorderProjects}
+                  >
+                    <ProjectScreen
+                      key={activeProject.path}
+                      projectPath={activeProject.path}
+                      fileToOpen={fileToOpen}
+                      onFileOpened={() => setFileToOpen(null)}
+                      onRequestProjectClose={() => {
+                        void handleCloseProject(activeProject.id);
+                      }}
+                    />
+                  </MainLayout>
+                </CommandRegistryProvider>
+              </PluginModalProvider>
+            ) : (
+              <WelcomeScreen onProjectOpen={handleProjectOpen} />
+            )}
+          </ProjectSwitchTransition>
         </div>
         <MCPApprovalDialog />
         <AppNotificationStack />
         {closeConfirmationDialog}
       </div>
-    );
-  }
-
-  if (isDetachedHost) {
-    return (
-      <>
-        <DetachedAppletHost
-          currentTheme={currentTheme}
-          currentUiScale={effectiveUiScale}
-        />
-        <AppNotificationStack />
-      </>
-    );
-  }
-
-  return (
-    <div data-testid="app-shell" data-file-drop-target style={appShellStyle}>
-      <div
-        data-testid="app-scaled-surface"
-        style={buildScaledSurfaceStyle(effectiveUiScale)}
-      >
-        <div aria-hidden="true" style={appSurfaceBackgroundStyle} />
-        <ProjectSwitchTransition
-          layoutKey={activeProjectPath ?? "__welcome__"}
-          direction={activeProject ? switchDirection : 0}
-        >
-          {activeId && activeProject ? (
-            <PluginModalProvider key={activeProject.path}>
-              <CommandRegistryProvider>
-                <MainLayout
-                  key={activeProject.path}
-                  onFileOpen={handleFileOpen}
-                  onBackToWelcome={handleBackToWelcome}
-                  onProjectOpen={handleProjectOpen}
-                  onSwitchProject={handleSwitchProject}
-                  onCloseProject={handleCloseProject}
-                  onDetachProject={handleDetachProject}
-                  onReorderProjects={handleReorderProjects}
-                >
-                  <ProjectScreen
-                    key={activeProject.path}
-                    projectPath={activeProject.path}
-                    fileToOpen={fileToOpen}
-                    onFileOpened={() => setFileToOpen(null)}
-                    onRequestProjectClose={() => {
-                      void handleCloseProject(activeProject.id);
-                    }}
-                  />
-                </MainLayout>
-              </CommandRegistryProvider>
-            </PluginModalProvider>
-          ) : (
-            <WelcomeScreen onProjectOpen={handleProjectOpen} />
-          )}
-        </ProjectSwitchTransition>
-      </div>
-      <MCPApprovalDialog />
-      <AppNotificationStack />
-      {closeConfirmationDialog}
-    </div>
+    </MotionConfig>
   );
 };
 

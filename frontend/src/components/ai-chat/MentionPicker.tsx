@@ -75,14 +75,12 @@ export function MentionPicker({
   onSelect,
   onHover,
 }: MentionPickerProps) {
-  const reduceMotion = useReducedMotion();
-  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-    "popover",
-    {
+  const prefersReducedMotion = useReducedMotion();
+  const { markMotionStart, reduceMotion, surfaceStyle } =
+    useInteractiveSurfaceMotion("popover", {
       preserveTransform: true,
-      reduceMotion: Boolean(reduceMotion),
-    },
-  );
+      reduceMotion: Boolean(prefersReducedMotion),
+    });
   const groups = useMemo(() => groupedCandidates(candidates), [candidates]);
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   let flatIndex = -1;

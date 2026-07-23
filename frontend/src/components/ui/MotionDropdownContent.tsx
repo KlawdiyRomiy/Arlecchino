@@ -66,18 +66,16 @@ export const MotionDropdownContent = React.forwardRef<
     },
     ref,
   ) => {
-    const reduceMotion = useReducedMotion();
+    const prefersReducedMotion = useReducedMotion();
     const openedByPointerRef = React.useRef(
       wasOpenedFromRecentPointerTrigger(),
     );
     const escapeCloseRef = React.useRef(false);
-    const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-      "dropdown",
-      {
+    const { markMotionStart, reduceMotion, surfaceStyle } =
+      useInteractiveSurfaceMotion("dropdown", {
         preserveTransform: true,
-        reduceMotion: Boolean(reduceMotion),
-      },
-    );
+        reduceMotion: Boolean(prefersReducedMotion),
+      });
 
     const handleEscapeKeyDown: DropdownMenuContentProps["onEscapeKeyDown"] = (
       event,

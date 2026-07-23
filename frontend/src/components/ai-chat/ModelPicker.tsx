@@ -161,14 +161,12 @@ export function ModelPicker({
   const [oauthBusy, setOAuthBusy] = useState(false);
   const [oauthError, setOAuthError] = useState("");
   const [agentAuthRun, setAgentAuthRun] = useState<AIChatRun | null>(null);
-  const reduceMotion = useReducedMotion();
-  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-    "popover",
-    {
+  const prefersReducedMotion = useReducedMotion();
+  const { markMotionStart, reduceMotion, surfaceStyle } =
+    useInteractiveSurfaceMotion("popover", {
       preserveTransform: true,
-      reduceMotion: Boolean(reduceMotion),
-    },
-  );
+      reduceMotion: Boolean(prefersReducedMotion),
+    });
   const refreshedAfterOAuthRef = useRef("");
   const observedAgentAuthRunIdsRef = useRef<Set<string>>(new Set());
   const refreshedAgentAuthRunIdsRef = useRef<Set<string>>(new Set());

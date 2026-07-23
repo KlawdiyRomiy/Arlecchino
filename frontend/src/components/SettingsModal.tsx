@@ -1071,12 +1071,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const reduceSettingsMotion = useReducedMotion();
-  const { markMotionStart: markSettingsMotion, surfaceStyle } =
-    useInteractiveSurfaceMotion("dialog", {
-      preserveTransform: true,
-      reduceMotion: Boolean(reduceSettingsMotion),
-    });
+  const prefersReducedSettingsMotion = useReducedMotion();
+  const {
+    markMotionStart: markSettingsMotion,
+    reduceMotion: reduceSettingsMotion,
+    surfaceStyle,
+  } = useInteractiveSurfaceMotion("dialog", {
+    preserveTransform: true,
+    reduceMotion: Boolean(prefersReducedSettingsMotion),
+  });
   const [activeTab, setActiveTab] = useState<TabId>("appearance");
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(false);

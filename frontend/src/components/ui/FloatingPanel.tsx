@@ -23,7 +23,10 @@ import {
   X,
 } from "lucide-react";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
-import { usePerformanceStore } from "../../stores/performanceStore";
+import {
+  shouldReduceInteractiveMotion,
+  usePerformanceStore,
+} from "../../stores/performanceStore";
 import {
   getEffectiveUiScale,
   logicalToScreenPixels,
@@ -390,11 +393,12 @@ export const FloatingPanel = React.forwardRef<
   ) => {
     const effectiveUiScale = getEffectiveUiScale(uiScale);
     const prefersReducedMotion = useReducedMotion();
-    const reduceMotion = prefersReducedMotion;
-    const projectSwitchFrameMotion = useProjectSwitchFrameMotion();
-    const adaptivePerformancePaintConstrained = usePerformanceStore(
-      (state) => state.mode !== "normal",
+    const adaptivePerformancePaintConstrained = usePerformanceStore((state) =>
+      shouldReduceInteractiveMotion(state.snapshot),
     );
+    const reduceMotion =
+      Boolean(prefersReducedMotion) || adaptivePerformancePaintConstrained;
+    const projectSwitchFrameMotion = useProjectSwitchFrameMotion();
     const isPresent = useIsPresent();
     const [isResizing, setIsResizing] = useState(false);
     const [resizeEdge, setResizeEdge] = useState<string | null>(null);

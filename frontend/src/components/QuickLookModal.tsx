@@ -105,11 +105,12 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
   onClose,
   onExpand,
 }) => {
-  const { markMotionStart } = useInteractiveSurfaceMotion("modal", {
-    preserveTransform: true,
-    reduceMotion: true,
-  });
-  const reduceModalMotion = useReducedMotion();
+  const prefersReducedModalMotion = useReducedMotion();
+  const { markMotionStart, reduceMotion: reduceModalMotion } =
+    useInteractiveSurfaceMotion("modal", {
+      preserveTransform: true,
+      reduceMotion: Boolean(prefersReducedModalMotion),
+    });
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<HTMLDivElement>(null);

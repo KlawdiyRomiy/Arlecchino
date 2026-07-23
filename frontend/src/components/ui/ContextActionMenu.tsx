@@ -12,10 +12,7 @@ import {
 import { canUseShellCapability } from "../../shell/shellCapabilities";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { EventsOn } from "../../wails/runtime";
-import {
-  getInteractiveSurfaceMotionStyle,
-  markInteractiveSurfaceMotion,
-} from "./interactiveSurfaceMotion";
+import { useInteractiveSurfaceMotion } from "./interactiveSurfaceMotion";
 
 export interface ContextActionMenuItem {
   actionId?: string;
@@ -92,6 +89,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   onContextMenuCapture,
 }) => {
   const [open, setOpen] = React.useState(false);
+  const [nativeActionPending, setNativeActionPending] = React.useState(false);
   const resolveItems = React.useCallback(
     () => (typeof items === "function" ? items() : items),
     [items],
@@ -105,34 +103,42 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   );
   const actionRegistryRef = React.useRef(new Map<string, () => void>());
   const suppressNextOpenRef = React.useRef(false);
-  const markMenuMotion = React.useCallback(() => {
-    markInteractiveSurfaceMotion("menu");
-  }, []);
-  const closeAndRun = React.useCallback((action?: () => void) => {
-    markInteractiveSurfaceMotion("menu");
-    setOpen(false);
+  const {
+    markMotionStart: markMenuMotion,
+    reduceMotion,
+    surfaceStyle,
+  } = useInteractiveSurfaceMotion("menu", { preserveTransform: true });
+  const closeAndRun = React.useCallback(
+    (action?: () => void) => {
+      markMenuMotion();
+      setOpen(false);
 
-    if (!action) {
-      return;
-    }
+      if (!action) {
+        return;
+      }
 
-    window.setTimeout(() => {
-      action();
-    }, 0);
-  }, []);
-  const setContextMenuOpen = React.useCallback((nextOpen: boolean) => {
-    if (nextOpen && suppressNextOpenRef.current) {
-      suppressNextOpenRef.current = false;
-      return;
-    }
+      window.setTimeout(() => {
+        action();
+      }, 0);
+    },
+    [markMenuMotion],
+  );
+  const setContextMenuOpen = React.useCallback(
+    (nextOpen: boolean) => {
+      if (nextOpen && suppressNextOpenRef.current) {
+        suppressNextOpenRef.current = false;
+        return;
+      }
 
-    if (!nextOpen) {
-      suppressNextOpenRef.current = false;
-    }
+      if (!nextOpen) {
+        suppressNextOpenRef.current = false;
+      }
 
-    markInteractiveSurfaceMotion("menu");
-    setOpen(nextOpen);
-  }, []);
+      markMenuMotion();
+      setOpen(nextOpen);
+    },
+    [markMenuMotion],
+  );
 
   React.useEffect(() => {
     if (!open) {
@@ -196,6 +202,10 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   );
 
   React.useEffect(() => {
+    if (!nativeActionPending) {
+      return;
+    }
+
     return EventsOn<[NativeContextMenuActionPayload]>(
       NATIVE_CONTEXT_MENU_ACTION_EVENT,
       (payload) => {
@@ -208,10 +218,11 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
           return;
         }
 
+        setNativeActionPending(false);
         closeAndRun(actionRegistryRef.current.get(actionId));
       },
     );
-  }, [closeAndRun]);
+  }, [closeAndRun, nativeActionPending]);
 
   if (visibleItems.length === 0 && typeof items !== "function") {
     return <>{children}</>;
@@ -256,9 +267,10 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
 
     event.preventDefault();
     event.stopPropagation();
-    markInteractiveSurfaceMotion("menu");
+    markMenuMotion();
     setOpen(false);
     actionRegistryRef.current = actionRegistry;
+    setNativeActionPending(true);
 
     void openNativeContextMenu({
       menuInstanceId: menuInstanceIdRef.current,
@@ -292,10 +304,23 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
               }}
             >
               <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                transition={{ duration: 0.12, ease: "easeOut" }}
+                initial={
+                  reduceMotion
+                    ? { opacity: 0 }
+                    : { opacity: 0, scale: 0.95, y: -5 }
+                }
+                animate={
+                  reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }
+                }
+                exit={
+                  reduceMotion
+                    ? { opacity: 0 }
+                    : { opacity: 0, scale: 0.95, y: -5 }
+                }
+                transition={{
+                  duration: reduceMotion ? 0 : 0.12,
+                  ease: "easeOut",
+                }}
                 className="shell-context-menu-content"
                 data-shell-context-menu-id={menuInstanceIdRef.current}
                 data-shell-menu-content
@@ -303,9 +328,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                 style={
                   {
                     "--shell-context-menu-scale": String(uiScale),
-                    ...getInteractiveSurfaceMotionStyle({
-                      preserveTransform: true,
-                    }),
+                    ...surfaceStyle,
                   } as React.CSSProperties
                 }
               >

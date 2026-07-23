@@ -13,14 +13,12 @@ export function AIChatPopoverFrame({
   style,
   ...props
 }: AIChatPopoverFrameProps) {
-  const reduceMotion = useReducedMotion();
-  const { markMotionStart, surfaceStyle } = useInteractiveSurfaceMotion(
-    "popover",
-    {
+  const prefersReducedMotion = useReducedMotion();
+  const { markMotionStart, reduceMotion, surfaceStyle } =
+    useInteractiveSurfaceMotion("popover", {
       preserveTransform: true,
-      reduceMotion: Boolean(reduceMotion),
-    },
-  );
+      reduceMotion: Boolean(prefersReducedMotion),
+    });
   const handleAnimationStart = React.useCallback<
     NonNullable<HTMLMotionProps<"div">["onAnimationStart"]>
   >(
