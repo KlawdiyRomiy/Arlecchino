@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import { EventsOn } from "../wails/runtime";
+import {
+  parseProjectFilesystemChangeBatch,
+  PROJECT_ENTRIES_CHANGED_EVENT,
+} from "../utils/projectFilesystemEvents";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 import {
   getSurfaceRuntimeEventHistory,
@@ -280,6 +284,26 @@ export const bindIDEContextLedger = (): (() => void) => {
       type: "project.entry.deleted",
       title: "Project entry deleted",
       path: pathFromPayload(payload),
+    });
+  });
+
+  registerRuntimeEvent(cleanups, PROJECT_ENTRIES_CHANGED_EVENT, (payload) => {
+    const batch = parseProjectFilesystemChangeBatch(payload);
+    const total =
+      batch.created.length + batch.changed.length + batch.deleted.length;
+    if (total === 0) {
+      return;
+    }
+
+    recordIDEContextEvent({
+      scope: "filesystem",
+      type: "project.entries.changed",
+      title: "Project entries changed",
+      metadata: {
+        created: batch.created.length,
+        changed: batch.changed.length,
+        deleted: batch.deleted.length,
+      },
     });
   });
 

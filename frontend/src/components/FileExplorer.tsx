@@ -51,6 +51,11 @@ import {
   getProjectPathDirname,
   isSameOrChildPath,
 } from "../utils/projectPaths";
+import {
+  parseProjectFilesystemChangeBatch,
+  PROJECT_ENTRIES_CHANGED_EVENT,
+  type ProjectFilesystemChangeBatch,
+} from "../utils/projectFilesystemEvents";
 import { beginDragSelectionLock } from "../utils/dragSelectionLock";
 import { resolveExplorerNodeClickIntent } from "../utils/fileExplorerClickIntent";
 import {
@@ -328,6 +333,13 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentCreatedPathsRef = useRef<Map<string, number>>(new Map());
+  const pendingWatcherBatchRef = useRef<ProjectFilesystemChangeBatch>({
+    created: [],
+    changed: [],
+    deleted: [],
+  });
+  const watcherBatchFrameRef = useRef<number | null>(null);
+  const watcherBatchFlushActiveRef = useRef(false);
   const expandedPathsRef = useRef(expandedPaths);
   const projectPathRef = useRef(projectPath);
   const onFileOpenRef = useRef(onFileOpen);
@@ -856,10 +868,21 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
   };
 
-  const pruneDeletedPathFromTree = (deletedPath: string) => {
+  const pruneDeletedPathsFromTree = (deletedPaths: readonly string[]) => {
+    const normalizedDeletedPaths = Array.from(
+      new Set(deletedPaths.filter(Boolean)),
+    ).sort((left, right) => left.length - right.length);
+    if (normalizedDeletedPaths.length === 0) {
+      return;
+    }
+
     const pruneNodes = (nodes: FileNode[]): FileNode[] =>
       nodes.reduce<FileNode[]>((nextNodes, node) => {
-        if (isSameOrChildPath(node.path, deletedPath)) {
+        if (
+          normalizedDeletedPaths.some((deletedPath) =>
+            isSameOrChildPath(node.path, deletedPath),
+          )
+        ) {
           return nextNodes;
         }
 
@@ -878,6 +901,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     const updatedFiles = pruneNodes(filesRef.current);
     filesRef.current = updatedFiles;
     setFiles(updatedFiles);
+  };
+
+  const pruneDeletedPathFromTree = (deletedPath: string) => {
+    pruneDeletedPathsFromTree([deletedPath]);
   };
 
   const normalizeProjectPath = (path: string) =>
@@ -919,6 +946,35 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       }
     }
     return null;
+  };
+
+  const getRefreshTargetForFilesystemChange = (
+    entryPath: string,
+  ): string | null => {
+    const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+    if (
+      !currentProjectPath ||
+      !isSameOrChildPath(entryPath, currentProjectPath)
+    ) {
+      return null;
+    }
+
+    const parentPath = normalizeProjectPath(
+      getProjectPathDirname(entryPath) || currentProjectPath,
+    );
+    if (!parentPath) {
+      return null;
+    }
+    if (parentPath === currentProjectPath) {
+      return currentProjectPath;
+    }
+    if (!getIsExpanded(parentPath)) {
+      return null;
+    }
+
+    return findLoadedDirectory(filesRef.current, parentPath)
+      ? parentPath
+      : null;
   };
 
   const refreshCreatedEntryParent = async (createdPath: string) => {
@@ -993,6 +1049,139 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     return () => {
       unsubscribeFileCreated();
       unsubscribeProjectEntryCreated();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const scheduleFlush = () => {
+      if (
+        disposed ||
+        watcherBatchFrameRef.current !== null ||
+        watcherBatchFlushActiveRef.current
+      ) {
+        return;
+      }
+
+      watcherBatchFrameRef.current = window.requestAnimationFrame(() => {
+        watcherBatchFrameRef.current = null;
+        void flushWatcherBatch();
+      });
+    };
+
+    const flushWatcherBatch = async () => {
+      if (disposed || watcherBatchFlushActiveRef.current) {
+        return;
+      }
+
+      const pendingBatch = pendingWatcherBatchRef.current;
+      pendingWatcherBatchRef.current = {
+        created: [],
+        changed: [],
+        deleted: [],
+      };
+      if (
+        pendingBatch.created.length === 0 &&
+        pendingBatch.changed.length === 0 &&
+        pendingBatch.deleted.length === 0
+      ) {
+        return;
+      }
+
+      watcherBatchFlushActiveRef.current = true;
+      try {
+        const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+        if (!currentProjectPath) {
+          return;
+        }
+
+        const deletedPaths = pendingBatch.deleted
+          .map((entry) => normalizeProjectPath(entry.path))
+          .filter(
+            (path) =>
+              path.length > 0 && isSameOrChildPath(path, currentProjectPath),
+          );
+        const highlightedPath = highlightedPathRef.current;
+        if (
+          highlightedPath &&
+          deletedPaths.some((deletedPath) =>
+            isSameOrChildPath(highlightedPath, deletedPath),
+          )
+        ) {
+          setHighlightedPath(null);
+        }
+        pruneDeletedPathsFromTree(deletedPaths);
+
+        const refreshTargets = new Set<string>();
+        const collectRefreshTarget = (path: string) => {
+          const target = getRefreshTargetForFilesystemChange(path);
+          if (target) {
+            refreshTargets.add(target);
+          }
+        };
+        deletedPaths.forEach(collectRefreshTarget);
+        pendingBatch.changed.forEach((path) =>
+          collectRefreshTarget(normalizeProjectPath(path)),
+        );
+        pendingBatch.created.forEach((entry) => {
+          if (!wasRecentlyHandled(entry.path, entry.isDirectory)) {
+            collectRefreshTarget(normalizeProjectPath(entry.path));
+          }
+        });
+
+        const minimalRefreshTargets = Array.from(refreshTargets)
+          .sort((left, right) => left.length - right.length)
+          .filter(
+            (path, index, paths) =>
+              !paths
+                .slice(0, index)
+                .some((parentPath) => isSameOrChildPath(path, parentPath)),
+          );
+        for (const refreshTarget of minimalRefreshTargets) {
+          if (disposed) {
+            return;
+          }
+          await refreshDirectoryPath(refreshTarget, {
+            preserveExpansion: true,
+          });
+        }
+      } finally {
+        watcherBatchFlushActiveRef.current = false;
+        scheduleFlush();
+      }
+    };
+
+    const unsubscribe = EventsOn(PROJECT_ENTRIES_CHANGED_EVENT, (payload) => {
+      const batch = parseProjectFilesystemChangeBatch(payload);
+      if (
+        batch.created.length === 0 &&
+        batch.changed.length === 0 &&
+        batch.deleted.length === 0
+      ) {
+        return;
+      }
+
+      pendingWatcherBatchRef.current = {
+        created: [...pendingWatcherBatchRef.current.created, ...batch.created],
+        changed: [...pendingWatcherBatchRef.current.changed, ...batch.changed],
+        deleted: [...pendingWatcherBatchRef.current.deleted, ...batch.deleted],
+      };
+      scheduleFlush();
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+      if (watcherBatchFrameRef.current !== null) {
+        window.cancelAnimationFrame(watcherBatchFrameRef.current);
+        watcherBatchFrameRef.current = null;
+      }
+      pendingWatcherBatchRef.current = {
+        created: [],
+        changed: [],
+        deleted: [],
+      };
     };
   }, []);
 

@@ -109,6 +109,10 @@ import {
   isSameOrChildPath,
 } from "../../utils/projectPaths";
 import {
+  parseProjectFilesystemChangeBatch,
+  PROJECT_ENTRIES_CHANGED_EVENT,
+} from "../../utils/projectFilesystemEvents";
+import {
   isTerminalFocusedElement,
   isTerminalShortcutContext as hasTerminalShortcutContext,
   shouldBypassGlobalFindShortcuts,
@@ -5310,12 +5314,34 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   useEffect(() => {
-    const unsubscribe = EventsOn(
+    const unsubscribeFileChanged = EventsOn(
       "file:changed",
       handleCodePanelExternalFileChange,
     );
-    return unsubscribe;
-  }, [handleCodePanelExternalFileChange]);
+    const unsubscribeProjectEntriesChanged = EventsOn(
+      PROJECT_ENTRIES_CHANGED_EVENT,
+      (payload) => {
+        const changedPaths = new Set(
+          parseProjectFilesystemChangeBatch(payload).changed.map(
+            normalizeProjectPath,
+          ),
+        );
+        if (changedPaths.size === 0) {
+          return;
+        }
+
+        codePanelTabsRef.current.forEach((tab) => {
+          if (changedPaths.has(normalizeProjectPath(tab.path))) {
+            void refreshCodePanelPathFromDisk(tab.path);
+          }
+        });
+      },
+    );
+    return () => {
+      unsubscribeFileChanged();
+      unsubscribeProjectEntriesChanged();
+    };
+  }, [handleCodePanelExternalFileChange, refreshCodePanelPathFromDisk]);
 
   useEffect(() => {
     const handlePatchMutation = (event: unknown) => {
@@ -5752,62 +5778,78 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       },
     );
 
+    const applyDeletedProjectEntry = (payload: ProjectEntryDeletedEvent) => {
+      const deletedPath = normalizeProjectPath(payload?.path ?? "");
+      if (
+        !deletedPath ||
+        !isSameOrChildPath(deletedPath, normalizedProjectPath)
+      ) {
+        return;
+      }
+
+      pruneExplorerPathPrefix(deletedPath);
+      closeEditorTabPaths(deletedPath, { preserveDirty: true });
+      prunePathDiagnostics(deletedPath);
+
+      const editorStore = useEditorStore.getState();
+      const isDirtyCodePanelPath = (path: string): boolean => {
+        const normalizedPath = normalizeProjectPath(path);
+        if (!normalizedPath) {
+          return false;
+        }
+        return (
+          editorStore.tabs.get(makeEditorTabId(normalizedPath))?.isDirty ===
+          true
+        );
+      };
+
+      const removedCodePanelTabs = codePanelTabsRef.current.filter(
+        (tab) =>
+          isSameOrChildPath(tab.path, deletedPath) &&
+          !isDirtyCodePanelPath(tab.path),
+      );
+      removedCodePanelTabs.forEach((tab) => releaseEditorBackingTab(tab.path));
+      setCodePanelTabs((currentTabs) =>
+        currentTabs.filter(
+          (tab) =>
+            !isSameOrChildPath(tab.path, deletedPath) ||
+            isDirtyCodePanelPath(tab.path),
+        ),
+      );
+      setActiveCodePanelPath((currentPath) =>
+        currentPath &&
+        isSameOrChildPath(currentPath, deletedPath) &&
+        !isDirtyCodePanelPath(currentPath)
+          ? null
+          : currentPath,
+      );
+      pruneProjectEntryDialogs(deletedPath);
+    };
+
     const unsubscribeDeleted = EventsOn(
       "project:entry:deleted",
-      (payload: ProjectEntryDeletedEvent) => {
-        const deletedPath = normalizeProjectPath(payload?.path ?? "");
-        if (
-          !deletedPath ||
-          !isSameOrChildPath(deletedPath, normalizedProjectPath)
-        ) {
-          return;
-        }
-
-        pruneExplorerPathPrefix(deletedPath);
-        closeEditorTabPaths(deletedPath, { preserveDirty: true });
-        prunePathDiagnostics(deletedPath);
-
-        const editorStore = useEditorStore.getState();
-        const isDirtyCodePanelPath = (path: string): boolean => {
-          const normalizedPath = normalizeProjectPath(path);
-          if (!normalizedPath) {
-            return false;
-          }
-          return (
-            editorStore.tabs.get(makeEditorTabId(normalizedPath))?.isDirty ===
-            true
+      applyDeletedProjectEntry,
+    );
+    const unsubscribeProjectEntriesChanged = EventsOn(
+      PROJECT_ENTRIES_CHANGED_EVENT,
+      (payload) => {
+        const deletedEntries = parseProjectFilesystemChangeBatch(payload)
+          .deleted.slice()
+          .sort((left, right) => left.path.length - right.path.length)
+          .filter(
+            (entry, index, entries) =>
+              !entries
+                .slice(0, index)
+                .some((parent) => isSameOrChildPath(entry.path, parent.path)),
           );
-        };
-
-        const removedCodePanelTabs = codePanelTabsRef.current.filter(
-          (tab) =>
-            isSameOrChildPath(tab.path, deletedPath) &&
-            !isDirtyCodePanelPath(tab.path),
-        );
-        removedCodePanelTabs.forEach((tab) =>
-          releaseEditorBackingTab(tab.path),
-        );
-        setCodePanelTabs((currentTabs) =>
-          currentTabs.filter(
-            (tab) =>
-              !isSameOrChildPath(tab.path, deletedPath) ||
-              isDirtyCodePanelPath(tab.path),
-          ),
-        );
-        setActiveCodePanelPath((currentPath) =>
-          currentPath &&
-          isSameOrChildPath(currentPath, deletedPath) &&
-          !isDirtyCodePanelPath(currentPath)
-            ? null
-            : currentPath,
-        );
-        pruneProjectEntryDialogs(deletedPath);
+        deletedEntries.forEach(applyDeletedProjectEntry);
       },
     );
 
     return () => {
       unsubscribeRenamed();
       unsubscribeDeleted();
+      unsubscribeProjectEntriesChanged();
     };
   }, [
     activeProjectPath,

@@ -27,6 +27,10 @@ import {
   isSameOrChildPath,
   projectPathsEqualByIdentity,
 } from "../utils/projectPaths";
+import {
+  parseProjectFilesystemChangeBatch,
+  PROJECT_ENTRIES_CHANGED_EVENT,
+} from "../utils/projectFilesystemEvents";
 import { usePerformanceStore } from "./performanceStore";
 import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
@@ -97,6 +101,7 @@ interface GitStoreState {
   refreshFileMarkers: (filePath: string, force?: boolean) => Promise<void>;
   clearFileMarkers: (filePath?: string) => void;
   invalidateFile: (filePath: string) => void;
+  invalidateFiles: (filePaths: readonly string[]) => void;
 }
 
 const emptyBranchInfo = (): GitBranchInfo => ({
@@ -471,6 +476,24 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
     },
   );
 
+  const unsubscribeProjectEntriesChanged = EventsOn(
+    PROJECT_ENTRIES_CHANGED_EVENT,
+    (value) => {
+      const batch = parseProjectFilesystemChangeBatch(value);
+      const changedPaths = [
+        ...batch.created.map((entry) => entry.path),
+        ...batch.changed,
+        ...batch.deleted.map((entry) => entry.path),
+      ].filter(shouldRefreshForPath);
+      if (changedPaths.length === 0) {
+        return;
+      }
+
+      get().invalidateFiles(changedPaths);
+      scheduleRefresh(get, contentFileRefreshDebounceMs);
+    },
+  );
+
   const unsubscribeGitStatus = EventsOn("ide:git:status", () => {
     scheduleRefresh(get);
   });
@@ -483,6 +506,7 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
     unsubscribeProjectEntryCreated();
     unsubscribeProjectEntryRenamed();
     unsubscribeProjectEntryDeleted();
+    unsubscribeProjectEntriesChanged();
     unsubscribeGitStatus();
   };
 };
@@ -1252,21 +1276,35 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   },
 
   invalidateFile: (filePath) => {
+    get().invalidateFiles([filePath]);
+  },
+
+  invalidateFiles: (filePaths) => {
     const projectPath = get().projectPath;
-    if (!projectPath || !filePath) {
+    if (!projectPath || filePaths.length === 0) {
       return;
     }
-    const relativePath = normalizePathForGit(projectPath, filePath);
-    const markerKey = relativePath || filePath;
-    set((state) => ({
-      fileRevisions: {
-        ...state.fileRevisions,
-        [markerKey]: (state.fileRevisions[markerKey] ?? 0) + 1,
-      },
-      markerUpdatedAt: {
-        ...state.markerUpdatedAt,
-        [markerKey]: 0,
-      },
-    }));
+
+    const markerKeys = new Set<string>();
+    for (const filePath of filePaths) {
+      if (!filePath) {
+        continue;
+      }
+      const relativePath = normalizePathForGit(projectPath, filePath);
+      markerKeys.add(relativePath || filePath);
+    }
+    if (markerKeys.size === 0) {
+      return;
+    }
+
+    set((state) => {
+      const fileRevisions = { ...state.fileRevisions };
+      const markerUpdatedAt = { ...state.markerUpdatedAt };
+      markerKeys.forEach((markerKey) => {
+        fileRevisions[markerKey] = (fileRevisions[markerKey] ?? 0) + 1;
+        markerUpdatedAt[markerKey] = 0;
+      });
+      return { fileRevisions, markerUpdatedAt };
+    });
   },
 }));

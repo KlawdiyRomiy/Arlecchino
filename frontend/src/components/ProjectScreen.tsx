@@ -59,6 +59,10 @@ import {
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
 import {
+  parseProjectFilesystemChangeBatch,
+  PROJECT_ENTRIES_CHANGED_EVENT,
+} from "../utils/projectFilesystemEvents";
+import {
   EDITOR_FILE_LOADING_DELAY_MS,
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
@@ -3245,12 +3249,59 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       });
     });
 
+    const unsubscribeProjectEntriesChanged = EventsOn(
+      PROJECT_ENTRIES_CHANGED_EVENT,
+      (payload) => {
+        const batch = parseProjectFilesystemChangeBatch(payload);
+        const deletedPaths = batch.deleted
+          .map((entry) => normalizeProjectPath(entry.path))
+          .filter(
+            (path) =>
+              path.length > 0 && isSameOrChildPath(path, normalizedProjectPath),
+          )
+          .sort((left, right) => left.length - right.length)
+          .filter(
+            (path, index, paths) =>
+              !paths
+                .slice(0, index)
+                .some((parentPath) => isSameOrChildPath(path, parentPath)),
+          );
+        deletedPaths.forEach(applyDeletedProjectEntry);
+
+        const changedPaths = new Set(
+          batch.changed
+            .map(normalizeProjectPath)
+            .filter(
+              (path) =>
+                path.length > 0 &&
+                isSameOrChildPath(path, normalizedProjectPath),
+            ),
+        );
+        if (changedPaths.size === 0) {
+          return;
+        }
+
+        tabsRef.current
+          .filter(
+            (tab) =>
+              !tab.isDirty &&
+              Array.from(changedPaths).some((changedPath) =>
+                aiInlinePatchPathMatches(tab.path, changedPath, projectPath),
+              ),
+          )
+          .forEach((tab) => {
+            void refreshAppliedPatchTab(tab);
+          });
+      },
+    );
+
     return () => {
       unsubscribeRenamed();
       unsubscribeDeleted();
       unsubscribePatchApplied();
       unsubscribePatchRolledBack();
       unsubscribeFileChanged();
+      unsubscribeProjectEntriesChanged();
     };
   }, [
     currentProjectSessionId,
