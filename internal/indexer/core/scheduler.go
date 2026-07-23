@@ -39,6 +39,7 @@ type SchedulerPolicy struct {
 	Mode                SchedulerMode
 	BackgroundJobDelay  time.Duration
 	ProgressMinInterval time.Duration
+	WorkerLimit         int
 }
 
 type SchedulerStats struct {
@@ -67,6 +68,7 @@ func ConstrainedSchedulerPolicy() SchedulerPolicy {
 		Mode:                SchedulerModeConstrained,
 		BackgroundJobDelay:  3 * time.Millisecond,
 		ProgressMinInterval: 500 * time.Millisecond,
+		WorkerLimit:         3,
 	}
 }
 
@@ -75,6 +77,7 @@ func CriticalSchedulerPolicy() SchedulerPolicy {
 		Mode:                SchedulerModeCritical,
 		BackgroundJobDelay:  8 * time.Millisecond,
 		ProgressMinInterval: 750 * time.Millisecond,
+		WorkerLimit:         2,
 	}
 }
 
@@ -121,7 +124,7 @@ func (s *Scheduler) Enqueue(job Job) {
 		job.EnqueuedAt = time.Now()
 	}
 	heap.Push(s.queue, job)
-	s.cond.Signal()
+	s.cond.Broadcast()
 }
 
 func (s *Scheduler) Start() {
@@ -135,7 +138,7 @@ func (s *Scheduler) Start() {
 	s.mu.Unlock()
 
 	for i := 0; i < s.workers; i++ {
-		go s.worker()
+		go s.worker(i)
 	}
 }
 
@@ -172,6 +175,7 @@ func (s *Scheduler) PendingCount() int {
 func (s *Scheduler) SetPolicy(policy SchedulerPolicy) {
 	s.mu.Lock()
 	s.policy = normalizeSchedulerPolicy(policy)
+	s.cond.Broadcast()
 	s.mu.Unlock()
 }
 
@@ -186,16 +190,24 @@ func (s *Scheduler) Stats() SchedulerStats {
 	defer s.mu.Unlock()
 	return SchedulerStats{
 		Pending:              s.queue.Len(),
-		Workers:              s.workers,
+		Workers:              s.activeWorkerLimitLocked(),
 		Mode:                 s.policy.Mode,
 		BackgroundJobDelayMs: int(s.policy.BackgroundJobDelay / time.Millisecond),
 	}
 }
 
-func (s *Scheduler) worker() {
+func (s *Scheduler) activeWorkerLimitLocked() int {
+	limit := s.policy.WorkerLimit
+	if limit <= 0 || limit > s.workers {
+		return s.workers
+	}
+	return limit
+}
+
+func (s *Scheduler) worker(workerIndex int) {
 	for {
 		s.mu.Lock()
-		for s.queue.Len() == 0 {
+		for s.queue.Len() == 0 || workerIndex >= s.activeWorkerLimitLocked() {
 			select {
 			case <-s.stopCh:
 				s.mu.Unlock()
