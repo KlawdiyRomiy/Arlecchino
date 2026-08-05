@@ -17,6 +17,7 @@ import (
 type DefinitionResult struct {
 	Path        string `json:"path"`
 	Line        int    `json:"line"`
+	Char        int    `json:"char"`
 	Context     string `json:"context"`
 	DisplayPath string `json:"displayPath"`
 }
@@ -92,6 +93,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 			results = append(results, DefinitionResult{
 				Path:        r.Path,
 				Line:        r.Line,
+				Char:        r.Char,
 				Context:     "LSP Definition",
 				DisplayPath: getDisplayPath(r.Path, projectPath),
 			})

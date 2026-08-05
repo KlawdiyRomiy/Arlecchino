@@ -261,6 +261,7 @@ const callIDToMethod = new Map<number, string>([
   [1128153851, "RenameProjectEntry"],
   [2378749434, "ResizeTerminal"],
   [3420650961, "ResolveEditorCompletion"],
+  [722507454, "ResolveRelatedFilesAtPosition"],
   [3339885415, "RestartLSPServer"],
   [3073650660, "RevealProjectEntry"],
   [3088116603, "RouteCache"],

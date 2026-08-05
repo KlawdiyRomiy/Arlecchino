@@ -396,6 +396,9 @@ func (s *Store) QueryEdges(query EdgeQuery) ([]Edge, error) {
 	if query.FilePath != "" {
 		tx = tx.Where("file_path = ?", query.FilePath)
 	}
+	if query.Line > 0 {
+		tx = tx.Where("line = ?", query.Line)
+	}
 	if query.Limit > 0 {
 		tx = tx.Limit(query.Limit)
 	}
@@ -808,6 +811,7 @@ type EdgeQuery struct {
 	ToSymbol   string
 	Kind       EdgeKind
 	FilePath   string
+	Line       int
 	Limit      int
 }
 

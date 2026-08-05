@@ -83,6 +83,7 @@ export {
     ProjectWindowLaunchResult,
     ProjectWindowSessionPayload,
     RecentProjectIndexStatus,
+    RelatedFileAtPositionResult,
     ResultItemJS,
     SearchResult,
     ShellCapabilitiesSnapshot,

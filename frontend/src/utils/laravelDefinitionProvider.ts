@@ -1,8 +1,15 @@
-import { GoToDefinition, LSPGoToDefinition } from "../wails/app";
+import {
+  GoToDefinition,
+  LSPGoToDefinition,
+  ResolveRelatedFilesAtPosition,
+} from "../wails/app";
 
 export interface DefinitionItem {
   path: string;
   line?: number;
+  column?: number;
+  kind: "definition" | "relation";
+  relation?: string;
   context?: string;
   displayPath?: string;
 }
@@ -76,15 +83,10 @@ const canTryLSPDefinition = (language?: string): boolean => {
 const isLikelyCodeSymbol = (wordText: string): boolean =>
   /[A-Za-z_$]/.test(wordText) && /^[\w$@#:.\\-]+$/.test(wordText);
 
-/**
- * Find definitions using backend Go to Definition
- * Uses indexed data for fast lookup with LSP fallback
- */
 export async function findDefinitions(
   wordText: string,
   beforeWord: string,
   afterWord: string,
-  projectPath: string,
   filePath: string,
   content: string,
   line: number,
@@ -96,6 +98,7 @@ export async function findDefinitions(
     lowerFilePath.endsWith(".blade.php") ||
     isLaravelDefinitionContext(beforeWord, afterWord);
 
+  let legacyOwnedLSP = false;
   try {
     if (prefersLegacyDefinition) {
       const legacyResults = await GoToDefinition(
@@ -107,11 +110,14 @@ export async function findDefinitions(
         beforeWord,
         afterWord,
       );
+      legacyOwnedLSP = true;
 
       if (legacyResults && legacyResults.length > 0) {
         return legacyResults.map((r) => ({
           path: r.path,
           line: r.line,
+          column: r.char + 1,
+          kind: "definition" as const,
           context: r.context,
           displayPath: r.displayPath,
         }));
@@ -121,28 +127,52 @@ export async function findDefinitions(
     console.warn("Legacy GoToDefinition error:", error);
   }
 
-  try {
-    const lspLine = line > 0 ? line - 1 : 0;
-    const lspColumn = column < 0 ? 0 : column;
-    const lspResults = await LSPGoToDefinition(
-      filePath,
-      content,
-      lspLine,
-      lspColumn,
-    );
-    if (lspResults && lspResults.length > 0) {
-      return lspResults.map((r) => ({
-        path: r.path,
-        line: r.line,
-        context: "LSP Definition",
-        displayPath: r.path,
-      }));
+  if (!legacyOwnedLSP) {
+    try {
+      const lspLine = line > 0 ? line - 1 : 0;
+      const lspColumn = column < 0 ? 0 : column;
+      const lspResults = await LSPGoToDefinition(
+        filePath,
+        content,
+        lspLine,
+        lspColumn,
+      );
+      if (lspResults && lspResults.length > 0) {
+        return lspResults.map((r) => ({
+          path: r.path,
+          line: r.line,
+          column: r.char + 1,
+          kind: "definition" as const,
+          context: "LSP Definition",
+          displayPath: r.path,
+        }));
+      }
+    } catch (error) {
+      console.warn("LSPGoToDefinition error:", error);
     }
-  } catch (error) {
-    console.warn("LSPGoToDefinition error:", error);
   }
 
-  return [];
+  try {
+    const relatedResults = await ResolveRelatedFilesAtPosition(
+      filePath,
+      content,
+      line,
+      column < 0 ? 0 : column,
+      wordText,
+    );
+    return relatedResults.map((result) => ({
+      path: result.path,
+      line: result.line,
+      column: result.char + 1,
+      kind: "relation" as const,
+      relation: result.relation,
+      context: `Related file · ${result.relation}`,
+      displayPath: result.displayPath,
+    }));
+  } catch (error) {
+    console.warn("ResolveRelatedFilesAtPosition error:", error);
+    return [];
+  }
 }
 
 function isLaravelDefinitionContext(

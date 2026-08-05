@@ -714,6 +714,7 @@ export class CompletionRangeJSON {
 export class DefinitionResult {
     "path": string;
     "line": number;
+    "char": number;
     "context": string;
     "displayPath": string;
 
@@ -724,6 +725,9 @@ export class DefinitionResult {
         }
         if (!("line" in $$source)) {
             this["line"] = 0;
+        }
+        if (!("char" in $$source)) {
+            this["char"] = 0;
         }
         if (!("context" in $$source)) {
             this["context"] = "";
@@ -2972,6 +2976,43 @@ export class RecentProjectIndexStatus {
     static createFrom($$source: any = {}): RecentProjectIndexStatus {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new RecentProjectIndexStatus($$parsedSource as Partial<RecentProjectIndexStatus>);
+    }
+}
+
+export class RelatedFileAtPositionResult {
+    "path": string;
+    "line": number;
+    "char": number;
+    "relation": string;
+    "displayPath": string;
+
+    /** Creates a new RelatedFileAtPositionResult instance. */
+    constructor($$source: Partial<RelatedFileAtPositionResult> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("line" in $$source)) {
+            this["line"] = 0;
+        }
+        if (!("char" in $$source)) {
+            this["char"] = 0;
+        }
+        if (!("relation" in $$source)) {
+            this["relation"] = "";
+        }
+        if (!("displayPath" in $$source)) {
+            this["displayPath"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RelatedFileAtPositionResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): RelatedFileAtPositionResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RelatedFileAtPositionResult($$parsedSource as Partial<RelatedFileAtPositionResult>);
     }
 }
 

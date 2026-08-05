@@ -11,6 +11,9 @@ import {
 export interface DefinitionItem {
   path: string;
   line?: number;
+  column?: number;
+  kind: "definition" | "relation";
+  relation?: string;
   context?: string;
   displayPath?: string;
 }
@@ -20,12 +23,17 @@ interface DefinitionChooserMenuProps {
   x: number;
   y: number;
   items: DefinitionItem[];
-  onSelect: (path: string, line?: number) => void;
+  onSelect: (item: DefinitionItem) => void;
   onClose: () => void;
 }
 
 const definitionItemKey = (item: DefinitionItem): string =>
-  `${item.path}:${item.line ?? ""}:${item.displayPath ?? ""}:${item.context ?? ""}`;
+  `${item.kind}:${item.path}:${item.line ?? ""}:${item.column ?? ""}:${item.relation ?? ""}`;
+
+export const definitionChooserTitle = (items: DefinitionItem[]): string =>
+  items.every((item) => item.kind === "relation")
+    ? "Choose Related File"
+    : "Choose Definition";
 
 export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
   isOpen,
@@ -36,12 +44,15 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
   onClose,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
+  const firstItemRef = useRef<HTMLButtonElement>(null);
   const markInteractiveMotion = React.useCallback(() => {
     markInteractiveSurfaceMotion("menu");
   }, []);
 
   useEffect(() => {
     if (!isOpen) return;
+
+    firstItemRef.current?.focus();
 
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -70,6 +81,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
 
   if (!isOpen || typeof document === "undefined") return null;
 
+  const title = definitionChooserTitle(items);
   const viewportMargin = 12;
   const screenWidth = window.innerWidth;
   const screenHeight = window.innerHeight;
@@ -95,6 +107,8 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
   return createPortal(
     <motion.div
       ref={menuRef}
+      role="dialog"
+      aria-label={title}
       initial={{ opacity: 0, scale: 0.95, y: 10 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -127,16 +141,17 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
           color: "var(--text-primary)",
         }}
       >
-        Choose Definition
+        {title}
       </div>
 
       <div style={{ overflowY: "auto", padding: "6px" }}>
-        {items.map((item) => (
+        {items.map((item, index) => (
           <button
+            ref={index === 0 ? firstItemRef : undefined}
             type="button"
             key={definitionItemKey(item)}
             onClick={() => {
-              onSelect(item.path, item.line);
+              onSelect(item);
               onClose();
             }}
             style={{

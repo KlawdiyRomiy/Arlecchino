@@ -38,6 +38,7 @@ interface QuickLookModalProps {
   content: string;
   language: string;
   highlightLine?: number;
+  highlightColumn?: number;
   onClose: () => void;
   onExpand: () => void;
 }
@@ -102,6 +103,7 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
   content,
   language,
   highlightLine,
+  highlightColumn,
   onClose,
   onExpand,
 }) => {
@@ -185,8 +187,12 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
 
       const lineNum = Math.min(highlightLine, view.state.doc.lines);
       const line = view.state.doc.line(lineNum);
+      const column = Math.min(
+        Math.max(1, highlightColumn ?? 1),
+        line.length + 1,
+      );
       view.dispatch({
-        selection: { anchor: line.from },
+        selection: { anchor: line.from + column - 1 },
         scrollIntoView: true,
       });
 
@@ -194,7 +200,7 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
     }, 100);
 
     return () => clearTimeout(applyHighlight);
-  }, [highlightLine, isOpen, content]);
+  }, [highlightColumn, highlightLine, isOpen, content]);
 
   useEffect(() => {
     if (!isResizing) return;

@@ -1616,6 +1616,12 @@ export function ResolveEditorCompletion(req: $models.EditorCompletionResolveRequ
     });
 }
 
+export function ResolveRelatedFilesAtPosition(filePath: string, content: string, line: number, character: number, word: string): $CancellablePromise<$models.RelatedFileAtPositionResult[]> {
+    return $Call.ByID(722507454, filePath, content, line, character, word).then(($result: any) => {
+        return $$createType156($result);
+    });
+}
+
 /**
  * RestartLSPServer force-restarts a specific LSP server.
  */
@@ -1637,19 +1643,19 @@ export function RouteCache(): $CancellablePromise<string> {
 
 export function RunBackgroundShellAction(actionID: string): $CancellablePromise<$models.BackgroundShellActionResult> {
     return $Call.ByID(2676301637, actionID).then(($result: any) => {
-        return $$createType155($result);
+        return $$createType157($result);
     });
 }
 
 export function RunDependencyFlatPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.FlatExecuteResult> {
     return $Call.ByID(2063425320, req).then(($result: any) => {
-        return $$createType156($result);
+        return $$createType158($result);
     });
 }
 
 export function RunDependencyPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.ExecuteResult> {
     return $Call.ByID(4132946231, req).then(($result: any) => {
-        return $$createType157($result);
+        return $$createType159($result);
     });
 }
 
@@ -1666,13 +1672,13 @@ export function RunMigrate(): $CancellablePromise<void> {
 
 export function RunPackagedOSIntegrationAction(actionID: string): $CancellablePromise<$models.PackagedOSActionResult> {
     return $Call.ByID(1943779455, actionID).then(($result: any) => {
-        return $$createType158($result);
+        return $$createType160($result);
     });
 }
 
 export function RunWindowLeaseAction(actionID: string): $CancellablePromise<$models.WindowLeaseActionResult> {
     return $Call.ByID(1655910089, actionID).then(($result: any) => {
-        return $$createType159($result);
+        return $$createType161($result);
     });
 }
 
@@ -1688,7 +1694,7 @@ export function ScheduleRun(): $CancellablePromise<string> {
 
 export function SearchClasses(prefix: string): $CancellablePromise<$models.ClassResult[]> {
     return $Call.ByID(874301014, prefix).then(($result: any) => {
-        return $$createType160($result);
+        return $$createType162($result);
     });
 }
 
@@ -1709,7 +1715,7 @@ export function SearchFiles(pattern: string): $CancellablePromise<$models.Result
  */
 export function SearchInProject(query: string, caseSensitive: boolean, useRegex: boolean, wholeWord: boolean): $CancellablePromise<$models.SearchResult[]> {
     return $Call.ByID(2391516234, query, caseSensitive, useRegex, wholeWord).then(($result: any) => {
-        return $$createType162($result);
+        return $$createType164($result);
     });
 }
 
@@ -1769,7 +1775,7 @@ export function StorageLink(): $CancellablePromise<string> {
 
 export function SuggestCommand(input: string): $CancellablePromise<$models.CommandSuggestion[]> {
     return $Call.ByID(141691869, input).then(($result: any) => {
-        return $$createType164($result);
+        return $$createType166($result);
     });
 }
 
@@ -1783,7 +1789,7 @@ export function SyncApplicationMenuState(payload: $models.ShellMenuStatePayload)
 
 export function SyncProjectDependencies(mode: string): $CancellablePromise<{ [_ in string]?: string }> {
     return $Call.ByID(3713092259, mode).then(($result: any) => {
-        return $$createType165($result);
+        return $$createType167($result);
     });
 }
 
@@ -1797,7 +1803,7 @@ export function ToggleNativeFullscreen(): $CancellablePromise<void> {
 
 export function TrashProjectEntries(req: $models.ProjectEntryTrashRequest): $CancellablePromise<$models.ProjectEntryTrashResult> {
     return $Call.ByID(3756043887, req).then(($result: any) => {
-        return $$createType166($result);
+        return $$createType168($result);
     });
 }
 
@@ -1832,7 +1838,7 @@ export function UpdatePrediction(input: string): $CancellablePromise<void> {
 
 export function ValidateEnvironment(): $CancellablePromise<{ [_ in string]?: boolean }> {
     return $Call.ByID(3496235921).then(($result: any) => {
-        return $$createType167($result);
+        return $$createType169($result);
     });
 }
 
@@ -2008,16 +2014,18 @@ const $$createType151 = $models.EditorFilePreview.createFrom;
 const $$createType152 = $models.EditorVisualFile.createFrom;
 const $$createType153 = $models.ProjectEntryRenameResult.createFrom;
 const $$createType154 = $models.EditorCompletionResolveResult.createFrom;
-const $$createType155 = $models.BackgroundShellActionResult.createFrom;
-const $$createType156 = depsync$0.FlatExecuteResult.createFrom;
-const $$createType157 = depsync$0.ExecuteResult.createFrom;
-const $$createType158 = $models.PackagedOSActionResult.createFrom;
-const $$createType159 = $models.WindowLeaseActionResult.createFrom;
-const $$createType160 = $Create.Array($$createType145);
-const $$createType161 = $models.SearchResult.createFrom;
-const $$createType162 = $Create.Array($$createType161);
-const $$createType163 = $models.CommandSuggestion.createFrom;
+const $$createType155 = $models.RelatedFileAtPositionResult.createFrom;
+const $$createType156 = $Create.Array($$createType155);
+const $$createType157 = $models.BackgroundShellActionResult.createFrom;
+const $$createType158 = depsync$0.FlatExecuteResult.createFrom;
+const $$createType159 = depsync$0.ExecuteResult.createFrom;
+const $$createType160 = $models.PackagedOSActionResult.createFrom;
+const $$createType161 = $models.WindowLeaseActionResult.createFrom;
+const $$createType162 = $Create.Array($$createType145);
+const $$createType163 = $models.SearchResult.createFrom;
 const $$createType164 = $Create.Array($$createType163);
-const $$createType165 = $Create.Map($Create.Any, $Create.Any);
-const $$createType166 = $models.ProjectEntryTrashResult.createFrom;
+const $$createType165 = $models.CommandSuggestion.createFrom;
+const $$createType166 = $Create.Array($$createType165);
 const $$createType167 = $Create.Map($Create.Any, $Create.Any);
+const $$createType168 = $models.ProjectEntryTrashResult.createFrom;
+const $$createType169 = $Create.Map($Create.Any, $Create.Any);

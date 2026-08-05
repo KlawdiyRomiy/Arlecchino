@@ -317,9 +317,36 @@ type CompletionCapabilities struct {
 	TextDocumentSync  any
 }
 
+type DefinitionProviderCapability bool
+
+func (capability *DefinitionProviderCapability) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	switch raw {
+	case "", "null", "false":
+		*capability = false
+		return nil
+	case "true":
+		*capability = true
+		return nil
+	}
+
+	var options map[string]json.RawMessage
+	if err := json.Unmarshal(data, &options); err == nil && options != nil {
+		*capability = true
+		return nil
+	}
+	*capability = false
+	return nil
+}
+
+func (capability DefinitionProviderCapability) Enabled() bool {
+	return bool(capability)
+}
+
 type ServerCapabilities struct {
 	TextDocumentSync   any                           `json:"textDocumentSync,omitempty"`
 	CompletionProvider *CompletionProviderCapability `json:"completionProvider,omitempty"`
+	DefinitionProvider DefinitionProviderCapability  `json:"definitionProvider,omitempty"`
 }
 
 type InitializeResult struct {
@@ -330,6 +357,12 @@ type InitializeResult struct {
 type Location struct {
 	URI   string `json:"uri"`
 	Range Range  `json:"range"`
+}
+
+type LocationLink struct {
+	TargetURI            string `json:"targetUri"`
+	TargetRange          Range  `json:"targetRange"`
+	TargetSelectionRange *Range `json:"targetSelectionRange,omitempty"`
 }
 
 type Range struct {
@@ -3575,7 +3608,7 @@ func (s *Server) initializeWithContext(ctx context.Context) error {
 			"textDocument": map[string]any{
 				"completion": completionClientCapabilities(),
 				"definition": map[string]any{
-					"dynamicRegistration": true,
+					"dynamicRegistration": false,
 					"linkSupport":         true,
 				},
 				"hover": map[string]any{
@@ -4667,8 +4700,18 @@ func (s *Server) DidClose(filePath string) error {
 	})
 }
 
-// GoToDefinition finds the definition of a symbol at the given position
+func (s *Server) supportsDefinition() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.capabilities.DefinitionProvider.Enabled()
+}
+
+// GoToDefinition finds the definition of a symbol at the given position.
 func (s *Server) GoToDefinition(filePath string, line, column int) ([]Location, error) {
+	if !s.supportsDefinition() {
+		return nil, nil
+	}
+
 	params := map[string]any{
 		"textDocument": map[string]any{
 			"uri": "file://" + filePath,
@@ -4687,36 +4730,46 @@ func (s *Server) GoToDefinition(filePath string, line, column int) ([]Location, 
 		return nil, fmt.Errorf("definition error: %s", resp.Error.Message)
 	}
 
-	// Parse the result - can be Location, []Location, or LocationLink[]
-	var locations []Location
+	rawResult := strings.TrimSpace(string(resp.Result))
+	if rawResult == "" || rawResult == "null" {
+		return nil, nil
+	}
 
-	// Try as single Location
 	var singleLoc Location
 	if err := json.Unmarshal(resp.Result, &singleLoc); err == nil && singleLoc.URI != "" {
 		return []Location{singleLoc}, nil
 	}
 
-	// Try as []Location
+	var locations []Location
 	if err := json.Unmarshal(resp.Result, &locations); err == nil {
-		return locations, nil
+		validLocations := locations[:0]
+		for _, location := range locations {
+			if location.URI != "" {
+				validLocations = append(validLocations, location)
+			}
+		}
+		if len(validLocations) > 0 {
+			return validLocations, nil
+		}
 	}
 
-	// Try as LocationLink[] (some servers return this)
-	var links []struct {
-		TargetURI   string `json:"targetUri"`
-		TargetRange Range  `json:"targetRange"`
-	}
+	var links []LocationLink
 	if err := json.Unmarshal(resp.Result, &links); err == nil {
+		locations = make([]Location, 0, len(links))
 		for _, link := range links {
-			locations = append(locations, Location{
-				URI:   link.TargetURI,
-				Range: link.TargetRange,
-			})
+			if link.TargetURI == "" {
+				continue
+			}
+			targetRange := link.TargetRange
+			if link.TargetSelectionRange != nil {
+				targetRange = *link.TargetSelectionRange
+			}
+			locations = append(locations, Location{URI: link.TargetURI, Range: targetRange})
 		}
 		return locations, nil
 	}
 
-	return nil, nil
+	return nil, fmt.Errorf("invalid definition response")
 }
 
 func (s *Server) CallHierarchy(filePath string, line, column int) ([]CallHierarchyEdge, error) {

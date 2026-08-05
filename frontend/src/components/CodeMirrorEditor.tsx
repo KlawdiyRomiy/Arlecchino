@@ -607,8 +607,8 @@ interface CodeMirrorEditorProps {
   onChange: (value: string | undefined) => void;
   onSave?: () => void;
   onToggleProblems?: () => void;
-  onOpenFile?: (path: string, line?: number) => void;
-  onQuickLook?: (path: string, line?: number) => void;
+  onOpenFile?: (path: string, line?: number, column?: number) => void;
+  onQuickLook?: (path: string, line?: number, column?: number) => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
   onTyping?: (chars: number) => void;
@@ -1499,7 +1499,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         wordInfo.word,
         contextBefore,
         contextAfter,
-        projectPath,
         filePath,
         fullText,
         lineNumber,
@@ -1507,11 +1506,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       );
 
       if (results.length === 0) return;
-      if (results.length === 1) {
+      if (results.length === 1 && results[0].kind === "definition") {
         if (mode === "quickLook") {
-          onQuickLook?.(results[0].path, results[0].line);
+          onQuickLook?.(results[0].path, results[0].line, results[0].column);
         } else {
-          onOpenFile?.(results[0].path, results[0].line);
+          onOpenFile?.(results[0].path, results[0].line, results[0].column);
         }
         return;
       }
@@ -2163,11 +2162,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           x={definitionMenu.x}
           y={definitionMenu.y}
           items={definitionMenu.items}
-          onSelect={(path, line) => {
+          onSelect={(item) => {
             if (definitionMenu.mode === "quickLook" && onQuickLook) {
-              onQuickLook(path, line);
+              onQuickLook(item.path, item.line, item.column);
             } else if (onOpenFile) {
-              onOpenFile(path, line);
+              onOpenFile(item.path, item.line, item.column);
             }
             closeDefinitionMenu();
           }}

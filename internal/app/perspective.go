@@ -3,10 +3,197 @@ package app
 import (
 	"path/filepath"
 	"sort"
+	"strings"
+	"unicode/utf16"
 
 	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/core"
 )
+
+type RelatedFileAtPositionResult struct {
+	Path        string `json:"path"`
+	Line        int    `json:"line"`
+	Char        int    `json:"char"`
+	Relation    string `json:"relation"`
+	DisplayPath string `json:"displayPath"`
+}
+
+func (a *App) ResolveRelatedFilesAtPosition(filePath, content string, line, character int, word string) ([]RelatedFileAtPositionResult, error) {
+	lineText, ok := sourceLineAt(content, line)
+	if !ok || character < 0 {
+		return nil, nil
+	}
+	byteOffset, ok := utf16CharacterToByteOffset(lineText, character)
+	if !ok {
+		return nil, nil
+	}
+
+	engine := a.activeCoreEngineForPath(filePath)
+	if engine == nil {
+		return nil, nil
+	}
+	resolver, err := engine.NewDependencyTargetResolver()
+	if err != nil {
+		return nil, err
+	}
+	edges, err := engine.QueryEdges(core.EdgeQuery{FilePath: filePath, Line: line})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].ToSymbol != edges[j].ToSymbol {
+			return edges[i].ToSymbol < edges[j].ToSymbol
+		}
+		return edges[i].Kind < edges[j].Kind
+	})
+
+	resolved, err := resolver.ResolveEdges(filePath, edges)
+	if err != nil {
+		return nil, err
+	}
+	projectPath := a.GetCurrentProjectPath()
+	seen := make(map[string]struct{}, len(resolved))
+	results := make([]RelatedFileAtPositionResult, 0, len(resolved))
+	for _, candidate := range resolved {
+		targetPath := candidate.TargetPath
+		if targetPath == "" || filepath.Clean(targetPath) == filepath.Clean(filePath) {
+			continue
+		}
+		if !relatedEdgeMatchesPosition(candidate.Edge, targetPath, lineText, byteOffset, word) {
+			continue
+		}
+		cleanTarget := filepath.Clean(targetPath)
+		if _, duplicate := seen[cleanTarget]; duplicate {
+			continue
+		}
+		seen[cleanTarget] = struct{}{}
+		results = append(results, RelatedFileAtPositionResult{
+			Path:        targetPath,
+			Line:        1,
+			Char:        0,
+			Relation:    string(edgeKindToRelation(candidate.Edge.Kind)),
+			DisplayPath: getDisplayPath(targetPath, projectPath),
+		})
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].DisplayPath != results[j].DisplayPath {
+			return results[i].DisplayPath < results[j].DisplayPath
+		}
+		return results[i].Relation < results[j].Relation
+	})
+	return results, nil
+}
+
+func sourceLineAt(content string, line int) (string, bool) {
+	if line < 1 {
+		return "", false
+	}
+	start := 0
+	for current := 1; current < line; current++ {
+		next := strings.IndexByte(content[start:], '\n')
+		if next < 0 {
+			return "", false
+		}
+		start += next + 1
+	}
+	end := strings.IndexByte(content[start:], '\n')
+	if end < 0 {
+		end = len(content)
+	} else {
+		end += start
+	}
+	return strings.TrimSuffix(content[start:end], "\r"), true
+}
+
+func utf16CharacterToByteOffset(value string, character int) (int, bool) {
+	if character < 0 {
+		return 0, false
+	}
+	units := 0
+	for byteOffset, r := range value {
+		if units == character {
+			return byteOffset, true
+		}
+		width := utf16.RuneLen(r)
+		if width < 1 || units+width > character {
+			return 0, false
+		}
+		units += width
+	}
+	if units == character {
+		return len(value), true
+	}
+	return 0, false
+}
+
+func relatedEdgeMatchesPosition(edge core.Edge, targetPath, lineText string, byteOffset int, word string) bool {
+	tokenPresent := false
+	for _, token := range relatedEdgeTokens(edge.ToSymbol) {
+		for searchFrom := 0; searchFrom <= len(lineText)-len(token); {
+			relative := strings.Index(lineText[searchFrom:], token)
+			if relative < 0 {
+				break
+			}
+			tokenPresent = true
+			start := searchFrom + relative
+			end := start + len(token)
+			if byteOffset >= start && byteOffset < end {
+				return true
+			}
+			searchFrom = end
+		}
+	}
+	return tokenPresent && relatedWordMatchesTarget(word, edge.ToSymbol, targetPath)
+}
+
+func relatedEdgeTokens(target string) []string {
+	target = strings.Trim(strings.TrimSpace(target), "\"'`")
+	if target == "" {
+		return nil
+	}
+	tokens := []string{target}
+	lower := strings.ToLower(target)
+	for _, prefix := range []string{"component:", "function ", "const "} {
+		if strings.HasPrefix(lower, prefix) {
+			trimmed := strings.TrimSpace(target[len(prefix):])
+			if trimmed != "" {
+				tokens = append(tokens, trimmed)
+			}
+			break
+		}
+	}
+	if trimmed := strings.TrimPrefix(target, `\`); trimmed != target && trimmed != "" {
+		tokens = append(tokens, trimmed)
+	}
+	return tokens
+}
+
+func relatedWordMatchesTarget(word, target, targetPath string) bool {
+	word = strings.Trim(strings.TrimSpace(word), "\"'`<>()[]{}")
+	if word == "" {
+		return false
+	}
+	matches := func(value string) bool {
+		for _, segment := range strings.FieldsFunc(value, func(r rune) bool {
+			switch r {
+			case '/', '\\', '.', ':':
+				return true
+			default:
+				return false
+			}
+		}) {
+			if strings.EqualFold(word, segment) {
+				return true
+			}
+		}
+		return false
+	}
+	if matches(strings.TrimPrefix(target, "component:")) {
+		return true
+	}
+	base := filepath.Base(targetPath)
+	return strings.EqualFold(word, base) || strings.EqualFold(word, strings.TrimSuffix(base, filepath.Ext(base)))
+}
 
 func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 	engine := a.activeCoreEngineForPath(filePath)

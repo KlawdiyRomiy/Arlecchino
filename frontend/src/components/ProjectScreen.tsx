@@ -734,6 +734,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     content: string;
     language: string;
     highlightLine?: number;
+    highlightColumn?: number;
   }>({
     isOpen: false,
     filePath: "",
@@ -2874,7 +2875,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     handleSaveFileForTab,
   ]);
 
-  const handleOpenFileRequest = async (path: string, line?: number) => {
+  const handleOpenFileRequest = async (
+    path: string,
+    line?: number,
+    column?: number,
+  ) => {
     const requestId = openFileRequestRef.current + 1;
     openFileRequestRef.current = requestId;
 
@@ -2884,7 +2889,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         fullPath = `${projectPath}/${path}`;
       }
 
-      const navigationTarget = createEditorNavigationTarget(line, undefined, {
+      const navigationTarget = createEditorNavigationTarget(line, column, {
         focus: true,
       });
       scheduleFileOpenLoading(requestId, fullPath, line, navigationTarget);
@@ -3698,7 +3703,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     ],
   );
 
-  const handleQuickLookRequest = async (path: string, line?: number) => {
+  const handleQuickLookRequest = async (
+    path: string,
+    line?: number,
+    column?: number,
+  ) => {
     const requestId = quickLookRequestRef.current + 1;
     quickLookRequestRef.current = requestId;
 
@@ -3725,6 +3734,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         content: file.content,
         language,
         highlightLine: line,
+        highlightColumn: column,
       });
     } catch (error) {
       if (quickLookRequestRef.current === requestId) {
@@ -3739,14 +3749,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   };
 
   const handleQuickLookExpand = () => {
-    const { filePath, content, highlightLine } = quickLook;
+    const { filePath, content, highlightLine, highlightColumn } = quickLook;
     const name = filePath.split("/").pop() || "unknown";
 
     closeQuickLook();
 
     const navigationTarget = createEditorNavigationTarget(
       highlightLine,
-      undefined,
+      highlightColumn,
       { focus: true },
     );
     handleFileOpen({
@@ -4454,6 +4464,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         content={quickLook.content}
         language={quickLook.language}
         highlightLine={quickLook.highlightLine}
+        highlightColumn={quickLook.highlightColumn}
         onClose={handleQuickLookClose}
         onExpand={handleQuickLookExpand}
       />
