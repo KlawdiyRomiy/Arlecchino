@@ -100,6 +100,10 @@ export const shouldReduceInteractiveMotion = (
   snapshot: PerformanceBudgetSnapshot,
 ): boolean => snapshot.frameGapMs >= 34 || resolveMode(snapshot) !== "normal";
 
+export const shouldReduceApplicationMotion = (
+  mode: AdaptivePerformanceMode,
+): boolean => mode !== "normal";
+
 const clampPressure = (value: number) => Math.max(0, Math.min(160, value));
 
 const defaultPanelMotionWindowMs = 420;
@@ -408,6 +412,10 @@ export const startAdaptivePerformanceMonitor = (): (() => void) => {
 
   const probeFrameGap = () => {
     cancelPendingFrameProbe();
+    if (document.visibilityState !== "visible") {
+      return;
+    }
+
     const scheduledAt = nowPerf();
     frameHandle = window.requestAnimationFrame((firstFrameAt) => {
       if (disposed) return;
@@ -426,6 +434,14 @@ export const startAdaptivePerformanceMonitor = (): (() => void) => {
     });
   };
 
+  const onVisibilityChange = () => {
+    if (document.visibilityState !== "visible") {
+      cancelPendingFrameProbe();
+      return;
+    }
+    probeFrameGap();
+  };
+
   const onMetric = (event: Event) => {
     const metric = (event as CustomEvent<PerfMetric>).detail;
     if (metric?.scope && typeof metric.durationMs === "number") {
@@ -439,6 +455,7 @@ export const startAdaptivePerformanceMonitor = (): (() => void) => {
     usePerformanceStore.getState().decayPressure();
   }, adaptiveFrameProbeIntervalMs);
 
+  document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener(PERF_EVENT_NAME, onMetric);
 
   return () => {
@@ -446,6 +463,7 @@ export const startAdaptivePerformanceMonitor = (): (() => void) => {
     adaptiveMonitorStarted = false;
     cancelPendingFrameProbe();
     window.clearInterval(probeTimer);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener(PERF_EVENT_NAME, onMetric);
   };
 };

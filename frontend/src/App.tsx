@@ -27,7 +27,7 @@ import {
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
 import {
-  shouldReduceInteractiveMotion,
+  shouldReduceApplicationMotion,
   startAdaptivePerformanceMonitor,
   usePerformanceStore,
 } from "./stores/performanceStore";
@@ -198,7 +198,7 @@ const App: React.FC = () => {
   const welcomeScreenVisible =
     ready && !isDetachedHost && !(activeId && activeProject);
   const adaptiveMotionReduced = usePerformanceStore((state) =>
-    shouldReduceInteractiveMotion(state.snapshot),
+    shouldReduceApplicationMotion(state.mode),
   );
   const motionPreference = adaptiveMotionReduced ? "always" : "user";
 

@@ -671,6 +671,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
+  const onOpenFileRef = useRef(onOpenFile);
+  const onQuickLookRef = useRef(onQuickLook);
   const onEditorViewReadyRef = useRef(onEditorViewReady);
   const onHistoryAvailabilityChangeRef = useRef(onHistoryAvailabilityChange);
   const lastHistoryAvailabilityRef = useRef<EditorHistoryAvailability | null>(
@@ -686,6 +688,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
+  onOpenFileRef.current = onOpenFile;
+  onQuickLookRef.current = onQuickLook;
   onEditorViewReadyRef.current = onEditorViewReady;
   onHistoryAvailabilityChangeRef.current = onHistoryAvailabilityChange;
 
@@ -1508,9 +1512,17 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       if (results.length === 0) return;
       if (results.length === 1 && results[0].kind === "definition") {
         if (mode === "quickLook") {
-          onQuickLook?.(results[0].path, results[0].line, results[0].column);
+          onQuickLookRef.current?.(
+            results[0].path,
+            results[0].line,
+            results[0].column,
+          );
         } else {
-          onOpenFile?.(results[0].path, results[0].line, results[0].column);
+          onOpenFileRef.current?.(
+            results[0].path,
+            results[0].line,
+            results[0].column,
+          );
         }
         return;
       }
@@ -1526,7 +1538,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         mode,
       });
     },
-    [filePath, language, onOpenFile, onQuickLook, projectPath],
+    [filePath, language, projectPath],
   );
 
   const runDefinitionAction = useCallback(
