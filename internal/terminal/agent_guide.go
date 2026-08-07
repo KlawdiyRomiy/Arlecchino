@@ -29,6 +29,7 @@ Required reads:
 2. This file.
 3. agent_skills.context for compact trusted resident skill context.
 4. agent_memory.context or .arlecchino/memory/CONTEXT.md when prior project memory can change the answer.
+5. .arlecchino/bootstrap.json when shared project state is present; never replace it.
 
 Skill residency:
 - Use agent_skills.context for compact trusted resident skill context.

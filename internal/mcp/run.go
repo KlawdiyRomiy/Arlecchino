@@ -18,6 +18,10 @@ func RunStdioServer(ctx context.Context, projectRoot string, in io.Reader, out i
 		return nil
 	}
 
+	if _, err := EnsureProjectBootstrap(projectRoot, "arlecchino-ide"); err != nil {
+		return err
+	}
+
 	service, err := NewToolServiceWithOptions(projectRoot, ToolServiceOptions{
 		EnableBridgeAutoDetect: true,
 	})

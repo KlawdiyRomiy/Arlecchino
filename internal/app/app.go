@@ -601,6 +601,9 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		projectWarmupStep{
 			name: "agent guide",
 			run: func(context.Context) error {
+				if _, err := mcp.EnsureProjectBootstrap(path, "arlecchino-ide"); err != nil {
+					return err
+				}
 				if _, _, err := terminal.EnsureAgentGuideFile(path); err != nil {
 					return err
 				}

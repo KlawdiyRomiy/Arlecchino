@@ -209,6 +209,10 @@ func maybeRunMCPBootstrapMode(args []string) (bool, error) {
 		return true, err
 	}
 
+	if _, err := mcp.EnsureProjectBootstrap(bootstrapOptions.projectRoot, "arlecchino-ide"); err != nil {
+		return true, err
+	}
+
 	paths, err := mcp.EnsureProjectMCPBootstrapWithCommand(bootstrapOptions.projectRoot, serverCommand)
 	if err != nil {
 		return true, err

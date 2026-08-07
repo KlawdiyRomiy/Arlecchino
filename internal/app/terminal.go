@@ -362,6 +362,12 @@ func (a *App) tryInjectAgentGuide(session *terminal.Session, sessionID string) {
 		return
 	}
 
+	if _, bootstrapErr := mcp.EnsureProjectBootstrap(projectRoot, "arlecchino-ide"); bootstrapErr != nil {
+		session.RollbackAgentGuideInjection()
+		a.logWarning(fmt.Sprintf("[Terminal] project bootstrap ensure failed for session %s: %v", sessionID, bootstrapErr))
+		return
+	}
+
 	guidePath, _, ensureErr := terminal.EnsureAgentGuideFile(projectRoot)
 	if ensureErr != nil {
 		session.RollbackAgentGuideInjection()
