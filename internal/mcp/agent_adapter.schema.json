@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Arlecchino Agent MCP Adapter",
+  "type": "object",
+  "required": ["version", "id", "transport"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "transport": {
+      "enum": ["mcp-stdio", "acp"]
+    },
+    "launchBinaries": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "config": {
+      "type": "object",
+      "required": ["path", "serverParent", "server"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serverParent": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "server": {
+          "type": "object",
+          "minProperties": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "transport": {
+            "const": "mcp-stdio"
+          }
+        }
+      },
+      "then": {
+        "required": ["config"]
+      }
+    }
+  ],
+  "additionalProperties": false
+}
