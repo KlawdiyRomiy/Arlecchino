@@ -2,9 +2,8 @@
 
 @AGENTS.md
 
-## Claude Code
+Repository policy is in the imported `AGENTS.md`. This file stays thin on purpose so every agent works from one contract instead of two that drift.
 
-- This file is intentionally thin so Claude and other agents share the same repository policy.
-- Follow the imported `AGENTS.md` rules, direct user instructions, and the closest nested instruction file.
-- Discover commands from checked-in scripts, package manifests, and nearby docs instead of relying on stale copied command lists.
-- Keep personal, machine-local, or Codex-specific workflow notes out of this tracked file.
+- Follow direct user instructions, then `AGENTS.md`, then the closest nested instruction file.
+- Discover commands from checked-in scripts and package manifests rather than a copied list that goes stale.
+- Keep personal, machine-local, or harness-specific workflow notes out of this tracked file.
