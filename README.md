@@ -20,6 +20,10 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
 </p>
 
+<p align="center">
+  <img src="screenshots/workbench.png" width="900" alt="Arlecchino workbench with Explorer, editor, Git panel, and AI Chat open side by side">
+</p>
+
 ---
 
 ## Positioning
